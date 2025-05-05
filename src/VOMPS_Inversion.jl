@@ -28,6 +28,38 @@ function transform_to_mps(Ts::InfiniteMPO)
     return InfiniteMPS(mps)
 end
 
+function ρ_transfer_left(AL::AbstractMPSTensor, O::AbstractMPOTensor)
+    iso = isomorphism(space(AL)[2], space(O)[2]*space(O)[3])
+    function ftransfer(vl)
+        @tensor vl[-1 -2] := conj(AL[5 4; -2]) * conj(O[1 2; 3 -1]) * vl[1 5] * iso[4; 2 3]
+        return vl
+    end
+    return ftransfer
+end
+
+function ρ_transfer_right(AR::AbstractMPSTensor, O::AbstractMPOTensor)
+    iso = isomorphism(space(AR)[2], space(O)[2]*space(O)[3])
+    function ftransfer(vr)
+        @tensor vr[-1 -2] := conj(AR[-2 4; 5]) * conj(O[-1 2; 3 1]) * vr[1 5] * iso[4; 2 3]
+        return vr
+    end
+    return ftransfer
+end
+
+# Compute the left and right ρ environment at site i
+function ρ_environments(ALs::Vector, ARs::Vector, Os::InfiniteMPO, i::Int)
+    transfer_l = map(1:length(ALs)) do j
+       transfer_func = ρ_transfer_left(ALs[i-j], O[i-j]) ∘ transfer_func
+       return transfer_func
+    end
+
+    transfer_r = map(1:length(ARs)) do j
+        transfer_func = ρ_transfer_right(ARs[i+j], O[i+j]) ∘ transfer_func
+        return transfer_func
+    end
+    
+end
+
 # Inversion of MPO through VOMPS Algorihtm
 function invert_mpo(Os::InfiniteMPO, alg::VOMPS_Inversion; init_guess::InfiniteMPO = nothing)
     unit_cell = length(t)
