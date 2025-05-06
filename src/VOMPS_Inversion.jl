@@ -31,7 +31,7 @@ end
 function ρ_transfer_left(AL::AbstractMPSTensor, O::AbstractMPOTensor)
     iso = isomorphism(space(AL)[2], space(O)[2]*space(O)[3])
     function ftransfer(vl)
-        @tensor vl[-1 -2] := conj(AL[5 4; -2]) * conj(O[1 2; 3 -1]) * vl[1 5] * iso[4; 2 3]
+        @tensor vl[-1 -2] := conj(AL[5 4; -2]) * conj(O[1 3; 2 -1]) * vl[1 5] * iso[4; 2 3]
         return vl
     end
     return ftransfer
@@ -40,7 +40,7 @@ end
 function ρ_transfer_right(AR::AbstractMPSTensor, O::AbstractMPOTensor)
     iso = isomorphism(space(AR)[2], space(O)[2]*space(O)[3])
     function ftransfer(vr)
-        @tensor vr[-1 -2] := conj(AR[-2 4; 5]) * conj(O[-1 2; 3 1]) * vr[1 5] * iso[4; 2 3]
+        @tensor vr[-1 -2] := conj(AR[-2 4; 5]) * conj(O[-1 3; 2 1]) * vr[1 5] * iso[4; 2 3]
         return vr
     end
     return ftransfer
@@ -48,16 +48,90 @@ end
 
 # Compute the left and right ρ environment at site i
 function ρ_environments(ALs::Vector, ARs::Vector, Os::InfiniteMPO, i::Int)
-    transfer_l = map(1:length(ALs)) do j
-       transfer_func = ρ_transfer_left(ALs[i-j], O[i-j]) ∘ transfer_func
+    unit_cell = length(ALs)
+    
+    transfer_l = map(0:unit_cell-1) do j
+       transfer_func = ρ_transfer_left(ALs[i+j], O[i+j]) ∘ transfer_func
        return transfer_func
     end
 
-    transfer_r = map(1:length(ARs)) do j
-        transfer_func = ρ_transfer_right(ARs[i+j], O[i+j]) ∘ transfer_func
+    transfer_r = map(0:unit_cell-1) do j
+        transfer_func = ρ_transfer_right(ARs[i-j], O[i-j]) ∘ transfer_func
         return transfer_func
     end
     
+    xl = Tensor(rand, ComplexF64, space(Os[i])[1]⊗space(ALs[i])[1])
+    xr = Tensor(rand, ComplexF64, space(Os[i])[1]⊗space(ARs[i])[1])
+
+    valsl, envsl = eigsolve(transfer_l, xl, 1, :LM)
+    valsr, envsr = eigsolve(transfer_r, xr, 1, :LM)
+
+    if length(valsl) > 1
+        degeneratel = valsl[1] ≈ valsl[2]
+        (degeneratel) && (@warn "Left ρ-transfer matrix has degenerate eigenvalues. Try reducing the bond dimension.")
+    end
+    if length(valsr) > 1
+        degenerater = valsr[1] ≈ valsr[2]
+        (degenerater) && (@warn "Right ρ-transfer matrix has degenerate eigenvalues. Try reducing the bond dimension.")
+    end
+
+    ρl = envsl[1]
+    ρr = envsr[1]
+
+    return ρl, ρr
+end
+
+function E_transfer_left(AL::AbstractMPSTensor, O::AbstractMPOTensor)
+    iso = isomorphism(space(AL)[2], space(O)[2]*space(O)[3])
+    function ftransfer(vl)
+        @tensor vl[-1 -2 -3 -4] := vl[1 4 6 10] * conj(AL[10 9; -4]) * conj(O[6 7; 5 -3]) * iso[9; 7 8] * O[4 5; 3 -2] * conj(iso[2; 3 8]) * AL[1 2; -1]
+        return vl
+    end
+    return ftransfer
+end
+
+function E_transfer_right(AR::AbstractMPSTensor, O::AbstractMPOTensor)
+    iso = isomorphism(space(AR)[2], space(O)[2]*space(O)[3])
+    function ftransfer(vr)
+        @tensor vr[-1 -2 -3 -4] := vr[1 4 6 10] * conj(AR[-4 9; 10]) * conj(O[-3 7; 5 6]) * iso[9; 7 8] * O[-2 5; 3 4] * conj(iso[2; 3 8]) * AR[-1 2; 1]
+        return vr
+    end
+    return ftransfer
+end
+
+# Compute the left and right E environment at site i
+function E_environments(ALs::Vector, ARs::Vector, Os::InfiniteMPO, i::Int)
+    unit_cell = length(ALs)
+    
+    transfer_l = map(0:unit_cell-1) do j
+       transfer_func = E_transfer_left(ALs[i+j], O[i+j]) ∘ transfer_func
+       return transfer_func
+    end
+
+    transfer_r = map(0:unit_cell-1) do j
+        transfer_func = E_transfer_right(ARs[i-j], O[i-j]) ∘ transfer_func
+        return transfer_func
+    end
+    
+    xl = Tensor(rand, ComplexF64, space(ALs[i])[1]'⊗space(Os[i])[1]'⊗space(Os[i])[1]⊗space(ALs[i])[1])
+    xr = Tensor(rand, ComplexF64, space(ARs[i])[1]⊗space(Os[i])[1]⊗space(Os[i])[1]'⊗space(ARs[i])[1]')
+
+    valsl, envsl = eigsolve(transfer_l, xl, 1, :LM)
+    valsr, envsr = eigsolve(transfer_r, xr, 1, :LM)
+
+    if length(valsl) > 1
+        degeneratel = valsl[1] ≈ valsl[2]
+        (degeneratel) && (@warn "Left E-transfer matrix has degenerate eigenvalues. Try reducing the bond dimension.")
+    end
+    if length(valsr) > 1
+        degenerater = valsr[1] ≈ valsr[2]
+        (degenerater) && (@warn "Right E-transfer matrix has degenerate eigenvalues. Try reducing the bond dimension.")
+    end
+
+    El = envsl[1]
+    Er = envsr[1]
+
+    return El, Er
 end
 
 # Inversion of MPO through VOMPS Algorihtm
