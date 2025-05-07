@@ -195,7 +195,7 @@ function invert_mpo(Os::InfiniteMPO, alg::VOMPS_Inversion; init_guess::Union{Inf
     unit_cell = length(Os)
     # Make initial guess
     if isnothing(init_guess) 
-        inits = [TensorMap(rand, ComplexF64, space(Os[i])) for i in 1:unit_cell]
+        inits = [TensorMap(rand, ComplexF64, ℂ^alg.inverse_dim ⊗ space(Os[i])[2], space(Os[i])[3] ⊗ ℂ^alg.inverse_dim) for i in 1:unit_cell]
         init_guess = InfiniteMPO(inits)
     end
     # Convert initial guess to MPS
@@ -207,6 +207,7 @@ function invert_mpo(Os::InfiniteMPO, alg::VOMPS_Inversion; init_guess::Union{Inf
     ACs = As.AC
     Cs  = As.C
 
+    @show space(ALs[1])
     it = 0
     ϵ = 1
     while ϵ > alg.tol && it < alg.maxiter
