@@ -15,7 +15,7 @@
 end
 
 @testset "test invert_mpo with VOMPS: random trivial physical dimension MPO" for ix in 1:10
-    d = 1 #FIXME does not work for d > 1
+    d = 3
     alg = VOMPS_Inversion(1; tol=1e-8, maxiter=20, verbose=true)
     for unit_cell = 1:5
         Os = [TensorMap(rand, ComplexF64, ℂ^d ⊗ ℂ^1, ℂ^1 ⊗ ℂ^d) for i in 1:unit_cell]
@@ -33,6 +33,7 @@ end
 
 
 @testset "test invert_mpo with VOMPS: exp(diagonal Hamiltonian) #1" for τ in (1:17) * 0.1
+    #FIXME Does not work for τ>0.5 for inverse_dim = 2
     function expZZ(τ::Real)
         σz = TensorMap(ComplexF64[1 0; 0 -1], ℂ^2, ℂ^2)
         M = σz ⊗ σz
@@ -41,15 +42,15 @@ end
         R = permute(sqrt(S) * R, (1, 2), (3, ))
         @tensor T1[-1 -2; -3 -4] := L[-2; 1 -4] * R[-1 1 ; -3]
         @tensor T2[-1 -2; -3 -4] := R[-1 -2; 1] * L[1; -3 -4]
-        return InfiniteMPO([T1])
+        return InfiniteMPO([T1, T2])
     end
 
     @show τ
     mpo = expZZ(τ)
     O_inv_exact = expZZ(-τ)
 
-    d = 2
-    alg = VOMPS_Inversion(d; tol=1e-8, maxiter=500, verbose=true)
+    inverse_dim = 1
+    alg = VOMPS_Inversion(inverse_dim; tol=1e-8, maxiter=500, verbose=true)
     
     Oinv, ϵ = invert_mpo(mpo, alg; init_guess = nothing)
 
