@@ -200,7 +200,7 @@ function invert_mpo(Os::InfiniteMPO, alg::VOMPS_Inversion; init_guess::Union{Inf
     unit_cell = length(Os)
     # Make initial guess
     if isnothing(init_guess) 
-        (alg.verbosity > 1) && @info(crayon"magenta"("step 0) Generating initial guess"))
+        (alg.verbosity > 1) && @info(crayon"cyan"("step 0) Generating initial guess"))
         inits = [TensorMap(rand, ComplexF64, ℂ^alg.inverse_dim ⊗ space(Os[i])[2], space(Os[i])[3] ⊗ ℂ^alg.inverse_dim) for i in 1:unit_cell]
         init_guess = InfiniteMPO(inits)
     end
