@@ -4,10 +4,10 @@ struct  VOMPS_Inversion <: AbstractInversionAlgorithm
     inverse_dim::Int
     tol::Float64
     maxiter::Int
-    verbose::Bool
+    verbosity::Int #0 is no message, 1 shows convergence of each step, 2 shows all steps
 
-    function VOMPS_Inversion(inverse_dim::Int; tol::Float64 = 1e-8, maxiter::Int = 50, verbose::Bool = true)
-        return new(inverse_dim, tol, maxiter, verbose)
+    function VOMPS_Inversion(inverse_dim::Int; tol::Float64 = 1e-8, maxiter::Int = 50, verbosity::Int = 0)
+        return new(inverse_dim, tol, maxiter, verbosity)
     end
 end
 
@@ -50,7 +50,7 @@ function ρ_transfer_right(AR::AbstractMPSTensor, O::AbstractMPOTensor)
 end
 
 # Compute the left and right ρ environment at site i
-function ρ_environments(ALs::PeriodicVector, ARs::PeriodicVector, Os::InfiniteMPO, i::Int)
+function ρ_environments(ALs::PeriodicVector{<:AbstractMPSTensor}, ARs::PeriodicVector{<:AbstractMPSTensor}, Os::InfiniteMPO, i::Int)
     unit_cell = length(ALs)
     
     transfer_l =  ρ_transfer_left(ALs[i], Os[i])
@@ -107,7 +107,7 @@ function E_transfer_right(AR::AbstractMPSTensor, O::AbstractMPOTensor)
 end
 
 # Compute the left and right E environment at site i
-function E_environments(ALs::PeriodicVector, ARs::PeriodicVector, Os::InfiniteMPO, i::Int)
+function E_environments(ALs::PeriodicVector{<:AbstractMPSTensor}, ARs::PeriodicVector{<:AbstractMPSTensor}, Os::InfiniteMPO, i::Int)
     unit_cell = length(ALs)
     
     transfer_l =  E_transfer_left(ALs[i], Os[i])
@@ -145,7 +145,7 @@ function E_environments(ALs::PeriodicVector, ARs::PeriodicVector, Os::InfiniteMP
 end
 
 # Construct system for AC at site i
-function AC_system(AC::AbstractMPSTensor, C::AbstractBondTensor, O::AbstractMPOTensor, λρ::ComplexF64, ρl::AbstractRhoEnv, ρr::AbstractRhoEnv, λE::ComplexF64, El::AbstractEEnv, Er::AbstractEEnv)
+function AC_system(AC::AbstractMPSTensor, O::AbstractMPOTensor, ρl::AbstractRhoEnv, ρr::AbstractRhoEnv, El::AbstractEEnv, Er::AbstractEEnv)
     iso = isomorphism(space(AC)[2], space(O)[2]*space(O)[3])
     @tensor NE[] := El[1 2 3 4] * E_transfer_right(AC,O)(Er)[1 2 3 4]
     @tensor Nρ[] := ρl[1 2] * ρ_transfer_right(AC,O)(ρr)[1 2]
@@ -159,7 +159,7 @@ function AC_system(AC::AbstractMPSTensor, C::AbstractBondTensor, O::AbstractMPOT
 end
 
 # Construct system for C at site i
-function C_system(AC::AbstractMPSTensor, C::AbstractBondTensor, O::AbstractMPOTensor, ρl::AbstractRhoEnv, ρr::AbstractRhoEnv, El::AbstractEEnv, Er::AbstractEEnv,  λρ::ComplexF64,  λE::ComplexF64)
+function C_system(C::AbstractBondTensor, ρl::AbstractRhoEnv, ρr::AbstractRhoEnv, El::AbstractEEnv, Er::AbstractEEnv)
     @tensor NE[] := El[1 2 3 4] * C[1; 5] * conj(C[4; 8]) * Er[5 2 3 8]
     @tensor Nρ[] := ρl[1 2] * conj(C[2; 3]) *ρr[1 3]
     function f(C)
@@ -200,6 +200,7 @@ function invert_mpo(Os::InfiniteMPO, alg::VOMPS_Inversion; init_guess::Union{Inf
     unit_cell = length(Os)
     # Make initial guess
     if isnothing(init_guess) 
+        (alg.verbosity > 1) && @info(crayon"magenta"("step 0) Generating initial guess"))
         inits = [TensorMap(rand, ComplexF64, ℂ^alg.inverse_dim ⊗ space(Os[i])[2], space(Os[i])[3] ⊗ ℂ^alg.inverse_dim) for i in 1:unit_cell]
         init_guess = InfiniteMPO(inits)
     end
@@ -215,8 +216,6 @@ function invert_mpo(Os::InfiniteMPO, alg::VOMPS_Inversion; init_guess::Union{Inf
     @show space(ALs[1])
     it = 0
     ϵ = 1
-    AC1 = ACs[1]
-    AC2 = AC1
     while ϵ > alg.tol && it < alg.maxiter
         ϵ_inv = 1e-4 *alg.tol
 
@@ -225,15 +224,15 @@ function invert_mpo(Os::InfiniteMPO, alg::VOMPS_Inversion; init_guess::Union{Inf
         # Optimize each site sequentially
         for i in 1:unit_cell
             # Compute the left and right environments
-            @info(crayon"cyan"("step $it) Computing ρ-environments for site $i"))
+            (alg.verbosity > 1) && @info(crayon"cyan"("step $it) Computing ρ-environments for site $i"))
             λρ, ρl, ρr, ρl2 = ρ_environments(ALs, ARs, Os, i)
-            @info(crayon"cyan"("step $it) Computing E-environments for site $i"))
+            (alg.verbosity > 1) && @info(crayon"cyan"("step $it) Computing E-environments for site $i"))
             λE, El, Er, El2 = E_environments(ALs, ARs, Os, i)
             # Construct linear system for AC and C
-            bAC, fAC = AC_system(ACs[i], Cs[i], Os[i], λρ, ρl, ρr, λE, El, Er)
-            bC, fC = C_system(ACs[i], Cs[i], Os[i], ρl2, ρr, El2, Er, λρ, λE)
+            bAC, fAC = AC_system(ACs[i], Os[i], ρl, ρr, El, Er)
+            bC, fC = C_system(Cs[i], ρl2, ρr, El2, Er)
             # Solve linear systems
-            @info(crayon"cyan"("step $it) Solving linear systems for site $i"))
+            (alg.verbosity > 1) && @info(crayon"cyan"("step $it) Solving linear systems for site $i"))
             x₀ = TensorMap(rand,ComplexF64,space(ACs[i]))
             AC_new = linsolve(x -> fAC(x) + ϵ_inv * x,bAC,x₀;maxiter = 500)[1]
             x₀ = TensorMap(rand,ComplexF64,space(Cs[i]))
@@ -243,14 +242,14 @@ function invert_mpo(Os::InfiniteMPO, alg::VOMPS_Inversion; init_guess::Union{Inf
             ACs[i] = AC_new
         end
         for i in 1:unit_cell
-            @info(crayon"cyan"("step $it) Updating AL and AR tensors for site $i"))
+            (alg.verbosity > 1) && @info(crayon"cyan"("step $it) Updating AL and AR tensors for site $i"))
             ALs[i], ϵL = get_AL(ACs[i], Cs[i])
             ARs[i], ϵR = get_AR(ACs[i], Cs[i-1])
             ϵs[i] = max(ϵL, ϵR) 
         end
         
         ϵ = maximum(ϵs)
-        (alg.verbose) && (@info(crayon"cyan"("step $it) Convergence error = $(ϵ)")))
+        (alg.verbosity > 0) && (@info(crayon"cyan"("step $it) Convergence error = $(ϵ)")))
     end
     # Convert MPS back to MPO
     pspaces = map(1:unit_cell) do i
