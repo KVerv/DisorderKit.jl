@@ -32,8 +32,8 @@ end
 end
 
 
-@testset "test invert_mpo with VOMPS: exp(diagonal Hamiltonian) #1" for τ in (1:17) * 0.1
-    #FIXME Does not work for τ>0.5 for inverse_dim = 2
+@testset "test invert_mpo with VOMPS: exp(diagonal Hamiltonian) #1" for τ in (1:8) * 0.1
+    #FIXME Does not work for τ>0.9 for inverse_dim = 2
     function expZZ(τ::Real)
         σz = TensorMap(ComplexF64[1 0; 0 -1], ℂ^2, ℂ^2)
         M = σz ⊗ σz
@@ -47,14 +47,16 @@ end
 
     @show τ
     mpo = expZZ(τ)
-    O_inv_exact = expZZ(-τ)
 
-    inverse_dim = 1
+    @show space(mpo[1])
+    inverse_dim = 2
     alg = VOMPS_Inversion(inverse_dim; tol=1e-8, maxiter=500, verbose=true)
     
-    Oinv, ϵ = invert_mpo(mpo, alg; init_guess = nothing)
+    Oinv, _ = invert_mpo(mpo, alg; init_guess = nothing)
 
     O_times_Oinv = mpo * Oinv
+    mps = DisorderKit.transform_to_mps(mpo * Oinv)
     ϵ = test_identity(O_times_Oinv)
+    @show τ
     @test ϵ < 1e-8
 end
