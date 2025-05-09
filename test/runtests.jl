@@ -1,6 +1,6 @@
 using Test
 using Revise
-using TensorKit, MPSKit
+using TensorKit, MPSKit, KrylovKit
 using LinearAlgebra
 using DisorderKit
 
