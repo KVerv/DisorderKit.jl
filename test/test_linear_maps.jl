@@ -63,7 +63,7 @@ end
 
     λρ = ρl[1]
     λE = El[1]
-    b, fmap = DisorderKit.AC_system(A, O, λρ, ρl, ρr, λE, El, Er)
+    b, fmap = DisorderKit.AC_system(A, O, ρl, ρr, El, Er)
 
     iso = isomorphism(fuse(space(O)[2],space(O)[3]),space(O)[2] ⊗ space(O)[3])
     @tensor f[-1 -2 -3; -4 -5 -6] := El[-4 1 2 -1]*conj(O[2 7; 8 4])*O[1 7; 5 3]*Er[-6 3 4 -3]*iso[-2; 8 9]*conj(iso[-5; 5 9])

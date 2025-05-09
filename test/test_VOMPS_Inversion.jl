@@ -1,6 +1,6 @@
 @testset "test invert_mpo with VOMPS: random trivial bond dimension MPO" for ix in 1:10
     d = 2
-    alg = VOMPS_Inversion(1; tol=1e-8, maxiter=20, verbose=true)
+    alg = VOMPS_Inversion(1; tol=1e-8, maxiter=20, verbosity =1)
     for unit_cell = 1:5
         Os = [TensorMap(rand, ComplexF64, ℂ^1 ⊗ ℂ^d, ℂ^d ⊗ ℂ^1) for i in 1:unit_cell]
 
@@ -16,7 +16,7 @@ end
 
 @testset "test invert_mpo with VOMPS: random trivial physical dimension MPO" for ix in 1:10
     d = 3
-    alg = VOMPS_Inversion(1; tol=1e-8, maxiter=20, verbose=true)
+    alg = VOMPS_Inversion(1; tol=1e-8, maxiter=20, verbosity = 1)
     for unit_cell = 1:5
         Os = [TensorMap(rand, ComplexF64, ℂ^d ⊗ ℂ^1, ℂ^1 ⊗ ℂ^d) for i in 1:unit_cell]
 
@@ -48,9 +48,8 @@ end
     @show τ
     mpo = expZZ(τ)
 
-    @show space(mpo[1])
     inverse_dim = 2
-    alg = VOMPS_Inversion(inverse_dim; tol=1e-8, maxiter=500, verbose=true)
+    alg = VOMPS_Inversion(inverse_dim; tol=1e-8, maxiter=500, verbosity = 1)
     
     Oinv, _ = invert_mpo(mpo, alg; init_guess = nothing)
 
@@ -81,16 +80,16 @@ end
     mpo_inv = gen_expZZX(-τ)
     
     # initial guess
-    A = TensorMap(randn, ComplexF64, space(mpo_inv[1]))
-    B = TensorMap(randn, ComplexF64, space(mpo_inv[2]))
-    mpo_inv[1] += t*A 
-    mpo_inv[2] += t*B 
+    A = TensorMap(randn, ComplexF64, space(mpo_inv[2]))
+    B = TensorMap(randn, ComplexF64, space(mpo_inv[1]))
+    T1 = t*A + mpo_inv[2]
+    T2 = t*B + mpo_inv[1]
 
-    maxiter = norm(t) < 1e-15 ? 1 : 200
+    maxiter = 200
     inverse_dim = dim(space(mpo_inv[1])[1])
-    alg = VOMPS_Inversion(inverse_dim; tol=1e-8, maxiter=500, verbose=true)
+    alg = VOMPS_Inversion(inverse_dim; tol=1e-8, maxiter=maxiter, verbosity=1)
     
-    Oinv, ϵ = invert_mpo(mpo, alg; init_guess = mpo_inv)
+    Oinv, ϵ = invert_mpo(mpo, alg; init_guess = InfiniteMPO([T1, T2]))
     @test ϵ < 1e-8
     
     O_times_Oinv = mpo * Oinv
