@@ -82,7 +82,10 @@ function ρ_environments(ALs::PeriodicVector, ARs::PeriodicVector, Os::InfiniteM
     ρr = envsr[1]
     λρ = valsl[1]
 
-    return λρ, ρl, ρr
+    ρl2 = ρ_transfer_left(ALs[i], Os[i])(ρl)
+    ρl2 = ρl2/norm(ρl2)
+
+    return λρ, ρl, ρr, ρl2
 end
 
 function E_transfer_left(AL::AbstractMPSTensor, O::AbstractMPOTensor)
@@ -136,17 +139,19 @@ function E_environments(ALs::PeriodicVector, ARs::PeriodicVector, Os::InfiniteMP
     Er = envsr[1]
     λE = valsl[1]
 
-    return λE ,El, Er
+    El2 = E_transfer_left(ALs[i], Os[i])(El)
+    El2 = El2/norm(El2)
+    return λE ,El, Er, El2
 end
 
 # Construct system for AC at site i
-function AC_system(AC::AbstractMPSTensor, O::AbstractMPOTensor, λρ::ComplexF64, ρl::AbstractRhoEnv, ρr::AbstractRhoEnv, λE::ComplexF64, El::AbstractEEnv, Er::AbstractEEnv)
+function AC_system(AC::AbstractMPSTensor, C::AbstractBondTensor, O::AbstractMPOTensor, λρ::ComplexF64, ρl::AbstractRhoEnv, ρr::AbstractRhoEnv, λE::ComplexF64, El::AbstractEEnv, Er::AbstractEEnv)
     iso = isomorphism(space(AC)[2], space(O)[2]*space(O)[3])
     @tensor NE[] := El[1 2 3 4] * E_transfer_right(AC,O)(Er)[1 2 3 4]
     @tensor Nρ[] := ρl[1 2] * ρ_transfer_right(AC,O)(ρr)[1 2]
     function f(AC)
         @tensor AC_new[-1 -2; -3] := El[1 4 6 -1] * conj(O[6 5; 7 11]) * iso[-2; 7 8] * O[4 5; 3 10] * conj(iso[2; 3 8]) * AC[1 2; 9] * Er[9 10 11 -3]
-        return AC_new * Nρ[1] * λρ / (NE[1] * λE)
+        return AC_new * Nρ[1] / (NE[1])
     end
     @tensor b[-1 -2; -3] := ρl[1 -1] * conj(O[1 3; 2 4]) * iso[-2; 2 3] * ρr[4 -3]
 
@@ -154,9 +159,9 @@ function AC_system(AC::AbstractMPSTensor, O::AbstractMPOTensor, λρ::ComplexF64
 end
 
 # Construct system for C at site i
-function C_system(AC::AbstractMPSTensor, C::AbstractBondTensor, O::AbstractMPOTensor, ρl::AbstractRhoEnv, ρr::AbstractRhoEnv, El::AbstractEEnv, Er::AbstractEEnv)
-    @tensor NE[] := El[1 2 3 4] * E_transfer_right(AC,O)(Er)[1 2 3 4]
-    @tensor Nρ[] := ρl[1 2] * ρ_transfer_right(AC,O)(ρr)[1 2]
+function C_system(AC::AbstractMPSTensor, C::AbstractBondTensor, O::AbstractMPOTensor, ρl::AbstractRhoEnv, ρr::AbstractRhoEnv, El::AbstractEEnv, Er::AbstractEEnv,  λρ::ComplexF64,  λE::ComplexF64)
+    @tensor NE[] := El[1 2 3 4] * C[1; 5] * conj(C[4; 8]) * Er[5 2 3 8]
+    @tensor Nρ[] := ρl[1 2] * conj(C[2; 3]) *ρr[1 3]
     function f(C)
         @tensor C_new[-1; -2] := El[1 2 3 -1] * C[1; 4] * Er[4 2 3 -2]
         return C_new * Nρ[1] / NE[1]
@@ -210,8 +215,10 @@ function invert_mpo(Os::InfiniteMPO, alg::VOMPS_Inversion; init_guess::Union{Inf
     @show space(ALs[1])
     it = 0
     ϵ = 1
+    AC1 = ACs[1]
+    AC2 = AC1
     while ϵ > alg.tol && it < alg.maxiter
-        ϵ_inv = 1e-3 *alg.tol
+        ϵ_inv = 1e-4 *alg.tol
 
         it+=1
         ϵs = zeros(unit_cell)
@@ -219,26 +226,29 @@ function invert_mpo(Os::InfiniteMPO, alg::VOMPS_Inversion; init_guess::Union{Inf
         for i in 1:unit_cell
             # Compute the left and right environments
             @info(crayon"cyan"("step $it) Computing ρ-environments for site $i"))
-            λρ, ρl, ρr = ρ_environments(ALs, ARs, Os, i)
+            λρ, ρl, ρr, ρl2 = ρ_environments(ALs, ARs, Os, i)
             @info(crayon"cyan"("step $it) Computing E-environments for site $i"))
-            λE, El, Er = E_environments(ALs, ARs, Os, i)
+            λE, El, Er, El2 = E_environments(ALs, ARs, Os, i)
             # Construct linear system for AC and C
-            bAC, fAC = AC_system(ACs[i], Os[i], λρ, ρl, ρr, λE, El, Er)
-            bC, fC = C_system(ACs[i], Cs[i], Os[i], ρl, ρr, El, Er)
+            bAC, fAC = AC_system(ACs[i], Cs[i], Os[i], λρ, ρl, ρr, λE, El, Er)
+            bC, fC = C_system(ACs[i], Cs[i], Os[i], ρl2, ρr, El2, Er, λρ, λE)
             # Solve linear systems
             @info(crayon"cyan"("step $it) Solving linear systems for site $i"))
             x₀ = TensorMap(rand,ComplexF64,space(ACs[i]))
             AC_new = linsolve(x -> fAC(x) + ϵ_inv * x,bAC,x₀;maxiter = 500)[1]
             x₀ = TensorMap(rand,ComplexF64,space(Cs[i]))
             C_new = linsolve(x -> fC(x) + ϵ_inv * x,bC,x₀;maxiter = 500)[1]
-            # Update the MPS tensors
-            @info(crayon"cyan"("step $it) Updating AL and AR tensors for site $i"))
-            ALs[i], ϵL = get_AL(AC_new, C_new)
-            ARs[i], ϵR = get_AR(AC_new, C_new)
+            # Update the AC tensors
             Cs[i] = C_new
             ACs[i] = AC_new
-            ϵs[i] = max(ϵL, ϵR)
         end
+        for i in 1:unit_cell
+            @info(crayon"cyan"("step $it) Updating AL and AR tensors for site $i"))
+            ALs[i], ϵL = get_AL(ACs[i], Cs[i])
+            ARs[i], ϵR = get_AR(ACs[i], Cs[i-1])
+            ϵs[i] = max(ϵL, ϵR) 
+        end
+        
         ϵ = maximum(ϵs)
         (alg.verbose) && (@info(crayon"cyan"("step $it) Convergence error = $(ϵ)")))
     end
