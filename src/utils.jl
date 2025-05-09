@@ -16,22 +16,21 @@ end
 # Entanglement spectrum of MPO
 function entanglement_spectrum(Os::InfiniteMPO, i::Int)
     unit_cell = length(Os)
-    d = dim(space(Os[i])[4])
+    transfer_l = transfer_left_mpo(Os[i+1])
     transfer_r = transfer_right_mpo(Os[i])
-    transfer_l = transfer_left_mpo(Os[i-unit_cell+1])
     for j = 1:unit_cell-1
+        transfer_l = transfer_left_mpo(Os[i+1+j]) ∘ transfer_l
         transfer_r = transfer_right_mpo(Os[i-j]) ∘ transfer_r
-        transfer_l = transfer_left_mpo(Os[i+j]) ∘ transfer_l
     end
 
-    Dl = space(Os[i-unit_cell+1], 1)
-    Dr = space(Os[i], 4)'
+    Dl = space(Os[i+1], 1)
+    Dr = space(Os[i+1], 1)
 
     ρl0 = TensorMap(rand, ComplexF64, Dl, Dl)
     ρr0 = TensorMap(rand, ComplexF64, Dr, Dr)  
     
-    _, ρrs, infor = eigsolve(transfer_r, ρl0, 1, :LM)
-    _, ρls, infol = eigsolve(transfer_l, ρr0, 1, :LM)
+    _, ρls, infol = eigsolve(transfer_l, ρl0, 1, :LM)
+    _, ρrs, infor = eigsolve(transfer_r, ρr0, 1, :LM)
 
     _, S, _ = tsvd((ρls[1] * ρrs[1]))
     es = S.data
