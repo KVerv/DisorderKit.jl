@@ -159,3 +159,59 @@ function measure(ρ::DisorderMPO, ps::Vector{<:Real}, O1::AbstractBondTensor, O2
     O_res = measure(ρ_weighted, O1, O2, i1, Δ)
     return O_res
 end
+
+# Fix phase of the disorder MPO after multiplying with inverse partition function
+function fix_phase(ρs::DisorderMPO)
+    Z = partition_functions(ρs)
+    @tensor A[-1; -2] := Z[1][-1 1;1 2]*Z[2][2 3;3 -2] 
+
+    vl = Tensor(rand, ComplexF64, space(A, 1)')
+    vr = Tensor(rand, ComplexF64, space(A, 2)')
+    vl = permute(vl, ((), (1,)))
+
+    λs, vls = eigsolve(x->x*A, vl, 1, :LM)
+    _, vrs = eigsolve(x->A*x, vr, 1, :LM)
+    λ = λs[1]
+    vl = vls[1]
+    vr = vrs[1]
+
+    d = dim(space(ρ[1],3))
+    ρ_normalized = rescale(ρ, [d/sqrt(λ) for ix in 1:length(ρ)])
+
+    return ρ_normalized
+end
+
+# Normalize the density matrix in each disorder sector
+function normalize_each_disorder_sector(ρ::DisorderMPO, trunc_alg::AbstractTruncationAlgorithm, inversion_alg::AbstractInversionAlgorithm; init_guess::Union{InfiniteMPO,Nothing} = nothing, verbosity::Int = 0)
+    (alg.verbosity > 0) && (@info(crayon"yellow"("Normalizing Each Disorder sector")))
+
+    # Compute partition function
+    mpoZ = partition_functions(ρ)
+    (alg.verbosity > 0) && (@info(crayon"yellow"("Truncate Partition Function")))
+    (alg.verbosity > 1) && (@info(crayon"yellow"("Before truncation: Bonddimension of Z = $(dim(codomain(mpoZ[1])[1]))")))
+    mpoZ = truncate_ordinary_MPO(mpoZ, trunc_alg)
+    (alg.verbosity > 1) && (@info(crayon"yellow"("After truncation: Bonddimension of Z = $(dim(codomain(mpoZ[1])[1]))")))
+
+    # Compute inverse of partition function
+    (alg.verbosity > 0) && (@info(crayon"cyan"("Invert Partition Function")))
+    mpoZinv, ϵ_conv = invert_mpo(mpo, inversion_alg; init_guess = nothing)
+    ϵ_conv < invtol || @warn("Inverse not converged: ϵ_conv = $(ϵ_conv)") 
+
+    # Check accuracy of inversion
+    (alg.verbosity > 0) && (@info(crayon"yellow"("Accuracy check")))
+    ϵ_acc = test_identity(mpoZ*mpoZinv)
+    ϵ_acc > invtol || ((alg.verbosity > 0) && (@info(crayon"green"("accuracy for MPO inversion: ϵ_acc = $ϵ_acc"))))
+    ϵ_acc < invtol || @warn(crayon"red"("Inverse not accurate: ϵ_acc = $ϵ_acc"))  
+
+    # Normalize each disorder sector by multiplying with inverse of partition function
+    (alg.verbosity > 0) && (@info(crayon"yellow"("Multiply Partition Function with Density Matrix")))
+    (alg.verbosity > 1) && (@info(crayon"yellow"("Before multiplication: Bonddimension of ρ = $(dim(codomain(ρ[1])[1]))")))
+    ρ_product = ρ * mpoZinv
+    (alg.verbosity > 1) && (@info(crayon"yellow"("After multiplication: Bonddimension of ρ = $(dim(codomain(ρ_product[1])[1]))")))
+
+    # Fix phase ambiguity
+    (alg.verbosity > 0) && (@info(crayon"red"("Fix Phase")))
+    ρ_normalized = fix_phase(ρ_product)
+
+    return ρ_normalized, ϵ_acc, mpoZinv
+end
