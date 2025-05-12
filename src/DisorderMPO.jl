@@ -210,7 +210,7 @@ function normalize_each_disorder_sector(ρ::DisorderMPO, trunc_alg::AbstractTrun
     (alg.verbosity > 1) && (@info(crayon"yellow"("After multiplication: Bonddimension of ρ = $(dim(codomain(ρ_product[1])[1]))")))
 
     # Fix phase ambiguity
-    (alg.verbosity > 0) && (@info(crayon"red"("Fix Phase")))
+    (alg.verbosity > 0) && (@info(crayon"yellow"("Fix Phase")))
     ρ_normalized = fix_phase(ρ_product)
 
     return ρ_normalized, ϵ_acc, mpoZinv
