@@ -2,7 +2,7 @@ module DisorderKit
 
 __precompile__(true)
 
-using TensorKit, MPSKit, KrylovKit
+using TensorKit, MPSKit, MPSKitModels, KrylovKit
 using LinearAlgebra
 using Crayons, TimerOutputs
 
