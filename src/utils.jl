@@ -48,3 +48,23 @@ function test_identity(Os::InfiniteMPO)
     end
     return maximum(ϵs)
 end
+
+# MPO environments used in truncation
+function env_left(Os::InfiniteMPO, ix::Int)
+    v1 = TensorMap(rand, ComplexF64, space(Os[ix + 1], 1), space(Os[ix + 1], 1))
+    transfer_left = transfer_leftt_mpo(Os[ix])
+    for jx in ix+1:1:ix+length(Os)-1
+        transfer_left = transfer_leftt_mpo(Os[jx]) ∘ transfer_left
+    end
+    _, ls = eigsolve(v -> transfer_left(Os, ix, v), v1, 1, :LM);
+    return ls[1]
+end
+function env_right(Os::InfiniteMPO, ix::Int)
+    v1 = TensorMap(rand, ComplexF64, space(Os[ix + 1], 1), space(Os[ix + 1], 1))
+    transfer_right = transfer_right_mpo(Os[ix])
+    for jx in ix-1:-1:ix-length(Os)+1
+        transfer_right = transfer_right_mpo(Os[jx]) ∘ transfer_right
+    end
+    _, ls = eigsolve(v -> transfer_right(Os, ix, v), v1, 1, :LM);
+    return ls[1]
+end
