@@ -1,21 +1,3 @@
-abstract type AbstractTruncationAlgorithm end
-
-# Standard truncation algorithm for ordinary MPOs
-struct StandardTruncation <: AbstractTruncationAlgorithm
-    trunc_method::TruncationScheme
-    verbosity::Int
-end
-
-StandardTruncation(; trunc_method::TruncationScheme = truncerr(1e-6), verbosity::Int = 0) = Standard_Truncation(trunc_method, verbosity)
-
-# Truncation algorithm for the disorder MPO by tracing out disorder sectors
-struct DisorderTracedTruncation <: AbstractTruncationAlgorithm
-    alg_trunc::AbstractTruncationAlgorithm # Method for truncating ordinary mpo
-    verbosity::Int
-end
-
-DisorderTracedTruncation(; alg_trunc::AbstractTruncationAlgorithm = StandardTruncation(), verbosity::Int = 0) = DisorderTracedTruncation(alg_trunc, verbosity)
-
 # Compute truncation matrices
 function truncation_matrices(M::InfiniteMPO, trunc_method::TruncationScheme)
     L = length(M)
@@ -40,7 +22,6 @@ function truncation_matrices(M::InfiniteMPO, trunc_method::TruncationScheme)
     truncations = map(1:L) do ix
         X, Xinv = Xs[ix]
         Y, Yinv = Ys[ix]
-
         U, S, V = tsvd(X*Y; trunc=trunc_method)
         PL = sqrt(S) * V * Yinv
         PR = Xinv * U * sqrt(S)
@@ -64,12 +45,11 @@ function truncate_mpo(mpo::InfiniteMPO, alg::StandardTruncation)
 end
 
 # Truncate DisorderMPO by tracing disorder sectors
-function truncate_disorder_MPO(ρ::DisorderMPO, ps::Vector{<:Real}, alg::DisorderTracedTruncation)
+function truncate_mpo(ρ::DisorderMPO, ps::Vector{<:Real}, alg::DisorderTracedTruncation)
     @info(crayon"red"("Truncate DisorderMPO"))
     ρn_weighted = disorder_average(ρ, ps)
     
-    @info(crayon"red"("Truncate Ordinary MPO"))
-    truncations = truncation_matrices(ρn_weighted, alg.alg_trunc)
+    truncations = truncation_matrices(ρn_weighted, alg.trunc_method)
     L = length(ρn_weighted)
     ρs_updated = map(1:L) do ix
         PL = truncations[ix-1][1]
