@@ -4,6 +4,7 @@ authors = ["KVerv <kevin.vervoort@hotmail.com>"]
 version = "0.1.0"
 
 [deps]
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 Crayons = "a8cc5b0e-0ffa-5ad4-8c14-923d3ee1735f"
 KrylovKit = "0b1a1467-8014-51b9-945f-bf0ae24f4b77"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
