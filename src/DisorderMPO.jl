@@ -11,7 +11,7 @@ end
 Base.getindex(T::DisorderMPO, ix::Int) = T.opp[ix]
 Base.size(T::DisorderMPO) = size(T.opp)
 Base.length(T::DisorderMPO) = length(T.opp)
-Base.iterate(t::DisorderMPO, i=1) = (i > length(t.opp)) ? nothing : (t[i], i + 1);
+Base.iterate(t::DisorderMPO, i=1) = (i > length(t.opp)) ? nothing : (t[i], i + 1)
 
 # Rescale the disorder MPO by a vector of scalars
 function rescale(ρs::DisorderMPO, αs::Vector{<:Number})
@@ -23,15 +23,15 @@ function rescale(ρs::DisorderMPO, αs::Vector{<:Number})
 end
 
 # Multiply a disorder MPO with a DenseMPO on the disorder leg, used in the normalization of each disorder sector
-function Base.:*(ρs::DisorderMPO, Os::DenseMPO)
+function Base.:*(ρs::DisorderMPO, Os::InfiniteMPO)
 
     unit_cell = length(ρs)
     disordermpo = Vector{AbstractDisorderMPOTensor}(undef, length(ρs))
     for i = 1:unit_cell
         space(ρs[i], 3) == space(Os[i], 2) || throw(DimensionMismatch("Physical space of MPO should be match the disorder space of DisorderMPO."))
         iso1 = isomorphism(fuse(space(ρs[i], 1), space(Os[i], 1)), space(ρs[i], 1) ⊗ space(Os[i], 1))
-        iso2 = isomorphism(space(ρs[i], 4) ⊗ space(Os[i], 4), fuse(space(ρs[i], 4), space(Os[i], 4)))
-        @tensor ρs_product[-1 -2 -3; -4 -5 -6] = ρs[1 -2 2; -4 -5 4] * Os[3 -3; 2 5] * iso1[-1; 1 3] * iso2[4 5; -6]
+        iso2 = isomorphism(space(ρs[i], 6)' ⊗ space(Os[i], 4)', fuse(space(ρs[i], 6), space(Os[i], 4)))
+        @tensor ρs_product[-1 -2 -3; -4 -5 -6] := ρs[i][1 -2 2; -4 -5 4] * Os[i][3 -3; 2 5] * iso1[-1; 1 3] * iso2[4 5; -6]
         disordermpo[i] = ρs_product
     end
 
@@ -79,7 +79,7 @@ function disorder_average(ρs::DisorderMPO, ps::Vector{<:Real})
 end
 
 # measure the expectation value of a local operator on site i
-function measure(ρ_weighted::DenseMPO, O::AbstractBondTensor, i::Int)
+function measure(ρ_weighted::InfiniteMPO, O::AbstractBondTensor, i::Int)
     TMs = map(ρ_weighted) do ρx
         @tensor TM[-1; -2] := ρx[-1 1; 1 -2]
         return TM
@@ -104,7 +104,7 @@ function measure(ρ_weighted::DenseMPO, O::AbstractBondTensor, i::Int)
 end
 
 # measure the correlator of a local operator on site i and site i+Δ    
-function measure(ρ_weighted::DenseMPO, O1::AbstractBondTensor, O2::AbstractBondTensor, i1::Int, Δ::Int)
+function measure(ρ_weighted::InfiniteMPO, O1::AbstractBondTensor, O2::AbstractBondTensor, i1::Int, Δ::Int)
     TMs = map(ρ_weighted) do ρx
         @tensor TM[-1; -2] := ρx[-1 1; 1 -2]
         return TM
@@ -175,32 +175,31 @@ function fix_phase(ρs::DisorderMPO)
     vl = vls[1]
     vr = vrs[1]
 
-    d = dim(space(ρ[1],3))
-    ρ_normalized = rescale(ρ, [d/sqrt(λ) for ix in 1:length(ρ)])
+    d = dim(space(ρs[1],3))
+    ρ_normalized = rescale(ρs, [d/sqrt(λ) for ix in 1:length(ρs)])
 
     return ρ_normalized
 end
 
 # Normalize the density matrix in each disorder sector
-function normalize_each_disorder_sector(ρ::DisorderMPO, trunc_alg::AbstractTruncationAlgorithm, inversion_alg::AbstractInversionAlgorithm; init_guess::Union{InfiniteMPO,Nothing} = nothing, verbosity::Int = 0)
+function normalize_each_disorder_sector(ρ::DisorderMPO, trunc_alg::AbstractTruncationAlgorithm, inversion_alg::AbstractInversionAlgorithm; init_guess::Union{InfiniteMPO,Nothing} = nothing, verbosity::Int = 0, invtol::Float64 = 1e-8)
     (verbosity > 0) && (@info(crayon"yellow"("Normalizing Each Disorder sector")))
 
     # Compute partition function
     mpoZ = partition_functions(ρ)
     (verbosity > 0) && (@info(crayon"yellow"("Truncate Partition Function")))
     (verbosity > 1) && (@info(crayon"yellow"("Before truncation: Bonddimension of Z = $(dim(codomain(mpoZ[1])[1]))")))
-    mpoZ = truncate_ordinary_MPO(mpoZ, trunc_alg)
+    mpoZ = truncate_mpo(mpoZ, trunc_alg)
     (verbosity > 1) && (@info(crayon"yellow"("After truncation: Bonddimension of Z = $(dim(codomain(mpoZ[1])[1]))")))
 
     # Compute inverse of partition function
     (verbosity > 0) && (@info(crayon"cyan"("Invert Partition Function")))
-    mpoZinv, ϵ_conv = invert_mpo(mpo, inversion_alg; init_guess = init_guess)
-    ϵ_conv < invtol || @warn("Inverse not converged: ϵ_conv = $(ϵ_conv)") 
+    mpoZinv, _ = invert_mpo(mpoZ, inversion_alg; init_guess = init_guess)
 
     # Check accuracy of inversion
     (verbosity > 0) && (@info(crayon"yellow"("Accuracy check")))
     ϵ_acc = test_identity(mpoZ*mpoZinv)
-    ϵ_acc > invtol || ((alg.verbosity > 0) && (@info(crayon"green"("accuracy for MPO inversion: ϵ_acc = $ϵ_acc"))))
+    ϵ_acc > invtol || ((verbosity > 0) && (@info(crayon"green"("accuracy for MPO inversion: ϵ_acc = $ϵ_acc"))))
     ϵ_acc < invtol || @warn(crayon"red"("Inverse not accurate: ϵ_acc = $ϵ_acc"))  
 
     # Normalize each disorder sector by multiplying with inverse of partition function
@@ -214,4 +213,28 @@ function normalize_each_disorder_sector(ρ::DisorderMPO, trunc_alg::AbstractTrun
     ρ_normalized = fix_phase(ρ_product)
 
     return ρ_normalized, ϵ_acc, mpoZinv
+end
+
+# measure average correlation length
+function average_correlation_length(ρs::DisorderMPO, ps::Vector{<:Real})
+    unit_cell = length(ρs)
+    D_disorder = length(ps)
+    P = DiagonalTensorMap(ps, ℂ^D_disorder)
+
+    Zs = partition_functions(ρs)
+
+    A = id(ComplexF64,space(Zs[1])[1])
+    for i in 1:unit_cell
+        @tensor Z_traced[-1; -2] := Zs[i][-1 1;3 -2]*P[3;1]
+        A = A*Z_traced
+    end
+
+    vr = Tensor(rand, ComplexF64, space(A, 2)')
+
+    λs, vrs = eigsolve(x->A*x, vr, 2, :LM)
+    λ1 = λs[1]
+    λ2 = λs[2]
+    
+    ξ = real(unit_cell/log(λ1/λ2))
+    return ξ
 end
