@@ -64,7 +64,7 @@ function ρ_environments(ALs::PeriodicVector{<:AbstractMPSTensor}, ARs::Periodic
     end
     
     xl = Tensor(rand, ComplexF64, space(Os[i])[1]⊗space(ALs[i])[1])
-    xr = Tensor(rand, ComplexF64, space(Os[i])[1]'⊗space(ARs[i])[1]')
+    xr = Tensor(rand, ComplexF64, space(Os[i+1])[1]'⊗space(ARs[i+1])[1]')
 
     valsl, envsl = eigsolve(transfer_l, xl, 1, :LM)
     valsr, envsr = eigsolve(transfer_r, xr, 1, :LM)
@@ -121,7 +121,7 @@ function E_environments(ALs::PeriodicVector{<:AbstractMPSTensor}, ARs::PeriodicV
     end
     
     xl = Tensor(rand, ComplexF64, space(ALs[i])[1]'⊗space(Os[i])[1]'⊗space(Os[i])[1]⊗space(ALs[i])[1])
-    xr = Tensor(rand, ComplexF64, space(ARs[i])[1]⊗space(Os[i])[1]⊗space(Os[i])[1]'⊗space(ARs[i])[1]')
+    xr = Tensor(rand, ComplexF64, space(ARs[i+1])[1]⊗space(Os[i+1])[1]⊗space(Os[i+1])[1]'⊗space(ARs[i+1])[1]')
 
     valsl, envsl = eigsolve(transfer_l, xl, 1, :LM)
     valsr, envsr = eigsolve(transfer_r, xr, 1, :LM)
@@ -213,11 +213,10 @@ function invert_mpo(Os::InfiniteMPO, alg::VOMPS_Inversion; init_guess::Union{Inf
     ACs = As.AC
     Cs  = As.C
 
-    @show space(ALs[1])
     it = 0
     ϵ = 1
     while ϵ > alg.tol && it < alg.maxiter
-        ϵ_inv = 1e-4 *alg.tol
+        ϵ_inv = 1e-3 *alg.tol
 
         it+=1
         ϵs = zeros(unit_cell)
@@ -240,17 +239,22 @@ function invert_mpo(Os::InfiniteMPO, alg::VOMPS_Inversion; init_guess::Union{Inf
             # Update the AC tensors
             Cs[i] = C_new
             ACs[i] = AC_new
-        end
-        for i in 1:unit_cell
             (alg.verbosity > 1) && @info(crayon"cyan"("step $it) Updating AL and AR tensors for site $i"))
             ALs[i], ϵL = get_AL(ACs[i], Cs[i])
             ARs[i], ϵR = get_AR(ACs[i], Cs[i-1])
             ϵs[i] = max(ϵL, ϵR) 
         end
+        # for i in 1:unit_cell
+        #     (alg.verbosity > 1) && @info(crayon"cyan"("step $it) Updating AL and AR tensors for site $i"))
+        #     ALs[i], ϵL = get_AL(ACs[i], Cs[i])
+        #     ARs[i], ϵR = get_AR(ACs[i], Cs[i-1])
+        #     ϵs[i] = max(ϵL, ϵR) 
+        # end
         
         ϵ = maximum(ϵs)
         (alg.verbosity > 0) && (@info(crayon"cyan"("step $it) Convergence error = $(ϵ)")))
     end
+    ϵ < alg.tol || @warn("Inverse not converged: ϵ = $(ϵ)") 
     # Convert MPS back to MPO
     pspaces = map(1:unit_cell) do i
         pspace = space(Os[i])[2]
