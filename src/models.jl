@@ -1,28 +1,75 @@
+function RTFIM_hamiltonian(Js::Vector{Float64}, hs::Vector{Float64})
+    X, Z, Id = zeros(ComplexF64, 2, 2), zeros(ComplexF64, 2, 2), zeros(ComplexF64, 2, 2)
+    X[1, 2], X[2, 1] = 1, 1
+    Z[1, 1], Z[2, 2] = 1, -1
+    Id[1, 1], Id[2, 2] = 1, 1
+    D_disorder = length(Js) * length(hs)
+    Hs = zeros(ComplexF64, 3, 2, D_disorder, 2, D_disorder, 3)
+    for (i, (h, J)) in enumerate(Iterators.product(hs, Js))
+        @show i, h, J
+        Hs[1,:,i, :, i, 1] = Id
+        Hs[2,:,i, :, i, 1] = zeros(ComplexF64, 2, 2)
+        Hs[3,:,i, :, i, 1] = zeros(ComplexF64, 2, 2)
+        Hs[1,:,i, :, i, 2] = -J*Z
+        Hs[2,:,i, :, i, 2] = zeros(ComplexF64, 2, 2)
+        Hs[3,:,i, :, i, 2] = zeros(ComplexF64, 2, 2)
+        Hs[1,:,i, :, i, 3] = -h*X
+        Hs[2,:,i, :, i, 3] = Z
+        Hs[3,:,i, :, i, 3] = Id
+    end 
+
+    Hs = TensorMap(Hs, ℂ^3⊗ℂ^2⊗ℂ^D_disorder,ℂ^2⊗ℂ^D_disorder⊗ℂ^3)
+
+    return DisorderMPO([Hs])
+end
+
 function random_transverse_field_ising_evolution(Js::Vector{Float64}, hs::Vector{Float64}, dβ::Float64; order::Int = 1)
+    # X, Z, Id = zeros(ComplexF64, 2, 2), zeros(ComplexF64, 2, 2), zeros(ComplexF64, 2, 2)
+    # X[1, 2], X[2, 1] = 1, 1
+    # Z[1, 1], Z[2, 2] = 1, -1
+    # Id[1, 1], Id[2, 2] = 1, 1
+    # D_disorder = length(Js) * length(hs)
+    # expHs = zeros(ComplexF64, 2, 2, D_disorder, 2, D_disorder, 2)
+    # for (i, (h, J)) in enumerate(Iterators.product(hs, Js))
+    #     @show i, h, J
+    #     B = Z
+    #     C = -J*Z
+    #     D = -h*X
+    #     expHs[1,:,i, :, i, 1] = Id - dβ*D
+    #     expHs[2,:,i, :, i, 1] = -dβ*B
+    #     expHs[1,:,i, :, i, 2] = C
+    #     expHs[2,:,i, :, i, 2] = Id*0
+    #     @show reshape(expHs[:,:,i,:,i,:], 1, 16)
+    # end 
+
+    # expHs2 = TensorMap(expHs, ℂ^2⊗ℂ^2⊗ℂ^D_disorder,ℂ^2⊗ℂ^D_disorder⊗ℂ^2)
+
     alg = TaylorCluster(; N=order, extension=true, compression=true)
     D_disorder = length(Js) * length(hs)
     expHs = 0
     for (i, (h, J)) in enumerate(Iterators.product(hs, Js))
         @show i, h, J
-        H = transverse_field_ising(; J = J, g = h)
+        H = transverse_field_ising(; J = J, g = h/J)
         expH = make_time_mpo(H, -1im*dβ, alg)
-
-        Us = map(expH) do U
-            disordermap = DiagonalTensorMap(zeros(ComplexF64, D_disorder),ℂ^D_disorder)
-            disordermap[i,i] = 1.0
-            @tensor U_full[-1 -2 -3; -4 -5 -6] := U[-1 -2; -4 -6]*disordermap[-3; -5]
-            return U_full
-        end
+        U = convert(TensorMap,expH[1])
+        disordermap = DiagonalTensorMap(zeros(ComplexF64, D_disorder),ℂ^D_disorder)
+        disordermap[i,i] = 1.0
+        @tensor U_full[-1 -2 -3; -4 -5 -6] := U[-1 -2; -4 -6]*disordermap[-3; -5]
         if i == 1
-            expHs = Us
+            expHs = U_full
         else
-            expHs += Us
+            expHs += U_full
         end
+        # @show expHs.data[240:255]
     end
-    return DisorderMPO(TensorMap.(expHs))
+    expHs = convert(TensorMap,expHs)
+    # @show expHs.data
+    # @show expHs2.data
+    # @show expHs.data ≈ expHs2.data
+    return DisorderMPO([expHs])
 end
 
-function TFIM_time_evolution_with_disorder(Δτ::Real, gs::Vector{<:Real}, Js::Vector{<:Real}=[1.0])
+function RTFIM_time_evolution_Trotter(Δτ::Real, gs::Vector{<:Real}, Js::Vector{<:Real}=[1.0])
     X, Z, Id = zeros(ComplexF64, 2, 2), zeros(ComplexF64, 2, 2), zeros(ComplexF64, 2, 2)
     X[1, 2], X[2, 1] = 1, 1
     Z[1, 1], Z[2, 2] = 1, -1
