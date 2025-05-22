@@ -11,7 +11,7 @@ export test_identity, mpo_fidelity
 export DisorderMPO, measure, partition_functions, disorder_average, average_correlation_length
 export StandardTruncation, DisorderTracedTruncation, truncate_mpo
 export iDTEBD, evolve_densitymatrix
-export random_transverse_field_ising_evolution, TFIM_time_evolution_with_disorder
+export random_transverse_field_ising_evolution, RTFIM_time_evolution_Trotter, RBH_time_evolution_Trotter, RTFIM_hamiltonian
 
 const AbstractMPSTensor = AbstractTensorMap{T, S, 2, 1} where {T, S}
 const AbstractMPOTensor = AbstractTensorMap{T, S, 2, 2} where {T, S}
