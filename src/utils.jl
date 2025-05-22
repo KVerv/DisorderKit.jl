@@ -51,6 +51,20 @@ function test_identity(Os::InfiniteMPO)
     return maximum(ϵs)
 end
 
+# Test if MPO is equal to the identity MPO
+function test_identity_random(Os::InfiniteMPO; n_samples::Int = 5)
+    ϵs = zeros(Float64, n_samples)
+    for i in 1:n_samples
+        pspaces = [space(Os[i])[2] for i in 1:length(Os)]
+        vspaces = [space(Os[i])[1] for i in 1:length(Os)]
+        ψ = InfiniteMPS(rand, ComplexF64, pspaces, vspaces)
+        @show dot(ψ, Os*ψ)
+        @show norm(dot(ψ, Os*ψ))
+        ϵs[i] = abs(1-norm(dot(ψ, Os*ψ)))
+    end
+    return maximum(ϵs)
+end
+
 # MPO environments used in truncation
 function env_left(Os::InfiniteMPO, ix::Int)
     v1 = TensorMap(rand, ComplexF64, space(Os[ix+1], 1), space(Os[ix+1], 1))
