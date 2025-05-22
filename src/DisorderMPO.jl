@@ -160,6 +160,34 @@ function measure(ρ::DisorderMPO, ps::Vector{<:Real}, O1::AbstractBondTensor, O2
     return O_res
 end
 
+# measure the disorder average of a disorder operator on site i
+function measure(ρ::DisorderMPO, ps::Vector{<:Real}, Os::DisorderMPO, i::Int)
+    ρO_weighted = disorder_average(ρ*Os, ps)
+    TMs = map(ρO_weighted) do ρx
+        @tensor TM[-1; -2] := ρx[-1 1; 1 -2]
+        return TM
+    end
+    TMs = PeriodicArray(TMs)
+
+    M = length(ρO_weighted)
+    TMl = prod(map(ix->TMs[ix], i-M:i-1))
+    TMr = prod(map(ix->TMs[ix], i+1:i+M))
+
+    vl = Tensor(rand, ComplexF64, space(ρO_weighted[i], 1)')
+    vr = Tensor(rand, ComplexF64, space(ρO_weighted[i], 4)')
+    vl = permute(vl, ((), (1,)))
+
+    _, vls = eigsolve(x->x*TMl, vl, 1, :LM)
+    _, vrs = eigsolve(x->TMr*x, vr, 1, :LM)
+    vl = vls[1]
+    vr = vrs[1]
+
+    @tensor O_res = vl[1] * ρO_weighted[i][1 3; 3 2] * vr[2]
+    @show O_res
+    @show (vl * vr)
+    return O_res/ (vl*vr)[1]
+end
+
 # Fix phase of the disorder MPO after multiplying with inverse partition function
 function fix_phase(ρs::DisorderMPO)
     Z = partition_functions(ρs)
