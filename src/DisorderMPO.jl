@@ -89,7 +89,6 @@ function measure(ρ_weighted::InfiniteMPO, O::AbstractBondTensor, i::Int)
     M = length(ρ_weighted)
     TMl = prod(map(ix->TMs[ix], i-M:i-1))
     TMr = prod(map(ix->TMs[ix], i+1:i+M))
-
     vl = Tensor(rand, ComplexF64, space(ρ_weighted[i], 1)')
     vr = Tensor(rand, ComplexF64, space(ρ_weighted[i], 4)')
     vl = permute(vl, ((), (1,)))
@@ -162,7 +161,7 @@ end
 
 # measure the disorder average of a disorder operator on site i
 function measure(ρ::DisorderMPO, ps::Vector{<:Real}, Os::DisorderMPO, i::Int)
-    ρO_weighted = disorder_average(ρ*Os, ps)
+    ρO_weighted = disorder_average(Os * ρ, ps)
     TMs = map(ρO_weighted) do ρx
         @tensor TM[-1; -2] := ρx[-1 1; 1 -2]
         return TM
@@ -182,16 +181,24 @@ function measure(ρ::DisorderMPO, ps::Vector{<:Real}, Os::DisorderMPO, i::Int)
     vl = vls[1]
     vr = vrs[1]
 
+   
+    
+    iso = isomorphism(space(vl)[1]', space(ρ[i], 1) ⊗ space(Os[1], 1))
     @tensor O_res = vl[1] * ρO_weighted[i][1 3; 3 2] * vr[2]
-    @show O_res
-    @show (vl * vr)
-    return O_res/ (vl*vr)[1]
+    @tensor N = vl[1] * iso[1; 2 3] * ρ[i][2 4 7; 4 7 5] * conj(iso[6;5 3]) * vr[6]
+    @show O_res, N
+    return O_res/(vl*vr)[1]
 end
 
 # Fix phase of the disorder MPO after multiplying with inverse partition function
 function fix_phase(ρs::DisorderMPO)
-    Z = partition_functions(ρs)
-    @tensor A[-1; -2] := Z[1][-1 1;1 2]*Z[2][2 3;3 -2] 
+    Zs = partition_functions(ρs)
+    TMs = map(Zs) do Z
+        @tensor TM[-1; -2] := Z[-1 1; 1 -2]
+        return TM
+    end
+
+    A = prod(map(ix->TMs[ix], 1:length(Zs)))
 
     vl = Tensor(rand, ComplexF64, space(A, 1)')
     vr = Tensor(rand, ComplexF64, space(A, 2)')
@@ -226,7 +233,8 @@ function normalize_each_disorder_sector(ρ::DisorderMPO, trunc_alg::AbstractTrun
 
     # Check accuracy of inversion
     (verbosity > 0) && (@info(crayon"yellow"("Accuracy check")))
-    ϵ_acc = test_identity(mpoZ*mpoZinv)
+    # ϵ_acc = test_identity(mpoZ*mpoZinv)
+    ϵ_acc = test_identity_random(mpoZ*mpoZinv)
     ϵ_acc > invtol || ((verbosity > 0) && (@info(crayon"green"("accuracy for MPO inversion: ϵ_acc = $ϵ_acc"))))
     ϵ_acc < invtol || @warn(crayon"red"("Inverse not accurate: ϵ_acc = $ϵ_acc"))  
 
