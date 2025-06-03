@@ -4,10 +4,12 @@ authors = ["KVerv <kevin.vervoort@hotmail.com>"]
 version = "0.1.0"
 
 [deps]
+BlockTensorKit = "5f87ffc2-9cf1-4a46-8172-465d160bd8cd"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 Crayons = "a8cc5b0e-0ffa-5ad4-8c14-923d3ee1735f"
 KrylovKit = "0b1a1467-8014-51b9-945f-bf0ae24f4b77"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+LsqFit = "2fda8390-95c7-5789-9bda-21331edee243"
 MPSKit = "bb1c41ca-d63c-52ed-829e-0820dda26502"
 MPSKitModels = "ca635005-6f8c-4cd1-b51d-8491250ef2ab"
 Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
