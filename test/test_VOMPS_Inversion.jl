@@ -179,7 +179,7 @@ end
     @test ϵ_acc < 1e-8
 end
 
-@testset "test invert_mpo with VOMPS: Taylor (Ising)" for τ in 0.2:0.1:0.7, t in 0:0.01:0.02
+@testset "test invert_mpo with VOMPS: Taylor (Ising)" for τ in 0.1:0.1:0.7, t in 0:0.01:0.02
     alg = TaylorCluster(; N=1, extension=true, compression=true)
     H = transverse_field_ising(; J = 1., g = 1.)
 
@@ -197,15 +197,51 @@ end
     inverse_dim = 1
     alg = VOMPS_Inversion(inverse_dim; tol=1e-8, maxiter=maxiter, verbosity=1)
     
-    Oinv, ϵ = invert_mpo(mpo, alg; init_guess = InfiniteMPO([T1]))
+    # Oinv, ϵ = invert_mpo(mpo, alg; init_guess = InfiniteMPO([T1]))
     @test ϵ < 1e-8
     
-    O_times_Oinv = mpo * Oinv
-    mps = DisorderKit.transform_to_mps(mpo * Oinv)
+    # O_times_Oinv = mpo * Oinv
+    O_times_Oinv = mpo * mpo_inv
+    # mps = DisorderKit.transform_to_mps(mpo * Oinv)
     
-    alg = StandardTruncation(; trunc_method = truncerr(1e-8))
-    T = truncate_mpo(O_times_Oinv, alg)
-    @show space(T[1])
+    # alg = StandardTruncation(; trunc_method = truncerr(1e-8))
+    # T = truncate_mpo(O_times_Oinv, alg)
+    # @show space(T[1])
+
+    ϵ_acc = DisorderKit.test_identity_random(O_times_Oinv)
+    @show ϵ_acc
+    @show τ, t
+    @test ϵ_acc < 1e-6
+end
+
+@testset "test invert_mpo with VOMPS: Cluster (Ising)" for τ in 0.1:0.1:0.7, t in 0.01:0.01:0.02
+    alg = DisorderKit.ClusterExpansion(3)
+    H = transverse_field_ising(; J = 1., g = 0)
+
+    mpo = DisorderKit.make_time_mpo(H, -1im*τ, alg)
+    mpo_inv = DisorderKit.make_time_mpo(H, 1im*τ, alg)
+    mpo = InfiniteMPO([convert(TensorMap, mpo[1])])
+    mpo_inv = InfiniteMPO([convert(TensorMap, mpo_inv[1])])
+    
+    # initial guess
+    A = TensorMap(randn, ComplexF64, space(mpo_inv[1]))
+    T1 = t*A + mpo_inv[1]
+
+    maxiter = 200
+    # inverse_dim = dim(space(mpo_inv[1])[1])
+    inverse_dim = 3
+    alg = VOMPS_Inversion(inverse_dim; tol=1e-8, maxiter=maxiter, verbosity=1)
+    
+    Oinv, ϵ = invert_mpo(mpo, alg; init_guess = InfiniteMPO([T1]))
+    # @test ϵ < 1e-8
+    
+    O_times_Oinv = mpo * Oinv
+    # O_times_Oinv = mpo * mpo_inv
+    # mps = DisorderKit.transform_to_mps(mpo * Oinv)
+    
+    # alg = StandardTruncation(; trunc_method = truncerr(1e-8))
+    # T = truncate_mpo(O_times_Oinv, alg)
+    # @show space(T[1])
 
     ϵ_acc = DisorderKit.test_identity_random(O_times_Oinv)
     @show ϵ_acc
