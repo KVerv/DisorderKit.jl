@@ -56,10 +56,8 @@ function test_identity_random(Os::InfiniteMPO; n_samples::Int = 5)
     ϵs = zeros(Float64, n_samples)
     for i in 1:n_samples
         pspaces = [space(Os[i])[2] for i in 1:length(Os)]
-        vspaces = [space(Os[i])[1] for i in 1:length(Os)]
+        vspaces = [ℂ^3 for i in 1:length(Os)]
         ψ = InfiniteMPS(rand, ComplexF64, pspaces, vspaces)
-        @show dot(ψ, Os*ψ)
-        @show norm(dot(ψ, Os*ψ))
         ϵs[i] = abs(1-norm(dot(ψ, Os*ψ)))
     end
     return maximum(ϵs)

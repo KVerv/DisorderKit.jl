@@ -11,9 +11,10 @@ struct  iDTEBD <: AbstractAlgorithm
     truncfrequency::Int
     inversion_frequency::Int
     timer_output::TimerOutput
+    max_inverse_dim::Int
 
-    function iDTEBD(alg_inversion::AbstractInversionAlgorithm, alg_trunc_Z::AbstractTruncationAlgorithm, alg_trunc_disordermpo::AbstractTruncationAlgorithm; invtol::Float64 = 1e-8, nsteps::Int = 50, verbosity::Int = 0, truncfrequency::Int = 1, inversion_frequency::Int = 1,  timer_output::TimerOutput = TimerOutput())
-        return new(alg_inversion, alg_trunc_Z, alg_trunc_disordermpo, invtol, nsteps, verbosity, truncfrequency, inversion_frequency, timer_output)
+    function iDTEBD(alg_inversion::AbstractInversionAlgorithm, alg_trunc_Z::AbstractTruncationAlgorithm, alg_trunc_disordermpo::AbstractTruncationAlgorithm; invtol::Float64 = 1e-8, nsteps::Int = 50, verbosity::Int = 0, truncfrequency::Int = 1, inversion_frequency::Int = 1,  timer_output::TimerOutput = TimerOutput(), max_inverse_dim::Int = 2)
+        return new(alg_inversion, alg_trunc_Z, alg_trunc_disordermpo, invtol, nsteps, verbosity, truncfrequency, inversion_frequency, timer_output, max_inverse_dim)
     end
 end
 
@@ -37,7 +38,7 @@ function evolve_densitymatrix(Ts::DisorderMPO, ps::Vector{<:Real}, alg::iDTEBD; 
             @timeit alg.timer_output "normalize_each_disorder_sector" begin
                 ρs_normalized, ϵ_acc, mpoZinv = normalize_each_disorder_sector(ρs, alg.alg_trunc_Z, alg_inversion; init_guess = mpoZinv, verbosity = alg.verbosity, invtol = alg.invtol)
             end
-            while ϵ_acc > alg.invtol
+            while (ϵ_acc > alg.invtol) && (alg_inversion.inverse_dim < alg.max_inverse_dim)
                 alg_inversion = VOMPS_Inversion(alg_inversion.inverse_dim*2; tol = alg_inversion.tol, maxiter = alg_inversion.maxiter, verbosity = alg_inversion.verbosity)
                 (alg.verbosity > 1) && (@info(crayon"magenta"("Using Z⁻¹ bonddimension of χ = $(alg_inversion.inverse_dim)")))
                 @timeit alg.timer_output "normalize_each_disorder_sector" begin
