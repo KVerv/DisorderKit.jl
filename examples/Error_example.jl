@@ -26,7 +26,7 @@ alg_inversion = VOMPS_Inversion(1; tol = 1e-8, maxiter = 250, verbosity = 2)
 alg_trunc_Z = StandardTruncation(trunc_method = truncerr(trunctol))
 alg_trunc_disordermpo = DisorderTracedTruncation(trunc_method = truncdim(D_max))
 
-βs = 1:0.5:20
+βs = 0.1:0.5:2
 # Evolve density matrix
 function fixed_point_distribution_h(h,β)
     Γ = log(β)
