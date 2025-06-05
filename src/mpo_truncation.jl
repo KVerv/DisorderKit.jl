@@ -60,3 +60,44 @@ function truncate_mpo(ρ::DisorderMPO, ps::Vector{<:Real}, alg::DisorderTracedTr
 
     return DisorderMPO(ρs_updated)
 end
+
+# Truncate DisorderMPO with open disorder sectors
+function truncate_mpo(ρ::DisorderMPO, ps::Vector{<:Real}, alg::DisorderOpenTruncation)
+    @info(crayon"red"("Truncate DisorderMPO"))
+    L = length(ρ)
+    ρs_fused = map(1:L) do ix
+        sp1, sp2 = space(ρ[ix], 2), space(ρ[ix], 3)
+        iso = isomorphism(fuse(sp1, sp2), sp1*sp2)
+        @tensor ρ1_updated[-1 -2; -3 -4] := iso[-2; 1 2] * ρ[ix][-1 1 2; 3 4 -4] * conj(iso[-3; 3 4])
+        return ρ1_updated
+    end
+    ρn_weighted = InfiniteMPO(ρs_fused)
+    
+    truncations = truncation_matrices(ρn_weighted, alg.trunc_method)
+    L = length(ρn_weighted)
+    ρs_updated = map(1:L) do ix
+        PL = truncations[ix-1][1]
+        PR = truncations[ix][2]
+        @tensor ρ1_updated[-1 -2 -3; -4 -5 -6] := PL[-1; 1] * ρ[ix][1 -2 -3; -4 -5 2] * PR[2; -6]
+        return ρ1_updated
+    end
+
+    return DisorderMPO(ρs_updated)
+end
+
+# Truncate DisorderMPO by optimizing isometries with SVD update
+function truncate_mpo(ρ::DisorderMPO, ps::Vector{<:Real}, alg::SVDUpdateTruncation)
+    @info(crayon"red"("Truncate DisorderMPO"))
+    (length(ρ)>1) && error("Only single unit cell is implemented.")
+    if dim(space(ρ[1])[1])<= alg.D_max
+        @warn("DisorderMPO is already truncated to the maximum bond dimension.")
+        return ρ
+    else
+        X = TensorMap(rand,ComplexF64, ℂ^alg.D_max, space(ρ[1])[1])
+        U, _, V = tsvd(X)
+        X = U*V
+        X_new = optimize_isometry(ρ, X; tol = alg.tol, maxit = alg.maxit)
+        @tensor ρs_updated[-1 -2 -3; -4 -5 -6] := ρ[1][1 -2 -3; -4 -5 2] * X_new[-1; 1] * conj(X_new[-6; 2])
+        return DisorderMPO([ρs_updated])
+    end
+end
