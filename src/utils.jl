@@ -104,3 +104,24 @@ end
 function mpo_fidelity(A1::InfiniteMPO, A2::InfiniteMPO)
     return norm(mpo_ovlp(A1, A2) / sqrt(mpo_ovlp(A1, A1) * mpo_ovlp(A2, A2)))
 end
+
+function mpo_ovlp(ρ1::DisorderMPO, ρ2::DisorderMPO)
+    V1 = space(ρ1[1], 1)
+    V2 = space(ρ2[1], 1)
+
+    function mpo_transf(v)
+        for (M1, M2) in zip(ρ1, ρ2)
+            @tensor Tv[-1; -2] := M1[1 3 5; 4 6 -2] * conj(M2[2 3 5; 4 6 -1]) * v[2; 1]
+            v = Tv
+        end
+        return v
+    end
+
+    v0 = TensorMap(rand, ComplexF64, V2, V1)
+    λs, _ = eigsolve(mpo_transf, v0, 1, :LM)
+    return λs[1]
+end
+
+function mpo_fidelity(A1::DisorderMPO, A2::DisorderMPO)
+    return norm(mpo_ovlp(A1, A2) * mpo_ovlp(A2, A1) / mpo_ovlp(A2, A2))
+end
