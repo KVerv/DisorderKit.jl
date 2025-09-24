@@ -3,8 +3,8 @@ module DisorderKit
 __precompile__(true)
 
 using TensorKit, MPSKit, MPSKitModels, KrylovKit, BlockTensorKit
-using LinearAlgebra, Zygote
-using Crayons, TimerOutputs
+using LinearAlgebra, Zygote, OptimKit, TensorKitManifolds
+using Crayons, TimerOutputs, ProgressBars
 
 export VOMPS_Inversion, invert_mpo 
 export test_identity, mpo_fidelity
@@ -13,6 +13,8 @@ export StandardTruncation, DisorderTracedTruncation, DisorderOpenTruncation,  SV
 export iDTEBD, evolve_densitymatrix, evolve_one_time_step
 export random_transverse_field_ising_evolution, RTFIM_time_evolution_Trotter, RBH_time_evolution_Trotter, RTFIM_hamiltonian
 export sample_correlation_length, average_renyi_entropy2, renyi_entropy2
+export FiniteDisorderMPS, overlap
+export groundstate!, StiefelOptim
 
 const AbstractMPSTensor = AbstractTensorMap{T, S, 2, 1} where {T, S}
 const AbstractMPOTensor = AbstractTensorMap{T, S, 2, 2} where {T, S}
@@ -20,6 +22,7 @@ const AbstractDisorderMPOTensor = AbstractTensorMap{T, S, 3, 3} where {T, S}
 const AbstractRhoEnv = AbstractTensor{T, S, 2} where {T, S}
 const AbstractEEnv = AbstractTensor{T, S, 4} where {T, S}
 const AbstractBondTensor = AbstractTensorMap{T, S, 1, 1} where {T, S}
+const AbstractDisorderMPSTensor = AbstractTensorMap{T, S, 2, 2} where {T, S}
 
 include("VOMPS_Inversion.jl")
 include("truncation_algorithms.jl")
@@ -30,5 +33,7 @@ include("mpo_truncation.jl")
 include("iDTEBD.jl")
 include("models.jl")
 include("sampling_observables.jl")
+include("FiniteDisorderMPS.jl")
+include("groundstate.jl")
 
 end # module DisorderKit
