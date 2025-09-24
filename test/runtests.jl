@@ -4,6 +4,7 @@ using TensorKit, MPSKit, KrylovKit, MPSKitModels
 using LinearAlgebra
 using DisorderKit
 
+include("test_DisorderMPS.jl")
 include("test_VOMPS_Inversion.jl")
 include("test_linear_maps.jl")
 include("test_mpo_truncation.jl")
