@@ -68,7 +68,11 @@ end
 # trace out the disorder indices with corresponding probabilities
 function disorder_average(ρs::DisorderMPO, ps::Vector{<:Real})
     D_disorder = length(ps)
-    P = TensorMap(diagm(ps), ℂ^D_disorder, ℂ^D_disorder)
+    if space(ρs[1], 5)' != ℂ^D_disorder
+        P = TensorMap(ps, ℂ^1, ℂ^D_disorder)
+    else
+        P = TensorMap(diagm(ps), ℂ^D_disorder, ℂ^D_disorder)
+    end
 
     # weighted density matrix 
     ρ_weighted = map(ρs) do ρx
@@ -222,10 +226,11 @@ end
 
 # Fix phase of the disorder MPO after multiplying with inverse partition function
 function fix_phase(ρs::DisorderMPO, ps::Vector{Float64})
+    @show space(ρs[1])
     L = length(ρs)
     Zs = partition_functions(ρs)
     D_disorder = length(ps)
-    P = TensorMap(diagm(ps), ℂ^D_disorder, ℂ^D_disorder)
+    P = TensorMap(ps, ℂ^1, ℂ^D_disorder)
     TMs = map(Zs) do Z
         @tensor TM[-1; -2] := Z[-1 2; 1 -2]*P[1;2]
         return TM
@@ -271,10 +276,12 @@ function normalize_each_disorder_sector(ρ::DisorderMPO, ps::Vector{Float64}, tr
     ϵ_acc > invtol || ((verbosity > 0) && (@info(crayon"green"("accuracy for MPO inversion: ϵ_acc = $ϵ_acc"))))
     ϵ_acc < invtol || @warn(crayon"red"("Inverse not accurate: ϵ_acc = $ϵ_acc"))  
 
+    # Reduce the disorderindex
+    ρ_reduced = reduce_disorderindex(ρ)
     # Normalize each disorder sector by multiplying with inverse of partition function
     (verbosity > 0) && (@info(crayon"yellow"("Multiply Partition Function with Density Matrix")))
     (verbosity > 1) && (@info(crayon"yellow"("Before multiplication: Bonddimension of ρ = $(dim(codomain(ρ[1])[1]))")))
-    ρ_product = ρ * mpoZinv
+    ρ_product = ρ_reduced * mpoZinv
     (verbosity > 1) && (@info(crayon"yellow"("After multiplication: Bonddimension of ρ = $(dim(codomain(ρ_product[1])[1]))")))
 
     # Fix phase ambiguity
@@ -354,4 +361,37 @@ function average_renyi_entropy2(ρs::DisorderMPO, ps::Vector{Float64}, L::Int)
     # S = -log(S)
     S = -log.(S/N)
     return S
+end
+
+function reduce_disorderindex(ρs::DisorderMPO)
+    unit_cell = length(ρs)
+    reduced_mpo = Vector{AbstractDisorderMPOTensor}(undef, length(ρs))
+    for i = 1:unit_cell
+        V = TensorMap(ones, ComplexF64, space(ρs[i],3), ℂ^1)
+        @tensor ρs_reduced[-1 -2 -3; -4 -5 -6] := ρs[i][-1 -2 -3; -4 4 -6]* V[4;-5]
+        reduced_mpo[i] = ρs_reduced
+    end
+    return DisorderMPO(reduced_mpo)
+end
+
+
+function expand_disorderindex(ρs::DisorderMPO)
+    unit_cell = length(ρs)
+    expanded_mpo = Vector{AbstractDisorderMPOTensor}(undef, length(ρs))
+    for i = 1:unit_cell
+        ρs_expanded = TensorMap(zeros, ComplexF64, codomain(ρs[i]),space(ρs[i],4)'⊗space(ρs[i],3)⊗space(ρs[i],6)')
+        for p in 1:dim(space(ρs[i],3))
+            V = TensorMap(zeros, ComplexF64,  ℂ^1, space(ρs[i],3))
+            V[p] = 1.0
+            @tensor ρs_reduced[-1 -2; -5 -6] := ρs[i][-1 -2 3; -5 4 -6]* V[4;3]
+            W = TensorMap(zeros,ComplexF64, space(ρs[i],3),space(ρs[i],3))
+            W[p,p] = 1.0
+            @show space(W)
+            @show space(ρs_reduced)
+            @tensor ρnew[-1 -2 -3; -4 -5 -6] := ρs_reduced[-1 -2; -4 -6] * W[-3; -5]
+            ρs_expanded += ρnew
+        end
+        expanded_mpo[i] = ρs_expanded
+    end
+    return DisorderMPO(expanded_mpo)
 end

@@ -52,6 +52,7 @@ function evolve_densitymatrix(Ts::DisorderMPO, ps::Vector{<:Real}, alg::iDTEBD; 
             @timeit alg.timer_output "truncate_disorder_MPO" ρs = truncate_mpo(ρs_normalized, ps, alg.alg_trunc_disordermpo)
             (alg.verbosity > 1) && (@info(crayon"magenta"("After truncation: Bonddimension of ρ = $(dim(space(ρs[1])[1]))")))
         end
+        ρs = expand_disorderindex(ρs)
         ϵs[ix] = ϵ_acc
     end
     return ρs, ϵs
