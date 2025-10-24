@@ -99,16 +99,17 @@ end
     Δτ = 0.1 
 
     trunc_method_Zmpo = StandardTruncation(trunc_method = truncerr(1e-10))
-    inversion_alg = VOMPS_Inversion(1; tol = 1e-8, maxiter = 10, verbosity = 2)
+    inversion_alg = VOMPS_Inversion(1; tol = 1e-8, maxiter = 10, verbosity = 0)
     trunc_method_disordermpo =  DisorderTracedTruncation(trunc_method = truncerr(1e-10))
 
     ρns1 = let gs = [3.0], ps = [1.0]
         T = RTFIM_time_evolution_Trotter(Δτ, gs, [1.])
         ρ = T
-        ρns = map(1:100) do ix
+        ρns = map(1:10) do ix
             ρ = evolve_one_time_step(ρ, T)
-            ρ, _ = normalize_each_disorder_sector(ρ, trunc_method_Zmpo, inversion_alg)
+            ρ, _ = normalize_each_disorder_sector(ρ, ps, trunc_method_Zmpo, inversion_alg)
             ρ = truncate_mpo(ρ, ps, trunc_method_disordermpo)
+            ρ = DisorderKit.expand_disorderindex(ρ)
 
             ρn = disorder_average(ρ, ps)
         end
@@ -117,10 +118,11 @@ end
     ρns2 = let gs = [2.9, 3.0, 3.1], ps = [0.0, 1.0, 0.0]
         T = RTFIM_time_evolution_Trotter(Δτ, gs, [1.])
         ρ = T
-        ρns = map(1:100) do ix
+        ρns = map(1:10) do ix
             ρ = evolve_one_time_step(ρ, T)
-            ρ, _ = normalize_each_disorder_sector(ρ, trunc_method_Zmpo, inversion_alg)
+            ρ, _ = normalize_each_disorder_sector(ρ, ps, trunc_method_Zmpo, inversion_alg)
             ρ = truncate_mpo(ρ, ps, trunc_method_disordermpo)
+            ρ = DisorderKit.expand_disorderindex(ρ)
 
             ρn = disorder_average(ρ, ps)
         end
