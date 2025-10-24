@@ -31,11 +31,22 @@ function skew_canonical(A::Matrix{<:Real})
     return Λ, U, Σ
 end
 
-function majorana_ED(L::Int, Js::Vector{Float64}, hs::Vector{Float64})
+function majorana_ED(L::Int, Js::Vector{Float64}, hs::Vector{Float64}; n_samples::Int=10)
     Jconfigs = all_combinations(Js, L-1)
     hconfigs = all_combinations(hs, L)
     GEs = []
-    for (i,(Jconf,hconf)) in ProgressBar(enumerate(Iterators.product(Jconfigs, hconfigs)))
+    if n_samples < length(Jconfigs)*length(hconfigs)
+        sampled_indices = rand(1:length(Jconfigs)*length(hconfigs), n_samples)
+        sampled_Jh_configs = []
+        for index in sampled_indices
+            j_index = div(index-1, length(hconfigs)) + 1
+            h_index = mod(index-1, length(hconfigs)) + 1
+            push!(sampled_Jh_configs, (Jconfigs[j_index], hconfigs[h_index]))
+        end
+    else
+        sampled_Jh_configs = Iterators.product(Jconfigs, hconfigs)
+    end
+    for (i,(Jconf,hconf)) in ProgressBar(enumerate(sampled_Jh_configs))
         H = TensorMap(zeros, Float64, ℂ^(2L), ℂ^(2L))
         H[2L-1,2L] = -2 * hconf[end]
         H[2L,2L-1] = 2 * hconf[end]
@@ -63,11 +74,30 @@ a = 0.7
 b = 1.3
 hs = Vector(a:(b-a)/(N-1):b)
 Js = hs
-Ls = [12]
+Ls = [4,6, 8]
 
-FFs = majorana_ED.(Ls, Ref(Js), Ref(hs))
-tF = 1 .- Es./FFs
+FFs = majorana_ED.(Ls, Ref(Js), Ref(hs); n_samples=100000)
+tF = 1 .- Es[1]./FFs
 
+# set_theme!(theme_latexfonts())
+# fig = Figure(backgroundcolor=:white, fontsize=40, size=(100, 600))
+# ax1 = Axis(fig[1, 1], 
+#         xlabel = L"L",
+#         ylabel = L"$E$",
+#         # xscale = log10,
+#         # yscale = log10
+#         )
+# ax2 = Axis(fig[1, 2], 
+# xlabel = L"1/L",
+# ylabel = L"$ϵ$",
+# # xscale = log10,
+# # yscale = log10
+# )
+
+# scatter!(ax1,Ls,FFs, label=L"$FF$",markersize = 20)
+# scatter!(ax1,Ls,Es, label=L"$MPS$",markersize = 20)
+# scatter!(ax2,1 ./Ls,abs.((FFs.-Es)./FFs), label=L"$data$",markersize = 20)
+# fig
 # J,h ∈[0.7, 1.3], D=40, conv = 5e-4
 # L | (FF-Emps)/FF
 # 3 | 10.93%
