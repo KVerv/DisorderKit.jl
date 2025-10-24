@@ -10,15 +10,17 @@ a = 0.7
 b = 1.3
 hs = Vector(a:(b-a)/(N-1):b)
 Js = hs
-L = 3
+# D = 4
+# L = 4
 D_dis = length(hs)*length(Js)
 
 # Make DisorderMPS
-D = 5
-As = [[TensorMap(rand, ComplexF64, ℂ^D⊗ℂ^2,ℂ^D) for i in 1:D_dis] for j in 1:L]
-# As = push!(As,[TensorMap(rand, ComplexF64, ℂ^D⊗ℂ^2,ℂ^D) for i in 1:2])
-ρ = FiniteDisorderMPS(As)
-ρ = DisorderKit.left_gauge(ρ)
+# D = 5
+# As = [[TensorMap(rand, ComplexF64, ℂ^D⊗ℂ^2,ℂ^D) for i in 1:D_dis] for j in 1:L]
+# # As = push!(As,[TensorMap(rand, ComplexF64, ℂ^D⊗ℂ^2,ℂ^D) for i in 1:2])
+# ρ = FiniteDisorderMPS(As)
+# ρ = FiniteDisorderMPS(L, D_dis, 2, D; T=ComplexF64)
+# ρ = DisorderKit.left_gauge(ρ)
 
 function hams_Ising(Js::Vector{Float64}, hs::Vector{Float64})
     X, Z, Id = zeros(ComplexF64, ℂ^2, ℂ^2), zeros(ComplexF64, ℂ^2, ℂ^2), zeros(ComplexF64, ℂ^2, ℂ^2)
@@ -47,27 +49,68 @@ Hs = hams_Ising(Js, hs)
 # alg = StiefelOptim(2, 1e-4, 5)
 # fg = DisorderKit.target_func(Hs)
 # E, g = fg(ρ)
+# Stiefel.retract(ρ[3][1], g[3][1], 0.1)
 # ρs = groundstate!(ρ, Hs, alg)
 # E = measure(ρs, Hs)
 
-function compute_Es(Ls::Vector{Int}, Hs::Vector{<:AbstractMPOTensor})
-    Es = Float64[]
-    D = 10
+function compute_Es(Ls::Vector{Int}, Ds::Vector{Int}, Hs::Vector{<:AbstractMPOTensor})
+    Es = Vector{Float64}[]
     ρs = []
-    alg = StiefelOptim(2, 5e-4, 1)
-    for (iL,L) in enumerate(Ls)
-        As = [[TensorMap(rand, ComplexF64, ℂ^D⊗ℂ^2,ℂ^D) for i in 1:D_dis] for j in 1:L]
-        ρ = FiniteDisorderMPS(As)
-        ρ = DisorderKit.left_gauge(ρ)
-        ρL = groundstate!(ρ, Hs, alg)
-        EL = measure(ρL, Hs)
-        push!(Es, EL)
-        push!(ρs, ρL)
+    alg = StiefelOptim(2, 1e-2, 5)
+    for (iD, D) in ProgressBar(enumerate(Ds))
+        ELs = Float64[]
+        ρLs = []
+        for (iL,L) in ProgressBar(enumerate(Ls))
+            # As = [[TensorMap(rand, ComplexF64, ℂ^D⊗ℂ^2,ℂ^D) for i in 1:D_dis] for j in 1:L]
+            # ρ = FiniteDisorderMPS(As)
+            ρ = FiniteDisorderMPS(L, D_dis, 2, D; T=ComplexF64)
+            ρ = DisorderKit.left_gauge(ρ)
+            ρL = groundstate!(ρ, Hs, alg)
+            EL = measure(ρL, Hs)
+            push!(ELs, EL)
+            push!(ρLs, ρL)
+        end
+        push!(Es, ELs)
+        push!(ρs, ρLs)
     end
     return Es, ρs
 end
 
+Ds = [4]
+Ls = [4,6,8]
+Es, ρs = compute_Es(Ls, Ds, Hs)
 
-Ls = [3,6,9,12]
-Es, ρs = compute_Es(Ls, Hs)
-Es = Es
+X, Z, Id = zeros(ComplexF64, ℂ^2, ℂ^2), zeros(ComplexF64, ℂ^2, ℂ^2), zeros(ComplexF64, ℂ^2, ℂ^2)
+X[1, 2], X[2, 1] = 1, 1
+Z[1, 1], Z[2, 2] = 1, -1
+Id[1, 1], Id[2, 2] = 1, 1
+
+
+# set_theme!(theme_latexfonts())
+# fig = Figure(backgroundcolor=:white, fontsize=40, size=(1000, 1000))
+# ax1 = Axis(fig[1, 1], 
+#         xlabel = L"r",
+#         ylabel = L"$G$",
+#         # xscale = log10,
+#         # yscale = log10
+#         )
+
+# for (iD,D) in enumerate(Ds)
+#     for (iL,L) in enumerate(Ls)
+#         rmax = convert(Int,L-3)
+#         colors = [:red, :red, :blue]
+#         markers = [:circle, :diamond, :star4]
+#         G =  [measure(ρs[iD][iL], Z, Z, 1, i) for i in 4:rmax]
+#         # G =  [measure(ρs[iD][iL], Z, Z, i) for i in 1:rmax]
+#         EZ = measure(ρs[iD][iL], Z)^2
+#         # G .-= EZ
+#         # G ./= 20
+#         @show G, EZ
+#         scatter!(ax1,log.(4:rmax),log.(abs.(G)), label=L"$L = %$L$ $D = %$D$", color = colors[iD], marker = markers[iD], markersize = 20)
+#     end
+#     xs = log.(2:Ls[end]/2).-log(2)
+#     ys = -0.25*xs
+#     # lines!(ax1, xs, ys, linestyle = :dash, color = :black, label = L"$G \sim \frac{-1}{4}\ln{r}$")
+# end
+# axislegend(ax1, position=:lb)
+# fig
