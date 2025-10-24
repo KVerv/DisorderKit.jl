@@ -9,14 +9,20 @@ struct  StiefelOptim <: AbstractAlgorithm
     end
 end
 
-function disorder_retract(ρ::FiniteDisorderMPS, g::Vector{<:Vector{<:Stiefel.StiefelTangent}}, α::Real)
+function disorder_retract(ρ::FiniteDisorderMPS, g::Vector{<:Vector{Union{Stiefel.StiefelTangent, Unitary.UnitaryTangent}}}, α::Real)
     opp = Vector{Vector{AbstractMPSTensor}}(undef, length(ρ))
-    tangents = Vector{Vector{Stiefel.StiefelTangent}}(undef, length(ρ))
+    tangents = Vector{Vector{Union{Stiefel.StiefelTangent, Unitary.UnitaryTangent}}}(undef, length(ρ))
     for i in eachindex(ρ)
         As = Vector{AbstractMPSTensor}(undef, length(ρ[i]))
-        ξs = Vector{Stiefel.StiefelTangent}(undef, length(ρ[i]))
+        ξs = Vector{Union{Stiefel.StiefelTangent, Unitary.UnitaryTangent}}(undef, length(ρ[i]))
         for p in eachindex(ρ[i])
-            As[p], ξs[p] = Stiefel.retract(ρ[i][p], g[i][p], α)
+            Dcod = dim(codomain(ρ[i][p]))
+            Ddom = dim(domain(ρ[i][p]))
+            if Dcod > Ddom
+                As[p], ξs[p] = Stiefel.retract(ρ[i][p], g[i][p], α)
+            else
+                As[p], ξs[p] = Unitary.retract(ρ[i][p], g[i][p], α)
+            end
         end
         opp[i] = As
         tangents[i] = ξs
@@ -24,31 +30,47 @@ function disorder_retract(ρ::FiniteDisorderMPS, g::Vector{<:Vector{<:Stiefel.St
     return FiniteDisorderMPS(opp), tangents
 end
 
-function disorder_inner(ρ::FiniteDisorderMPS, g₁::Vector{<:Vector{<:Stiefel.StiefelTangent}}, g₂::Vector{<:Vector{<:Stiefel.StiefelTangent}})
+function disorder_inner(ρ::FiniteDisorderMPS, g₁::Vector{<:Vector{Union{Stiefel.StiefelTangent, Unitary.UnitaryTangent}}}, g₂::Vector{<:Vector{Union{Stiefel.StiefelTangent, Unitary.UnitaryTangent}}})
     s = 0.0
     for i in eachindex(ρ)
         for p in eachindex(ρ[i])
-            s += Stiefel.inner_euclidean(ρ[i][p], g₁[i][p], g₂[i][p])
+            Dcod = dim(codomain(ρ[i][p]))
+            Ddom = dim(domain(ρ[i][p]))
+            if Dcod > Ddom
+                s += Stiefel.inner_euclidean(ρ[i][p], g₁[i][p], g₂[i][p])
+            else
+                s += Unitary.inner(ρ[i][p], g₁[i][p], g₂[i][p])
+            end
         end
     end
     return s
 end
 
-function disorder_scale!(g::Vector{<:Vector{<:Stiefel.StiefelTangent}}, α::Real)
+function disorder_scale!(g::Vector{<:Vector{Union{Stiefel.StiefelTangent, Unitary.UnitaryTangent}}}, α::Real)
     for i in eachindex(g)
         for p in eachindex(g[i])
-            Stiefel.rmul!(g[i][p], α)
+            if g[i][p] isa Stiefel.StiefelTangent
+                Stiefel.rmul!(g[i][p], α)
+            else
+                Unitary.rmul!(g[i][p], α)
+            end
         end
     end
     return g
 end
 
 function disorder_project!(X::Vector{<:Vector{<:AbstractMPSTensor}},ρ::FiniteDisorderMPS)
-    opp = Vector{Vector{Stiefel.StiefelTangent}}(undef, length(ρ))
+    opp = Vector{Vector{Union{Stiefel.StiefelTangent, Unitary.UnitaryTangent}}}(undef, length(ρ))
     for i in eachindex(ρ)
-        As = Vector{Stiefel.StiefelTangent}(undef, length(ρ[i]))
+        As = Vector{Union{Stiefel.StiefelTangent, Unitary.UnitaryTangent}}(undef, length(ρ[i]))
         for p in eachindex(ρ[i])
-            As[p] = Stiefel.project!(X[i][p], ρ[i][p])
+            Dcod = dim(codomain(ρ[i][p]))
+            Ddom = dim(domain(ρ[i][p]))
+            if Dcod > Ddom
+                As[p] = Stiefel.project!(X[i][p], ρ[i][p])
+            else
+               As[p] = Unitary.project!(X[i][p], ρ[i][p])
+            end
         end
         opp[i] = As
     end
@@ -60,7 +82,6 @@ function target_func(Hs::Vector{<:AbstractMPOTensor})
         target_val = measure(ρs, Hs)
         grad = gradient(x -> measure(x, Hs), ρs)
         pgrad = disorder_project!(grad[1].opp, ρs)
-        # pgrad=grad
         return target_val, pgrad
     end
     return fg
@@ -72,3 +93,4 @@ function groundstate!(ρ::FiniteDisorderMPS, Hs::Vector{<:AbstractMPOTensor}, al
     
     return ρ_opt
 end
+
