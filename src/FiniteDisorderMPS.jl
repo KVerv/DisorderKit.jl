@@ -46,6 +46,20 @@ function transfer_left(As::Vector{<:AbstractMPSTensor})
     return ftransfer
 end
 
+# Construct application right transfer matrix: T*v -> v
+function transfer_right(As::Vector{<:AbstractMPSTensor})
+    D = length(As)
+    function ftransfer(vr)
+        v = zeros(ComplexF64,space(As[1],1),space(As[1],1))
+        for A in As
+            @tensor vp[-1; -2] := A[-1 3; 1] * conj(A[-2 3; 2]) * vr[1; 2]
+            v += vp
+        end
+        return v/D
+    end
+    return ftransfer
+end
+
 # Construct application left transfer matrix: v*T -> v
 function Otransfer_left(As::Vector{<:AbstractMPSTensor}, Os::Vector{<:AbstractMPOTensor})
     D = length(As)
@@ -72,6 +86,16 @@ function Otransfer_left(As::Vector{<:AbstractMPSTensor}, O::AbstractBondTensor)
         return v/D
     end
     return ftransfer
+end
+
+# Right environment at site i
+function right_env(ρs::FiniteDisorderMPS, i::Int)
+    vr = id(ComplexF64, space(ρs[length(ρs)][1], 3)')
+    for j in length(ρs):-1:i+1
+        f_t = transfer_right(ρs[j])
+        vr = f_t(vr)
+    end
+    return vr
 end
 
 # Bring a DisorderMPS to left gauge

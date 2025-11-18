@@ -74,19 +74,21 @@ a = 0.7
 b = 1.3
 hs = Vector(a:(b-a)/(N-1):b)
 Js = hs
-Ls = [4,6, 8]
+# hs = [a]
+# Js = [b]
+Ls = [4, 6, 8, 10, 12, 14, 16, 18, 20]
 
 FFs = majorana_ED.(Ls, Ref(Js), Ref(hs); n_samples=100000)
-tF = 1 .- Es[1]./FFs
+# tF = 1 .- Es[1]./FFs
 
-# set_theme!(theme_latexfonts())
-# fig = Figure(backgroundcolor=:white, fontsize=40, size=(100, 600))
-# ax1 = Axis(fig[1, 1], 
-#         xlabel = L"L",
-#         ylabel = L"$E$",
-#         # xscale = log10,
-#         # yscale = log10
-#         )
+set_theme!(theme_latexfonts())
+fig = Figure(backgroundcolor=:white, fontsize=40, size=(1000, 600))
+ax1 = Axis(fig[1, 1], 
+        xlabel = L"L",
+        ylabel = L"$E/L$",
+        # xscale = log10,
+        # yscale = log10
+        )
 # ax2 = Axis(fig[1, 2], 
 # xlabel = L"1/L",
 # ylabel = L"$ϵ$",
@@ -94,7 +96,7 @@ tF = 1 .- Es[1]./FFs
 # # yscale = log10
 # )
 
-# scatter!(ax1,Ls,FFs, label=L"$FF$",markersize = 20)
+scatter!(ax1,1 ./Ls,FFs./Ls, label=L"$FF$",markersize = 20)
 # scatter!(ax1,Ls,Es, label=L"$MPS$",markersize = 20)
 # scatter!(ax2,1 ./Ls,abs.((FFs.-Es)./FFs), label=L"$data$",markersize = 20)
 # fig
