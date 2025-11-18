@@ -20,9 +20,10 @@ DisorderTracedTruncation(; trunc_method::TruncationScheme = truncerr(1e-6), verb
 struct DisorderOpenTruncation <: AbstractTruncationAlgorithm
     trunc_method::TruncationScheme # Method for truncating ordinary mpo
     verbosity::Int
+    timer_output::TimerOutput
 end
 
-DisorderOpenTruncation(; trunc_method::TruncationScheme = truncerr(1e-6), verbosity::Int = 0) = DisorderOpenTruncation(trunc_method, verbosity)
+DisorderOpenTruncation(; trunc_method::TruncationScheme = truncerr(1e-6), verbosity::Int = 0, timer_output::TimerOutput = TimerOutput()) = DisorderOpenTruncation(trunc_method, verbosity, timer_output)
 
 
 # Truncation algorithm for the disorder MPO by using SVD optimization for isometries
