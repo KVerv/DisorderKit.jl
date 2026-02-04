@@ -3,7 +3,7 @@ module DisorderKit
 __precompile__(true)
 
 using TensorKit, MPSKit, MPSKitModels, KrylovKit, BlockTensorKit
-using LinearAlgebra, Zygote, OptimKit, TensorKitManifolds
+using LinearAlgebra, StatsBase, Zygote, OptimKit, TensorKitManifolds
 using Crayons, TimerOutputs, ProgressBars
 
 export VOMPS_Inversion, invert_mpo 
@@ -12,9 +12,9 @@ export DisorderMPO, measure, partition_functions, disorder_average, average_corr
 export StandardTruncation, DisorderTracedTruncation, DisorderOpenTruncation,  SVDUpdateTruncation, truncate_mpo
 export iDTEBD, evolve_densitymatrix, evolve_one_time_step
 export random_transverse_field_ising_evolution, RTFIM_time_evolution_Trotter, RBH_time_evolution_Trotter, RTFIM_hamiltonian
-export sample_correlation_length, average_renyi_entropy2, renyi_entropy2
-export FiniteDisorderMPS, overlap
-export groundstate!, StiefelOptim
+export average_renyi_entropy2, renyi_entropy2
+export InfiniteDisorderMPS, expectation_value, correlator
+export DisorderMPOHam, random_transverse_field_ising
 
 const AbstractMPSTensor = AbstractTensorMap{T, S, 2, 1} where {T, S}
 const AbstractMPOTensor = AbstractTensorMap{T, S, 2, 2} where {T, S}
@@ -32,8 +32,9 @@ include("svd_optimization.jl")
 include("mpo_truncation.jl")
 include("iDTEBD.jl")
 include("models.jl")
-include("sampling_observables.jl")
-include("FiniteDisorderMPS.jl")
-include("groundstate.jl")
+include("DisorderMPOHam.jl")
+include("InfiniteDisorderMPS.jl")
+include("InfiniteDisorderTangent.jl")
+
 
 end # module DisorderKit
