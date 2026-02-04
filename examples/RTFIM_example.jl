@@ -30,13 +30,13 @@ Us = DisorderMPO([Us[1]])
 
 # Define algorithms
 invtol = 1e-6
-D_max = 40
+D_max = 30
 D_z = 2
 alg_inversion = VOMPS_Inversion(1; tol = 1e-8, maxiter = 250, verbosity = 2)
 alg_trunc_Z = StandardTruncation(trunc_method = truncdim(D_z))
 alg_trunc_disordermpo = DisorderOpenTruncation(trunc_method = truncdim(D_max))
 
-βs = 1:0.5:10
+βs = 1:0.5:1
 # Evolve density matrix
 function get_ξ(βs, Us)
     ξs = zeros(length(βs))

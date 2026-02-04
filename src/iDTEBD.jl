@@ -26,7 +26,7 @@ function evolve_densitymatrix(Ts::DisorderMPO, ps::Vector{<:Real}, alg::iDTEBD; 
     (alg.verbosity > 1) && (@info(crayon"magenta"("Before normalization: Bonddimension of ρ = $(dim(space(ρs[1])[1]))")))
     (alg.verbosity > 1) && (@info(crayon"magenta"("Using Z⁻¹ bonddimension of χ = $(alg_inversion.inverse_dim)")))
     @timeit alg.timer_output "normalize_each_disorder_sector" begin
-        ρs_normalized, ϵ_acc, mpoZinv = normalize_each_disorder_sector(ρs, ps, alg.alg_trunc_Z, alg_inversion; init_guess = mpoZinv, verbosity = alg.verbosity, invtol = alg.invtol)
+        ρs, ϵ_acc, mpoZinv = normalize_each_disorder_sector(ρs, ps, alg.alg_trunc_Z, alg_inversion; init_guess = mpoZinv, verbosity = alg.verbosity, invtol = alg.invtol)
     end
     for ix in 1:alg.nsteps
         (alg.verbosity > 0) && (@info "Iteration $ix)")
