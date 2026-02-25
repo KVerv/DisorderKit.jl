@@ -6,15 +6,40 @@ struct InfiniteDisorderMPS{T<:AbstractMPSTensor}
     ps::Vector{<:Real}
 end
 
-function InfiniteDisorderMPS(ps::Vector{Float64}, D_dis::Int, D_phys::Int, D::Int; T=ComplexF64)
-    As = [TensorMap(rand, T, ℂ^D⊗ℂ^D_phys,ℂ^D) for i in 1:D_dis]
+function InfiniteDisorderMPSC(ps::Vector{Float64}, D_dis::Int, D_phys::Int, D::Int; T=ComplexF64)
+    As = [rand(T, ℂ^D⊗ℂ^D_phys,ℂ^D) for i in 1:D_dis]
     for (p,A) in enumerate(As)
-        Q, _ = leftorth(A, ((1,2),(3,)))
+        Q, _ = qr_compact(A)
         As[p] = Q
     end
     return InfiniteDisorderMPS{typeof(As[1])}(As, ps)
 end
 
+function InfiniteDisorderMPS(ps::Vector{Float64}, D_dis::Int, V_phys::GradedSpace, V_virt::GradedSpace; T=ComplexF64)
+    As = [TensorMap(rand, T, V_virt⊗V_phys,V_virt) for i in 1:D_dis]
+    for (p,A) in enumerate(As)
+        Q, _ = qr_compact(A, ((1,2),(3,)))
+        As[p] = Q
+    end
+    return InfiniteDisorderMPS{typeof(As[1])}(As, ps)
+end
+
+function expand(ρ::InfiniteDisorderMPS, d::Int)
+    D = dim(space(ρ.opp[1], 1))
+    A = rand(ComplexF64, ℂ^(D*d)⊗ℂ^2, ℂ^(D*d))
+    ϵ = 0.0001
+    # A = id(ComplexF64, ℂ^d)
+    iso = isomorphism(ComplexF64, ℂ^(D*d), ℂ^D ⊗ ℂ^d)
+    opp = Vector{typeof(ρ.opp[1])}(undef, length(ρ.opp))
+    for i in 1:length(ρ.opp)
+        @tensor W[-1 -2; -3] := iso[-1; 1 2] * ρ.opp[i][1 -2; 3] * conj(iso[-3; 3 2])
+        W = W + ϵ*A
+        Q, _ = leftorth(W, ((1,2),(3,)))
+        opp[i] = Q
+    end
+
+    return InfiniteDisorderMPS(opp, ρ.ps)
+end
 
 Base.getindex(T::InfiniteDisorderMPS, ix::Int) = T.opp[ix]
 Base.size(T::InfiniteDisorderMPS) = size(T.opp)
@@ -112,6 +137,7 @@ function expectation_value(ρ::InfiniteDisorderMPS, Os::Vector{<:AbstractBondTen
     _, vr = right_environment(ρ)    
     vl = zeros(ComplexF64, space(ρ.opp[1],3)',space(ρ.opp[1],3)')
 
+    @show space(vl)
     for (p, W) in enumerate(ρ.opp)
         @tensor vlO1[-1; -2] := W[1 3; -2] * Os[p][2; 3] * conj(W[1 2; -1]) 
         vl += ρ.ps[p]*vlO1
@@ -157,7 +183,7 @@ end
 function average_correlation_length(ρ::InfiniteDisorderMPS)
     f_l = transfer_left(ρ)
 
-    v0 = TensorMap(rand, ComplexF64, space(ρ.opp[1],1), space(ρ.opp[1],1))
+    v0 = rand(ComplexF64, space(ρ.opp[1],1), space(ρ.opp[1],1))
     λl, _ = eigsolve(f_l, v0, 3, :LM)
 
     ξ = -1/log.(abs(λl[2]))
@@ -210,10 +236,14 @@ end
 
 function average_entanglement_entropy(ρ::InfiniteDisorderMPS)
     _, r = right_environment(ρ)
-    U, S, V = tsvd(r)
-    S = S.data
+    # U, S, V = tsvd(r)
+    # S = S.data
 
-    Se = -sum(S.^2 .*log.(S.^2 .+ 1e-16))
-    return Se
+    # Se = -sum(S.^2 .*log.(S.^2 .+ 1e-16))
+
+    D, V = eig_full(r)
+    S = D.data
+    Se = real.(-sum(S .*log.(S .+ 1e-16)))
+    return Se, real.(S)
 end
 

@@ -7,17 +7,17 @@ end
 
 function horizontal_projection(tangents::Vector{Stiefel.StiefelTangent})
  
-    Ω = zeros(ComplexF64, space(tangents[1].A))
-    for (p, ξ) in enumerate(tangents)
-        Ω += ξ.A
-    end
-    Ω *= 1/length(tangents)
+    # Ω = zeros(ComplexF64, space(tangents[1].A))
+    # for (p, ξ) in enumerate(tangents)
+    #     Ω += ξ.A
+    # end
+    # Ω *= 1/length(tangents)
 
-    for (p, ξ) in enumerate(tangents)
-        tangents[p] = Stiefel.StiefelTangent(ξ.W, ξ.A-Ω, ξ.Z)
-    end
+    # for (p, ξ) in enumerate(tangents)
+    #     tangents[p] = Stiefel.StiefelTangent(ξ.W, ξ.A-Ω, ξ.Z)
+    # end
 
-    # @show "hello world"
+
     return tangents
 end
 
@@ -93,8 +93,8 @@ function precondition(ρ::InfiniteDisorderMPS, ξ::InfiniteDisorderTangent)
     r = right_environment(ρ)[2]
     δ = inner(ρ, ξ, ξ)
     Id = id(ComplexF64, space(r,1))
-    rinv = sqrt(inv(r^2 + δ^2*Id))
-    # rinv = inv(r+δ*Id)
+    # rinv = inv(sqrt((r^2 + δ^2*Id)))
+    rinv = inv(r+δ*Id)
     # rinv = inv(r)
 
     for p in eachindex(ξ.tangents)
@@ -126,7 +126,7 @@ function groundstate!(ρ::InfiniteDisorderMPS, Hs::DisorderMPOHam; gradtol = 1e-
     fg = icost_func(Hs)
     # ρ_opt, _, _, _, gradhist = optimize(fg, ρ, GradientDescent(;maxiter=maxiter,verbosity=verbosity, gradtol = gradtol); retract = retract, inner = inner, (scale!) = scale!, precondition = precondition)
     # ρ_opt, _, _, _, gradhist = optimize(fg, ρ, ConjugateGradient(;maxiter=maxiter,verbosity=verbosity, gradtol = gradtol); retract = retract, inner = inner, (scale!) = scale!, (transport!) = transport!, (add!) = add!, precondition = precondition)
-    ρ_opt, _, _, _, gradhist = optimize(fg, ρ, LBFGS(;maxiter=maxiter,verbosity=verbosity, gradtol = gradtol); retract = retract, inner = inner, (scale!) = scale!, (transport!) = transport!, (add!) = add!, precondition = precondition)
+    ρ_opt, _, _, _, gradhist = optimize(fg, ρ, LBFGS(20;maxiter=maxiter,verbosity=verbosity, gradtol = gradtol); retract = retract, inner = inner, (scale!) = scale!, (transport!) = transport!, (add!) = add!, precondition = precondition)
 
     return ρ_opt, gradhist
 end
