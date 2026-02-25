@@ -1,5 +1,5 @@
 # Compute truncation matrices
-function truncation_matrices(M::InfiniteMPO, trunc_method::TruncationScheme)
+function truncation_matrices(M::InfiniteMPO, trunc_method::MatrixAlgebraKit.TruncationStrategy)
     L = length(M)
     envLs = map(ix -> env_left(M, ix), 1:L)
     envRs = map(ix -> env_right(M, ix), 1:L)

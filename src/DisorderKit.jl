@@ -2,7 +2,7 @@ module DisorderKit
 
 __precompile__(true)
 
-using TensorKit, MPSKit, MPSKitModels, KrylovKit, BlockTensorKit
+using TensorKit, MPSKit, MPSKitModels, KrylovKit, BlockTensorKit, MatrixAlgebraKit
 using LinearAlgebra, StatsBase, Zygote, OptimKit, TensorKitManifolds
 using Crayons, TimerOutputs, ProgressBars
 
@@ -35,6 +35,7 @@ include("models.jl")
 include("DisorderMPOHam.jl")
 include("InfiniteDisorderMPS.jl")
 include("InfiniteDisorderTangent.jl")
+include("SDRG.jl")
 
 
 end # module DisorderKit
