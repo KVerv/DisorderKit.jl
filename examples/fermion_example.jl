@@ -1,6 +1,7 @@
 using Revise, TensorKit, MPSKit, MPSKitModels, KrylovKit
 using OptimKit, TensorKitManifolds, Zygote, LinearAlgebra
 using DisorderKit, TimerOutputs, CairoMakie, LsqFit, ProgressBars
+using StatsBase
 
 function all_combinations(A::AbstractVector, L::Integer)
     @assert L ≥ 0 "L must be non-negative"
@@ -91,31 +92,38 @@ end
 
 
 
-N = 2
-a = 0.5
-b = 1.0
-w = 0.0
-# hs = Vector(a:(b-a)/(N-1):b)
-# Js = hs
-# Js = [0.1]
+# N = 2
+# a = 0.99
+# b = 1.01
+# w = 0.0
+# # hs = Vector(a:(b-a)/(N-1):b)
+# # Js = hs
+# # Js = [0.1]
 
 # hs = [a, b]
 # V = var(log.(hs);corrected = false)
 # Js = [a, b]
 # hs = [a, b]*exp(w*V)
+N = 2
+a = 0.7
+b = 1.3
 
-hs = [0.2577952029653816, 0.7383152846434098, 0.21154225131386992, 0.6319157844800344]
-Js = [0.3806987884083633, 0.2994504233053557, 0.2461909416843507, 0.32056795601359583, 0.27171366282084075, 0.6271996534235563, 0.8399309623164335, 0.7092336979417615, 0.5634881368851596, 0.744255627246975]
-Jmax = maximum(Js)
-Js./= Jmax
-hs./= Jmax
+Js = Vector(a:(b-a)/(N-1):b)
+hs = Vector(a:(b-a)/(N-1):b)
+ps = ones(N^2)./N^2
+
+# hs = [0.2577952029653816, 0.7383152846434098, 0.21154225131386992, 0.6319157844800344]
+# Js = [0.3806987884083633, 0.2994504233053557, 0.2461909416843507, 0.32056795601359583, 0.27171366282084075, 0.6271996534235563, 0.8399309623164335, 0.7092336979417615, 0.5634881368851596, 0.744255627246975]
+# Jmax = maximum(Js)
+# Js./= Jmax
+# hs./= Jmax
 # Js = [1.0]
 # a = 0.7
 # b = 1.3
 # hs = Vector(a:(b-a)/(N-1):b)
 # Js = [b]
 # hs = [a]
-Ls = [4, 6, 8]
+Ls = [4, 6, 8, 10, 12, 14]
 # Ls = [3, 5, 7, 9, 11, 13, 15]
 # Ls = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 # Ls = [6]
