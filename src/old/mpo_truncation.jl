@@ -1,3 +1,34 @@
+# MPO environments used in truncation
+function env_left(Os::InfiniteMPO, ix::Int)
+    timer_output = TimerOutput()
+    v1 = TensorMap(rand, ComplexF64, space(Os[ix+1], 1), space(Os[ix+1], 1))
+    transfer_left = transfer_left_mpo(Os[ix+1])
+    for jx in ix+2:1:ix+length(Os)
+        transfer_left = transfer_left_mpo(Os[jx]) ∘ transfer_left
+    end
+    @timeit timer_output "apply" begin
+        # v1 = TensorMap(rand, ComplexF64, space(Os[ix+1], 1), space(Os[ix+1], 1))
+        w = transfer_left(v1)
+    end
+    @timeit timer_output "eigs" begin
+        # _, ls = eigsolve(v -> transfer_left(v), v1, 1, :LM);
+         _, ls = eigsolve(transfer_left, v1, 1, :LM);
+    end
+    timer_output |> TimerOutputs.print
+    return ls[1]
+end
+
+function env_right(Os::InfiniteMPO, ix::Int)
+    v1 = TensorMap(rand, ComplexF64, space(Os[ix + 1], 1), space(Os[ix + 1], 1))
+    transfer_right = transfer_right_mpo(Os[ix])
+    for jx in ix-1:-1:ix-length(Os)+1
+        transfer_right = transfer_right_mpo(Os[jx]) ∘ transfer_right
+    end
+    _, ls = eigsolve(v -> transfer_right(v), v1, 1, :LM);
+    return ls[1]
+end
+
+
 # Compute truncation matrices
 function truncation_matrices(M::InfiniteMPO, trunc_method::MatrixAlgebraKit.TruncationStrategy)
     L = length(M)

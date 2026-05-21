@@ -105,6 +105,24 @@ function norm(ρ::InfiniteDisorderMPS)
     return N
 end
 
+function effective_couplings(ρ::InfiniteDisorderMPS, Hs::DisorderMPOHam)
+    r = right_environment(ρ)[2]
+
+    Js = Float64[]
+    hs = Float64[]
+    for (p, W) in enumerate(ρ.opp)
+        @tensor ED = W[1 2; 4] * Hs.Ds[p][3; 2] * conj(W[1 3; 5]) * r[4;5]
+        push!(hs, abs.(ED))
+        for (q, V) in enumerate(ρ.opp)
+            @tensor ECB = W[1 2; 4] * Hs.Cs[p][3; 2 5] * conj(W[1 3; 6]) * V[4 7; 9] * Hs.Bs[p][5 8; 7] * conj(V[6 8; 10]) * r[9;10]
+            push!(Js, abs.(ECB))
+        end
+        #FIXME : currently only nearest-neighbor interactions
+    end
+
+    return hs, Js
+end
+
 # Compute the energy density of a InfiniteDisorderMPS with respect to a DisorderMPOHam
 function energy_density(ρ::InfiniteDisorderMPS, Hs::DisorderMPOHam)
     r = right_environment(ρ)[2]
@@ -114,6 +132,10 @@ function energy_density(ρ::InfiniteDisorderMPS, Hs::DisorderMPOHam)
         @tensor ED = W[1 2; 4] * Hs.Ds[p][3; 2] * conj(W[1 3; 5]) * r[4;5]
         E += ρ.ps[p] * ED
         for (q, V) in enumerate(ρ.opp)
+            # @tensor EDW = W[1 2; 4] * Hs.Ds[p][3; 2] * conj(W[1 3; 6]) * V[4 7; 9] * conj(V[6 7; 10]) * r[9;10]
+            # E += ρ.ps[p] * ρ.ps[q] * EDW / 2
+            # @tensor EDV = W[1 2; 4] * Hs.Ds[q][7; 8] * conj(W[1 2; 6]) * V[4 8; 9] * conj(V[6 7; 10]) * r[9;10]
+            # E += ρ.ps[p] * ρ.ps[q] * EDV / 2
             @tensor ECB = W[1 2; 4] * Hs.Cs[p][3; 2 5] * conj(W[1 3; 6]) * V[4 7; 9] * Hs.Bs[p][5 8; 7] * conj(V[6 8; 10]) * r[9;10]
             E += ρ.ps[p] * ρ.ps[q] * ECB
         end
@@ -124,6 +146,48 @@ function energy_density(ρ::InfiniteDisorderMPS, Hs::DisorderMPOHam)
 
     return real.(E)
 end
+
+function median_energy_density(ρ::InfiniteDisorderMPS, Hs::DisorderMPOHam; λ = 1.)
+    r = right_environment(ρ)[2]
+
+    E = 0
+    N = 0
+    for (p, W) in enumerate(ρ.opp)
+        @tensor ED = W[1 2; 4] * Hs.Ds[p][3; 2] * conj(W[1 3; 5]) * r[4;5]
+        for (q, V) in enumerate(ρ.opp)
+            @tensor ECB = W[1 2; 4] * Hs.Cs[p][3; 2 5] * conj(W[1 3; 6]) * V[4 7; 9] * Hs.Bs[p][5 8; 7] * conj(V[6 8; 10]) * r[9;10]
+            E += ρ.ps[p] * ρ.ps[q] *(ECB + ED) * exp(λ * (ECB + ED))
+            N += ρ.ps[p] * ρ.ps[q] * exp(λ * (ECB + ED))
+        end
+        #FIXME : currently only nearest-neighbor interactions
+    end
+
+    E = E/N
+    imag(E) < 1e-4 || @warn("Energy density has imaginary part: E = $E")
+
+    return real.(E)
+end
+
+function energy_density_dist(ρ::InfiniteDisorderMPS, Hs::DisorderMPOHam)
+    r = right_environment(ρ)[2]
+
+    Es = Float64[]
+    for (p, W) in enumerate(ρ.opp)
+        @tensor ED = W[1 2; 4] * Hs.Ds[p][3; 2] * conj(W[1 3; 5]) * r[4;5]
+        for (q, V) in enumerate(ρ.opp)
+            # @tensor EDW = W[1 2; 4] * Hs.Ds[p][3; 2] * conj(W[1 3; 6]) * V[4 7; 9] * conj(V[6 7; 10]) * r[9;10]
+            # E += ρ.ps[p] * ρ.ps[q] * EDW / 2
+            # @tensor EDV = W[1 2; 4] * Hs.Ds[q][7; 8] * conj(W[1 2; 6]) * V[4 8; 9] * conj(V[6 7; 10]) * r[9;10]
+            # E += ρ.ps[p] * ρ.ps[q] * EDV / 2
+            @tensor ECB = W[1 2; 4] * Hs.Cs[p][3; 2 5] * conj(W[1 3; 6]) * V[4 7; 9] * Hs.Bs[p][5 8; 7] * conj(V[6 8; 10]) * r[9;10]
+            push!(Es, real(ECB + ED))
+        end
+        #FIXME : currently only nearest-neighbor interactions
+    end
+
+    return Es
+end
+
 
 # Expectation value of a local operator O at site p
 function expectation_value(ρ::InfiniteDisorderMPS, O::AbstractBondTensor)
