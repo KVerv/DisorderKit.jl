@@ -1,178 +1,69 @@
-function transfer_left_mpo(O::AbstractMPOTensor)
+function fidelity_left_transfer(ρs::InfiniteDisorderDensityMatrix, σs::InfiniteDisorderDensityMatrix)
     function ftransfer(vl)
-        @tensor vl[-1; -2] := O[2 4; 3 -2] * conj(O[1 4; 3 -1]) * vl[1; 2]
+        v = zeros(ComplexF64,space(ρs[1],1)⊗space(ρs[1],1)',space(σs[1],1)'⊗space(σs[1],1))
+        for (p, ρ) in enumerate(ρs)
+            @tensor vp[-1 -2; -3 -4] := conj(ρ[1 8; 2 -1]) * ρ[3 4; 2 -2] * σs[p][7 8; 6 -4] * conj(σs[p][5 4; 6 -3]) * vl[1 3; 5 7]
+            v += ρs.ps[p]*vp
+        end
+        return v
     end
     return ftransfer
 end
 
-function transfer_right_mpo(O::AbstractMPOTensor)
+function fidelity_right_transfer(ρs::InfiniteDisorderDensityMatrix, σs::InfiniteDisorderDensityMatrix)
     function ftransfer(vr)
-        @tensor vr[-1; -2] := O[-1 4; 3 1] * conj(O[-2 4; 3 2]) * vr[1; 2]
-        return vr
+        v = zeros(ComplexF64,space(σs[1],1)'⊗space(σs[1],1),space(ρs[1],1)⊗space(ρs[1],1)')
+        for (p, ρ) in enumerate(ρs)
+            @tensor vp[-3 -4; -1 -2] := conj(ρ[-1 8; 2 1]) * ρ[-2 4; 2 3] * σs[p][-4 8; 6 7] * conj(σs[p][-3 4; 6 5]) * vr[5 7; 1 3]
+            v += ρs.ps[p]*vp
+        end
+        return v
     end
     return ftransfer
 end
 
-# Entanglement spectrum of MPO
-function entanglement_spectrum(Os::InfiniteMPO, i::Int)
-    unit_cell = length(Os)
-    transfer_l = transfer_left_mpo(Os[i+1])
-    transfer_r = transfer_right_mpo(Os[i])
-    for j = i+2:i+unit_cell
-        transfer_l = transfer_left_mpo(Os[j]) ∘ transfer_l
-    end
-    for j = i-1:-1:i-unit_cell+1
-        transfer_r = transfer_right_mpo(Os[j]) ∘ transfer_r
-    end
+function fidelity(ρ::InfiniteDisorderDensityMatrix, σ::InfiniteDisorderDensityMatrix)
+    vspace1 = space(ρ[1],1)
+    vspace2 = space(σ[1],1)
 
-    Dl = space(Os[i+1], 1)
-    Dr = space(Os[i+1], 1)
+    ftABl = fidelity_left_transfer(ρ, σ)
+    ftABr = fidelity_right_transfer(ρ, σ)
+    vl0 = rand(ComplexF64, vspace1 ⊗ vspace1', vspace2' ⊗ vspace2)
+    vr0 = rand(ComplexF64, vspace2' ⊗ vspace2, vspace1 ⊗ vspace1')
+    vals, vrs = eigsolve(x->ftABr(x), vr0, 1, :LM)
+    vals, vls = eigsolve(x->ftABl(x), vl0, 1, :LM)
 
-    ρl0 = TensorMap(rand, ComplexF64, Dl, Dl)
-    ρr0 = TensorMap(rand, ComplexF64, Dr, Dr)  
-    
-    _, ρls, infol = eigsolve(transfer_l, ρl0, 1, :LM)
-    _, ρrs, infor = eigsolve(transfer_r, ρr0, 1, :LM)
+    r = vrs[1]
+    l = vls[1]
 
-    _, S, _ = tsvd((ρls[1] * ρrs[1]))
-    es = S.data
-    es /= sum(es)
-    return es
-end
+    ftAAl = fidelity_left_transfer(ρ, ρ)
+    ftAAr = fidelity_right_transfer(ρ, ρ)
+    vl0 = rand(ComplexF64, vspace1 ⊗ vspace1', vspace1' ⊗ vspace1)
+    vr0 = rand(ComplexF64, vspace1' ⊗ vspace1, vspace1 ⊗ vspace1')
+    vals, vrAs = eigsolve(x->ftAAr(x), vr0, 1, :LM)
+    vals, vlAs = eigsolve(x->ftAAl(x), vl0, 1, :LM)
 
-# Test if MPO is equal to the identity MPO
-function test_identity(Os::InfiniteMPO)
-    ϵs = zeros(Float64, length(Os))
-    for i in eachindex(Os)
-        es = entanglement_spectrum(Os, i)
-        es = sort(es)
-        ϵs[i] = abs(sum(es[1:end-1]))
-    end
-    return maximum(ϵs)
-end
+    rA = vrAs[1]
+    lA = vlAs[1]
 
-# Test if MPO is equal to the identity MPO
-function test_identity_random(Os::InfiniteMPO; n_samples::Int = 5)
-    ϵs = zeros(Float64, n_samples)
-    for i in 1:n_samples
-        pspaces = [space(Os[i])[2] for i in 1:length(Os)]
-        vspaces = [ℂ^3 for i in 1:length(Os)]
-        ψ = InfiniteMPS(rand, ComplexF64, pspaces, vspaces)
-        ϵs[i] = abs(1-norm(dot(ψ, Os*ψ)))
-    end
-    return maximum(ϵs)
-end
 
-# Renyi entropy of InfiniteMPO
-function renyi_entropy2(Os::InfiniteMPO, L::Int)
-    length(Os) == 1 || error("Only single unitcell is implemented")
-    unit_cell = length(Os)
+    ftBBl = fidelity_left_transfer(σ, σ)
+    ftBBr = fidelity_right_transfer(σ, σ)
+    vl0 = rand(ComplexF64, vspace2 ⊗ vspace2', vspace2' ⊗ vspace2)
+    vr0 = rand(ComplexF64, vspace2' ⊗ vspace2, vspace2 ⊗ vspace2')
+    vals, vrBs = eigsolve(x->ftBBr(x), vr0, 1, :LM)
+    vals, vlBs = eigsolve(x->ftBBl(x), vl0, 1, :LM)
 
-    O = Os[1]
-    @tensor O_traced[-1; -2] := O[-1 1;1 -2]
+    rB = vrBs[1]
+    lB = vlBs[1]
 
-    vr = Tensor(rand, ComplexF64, space(O_traced, 2)')
-    vl = Tensor(rand, ComplexF64, space(O_traced, 1)')
-    vl = permute(vl, ((), (1,)))
+    @tensor trAB = l[1 2; 3 4] * ftABr(r)[3 4; 1 2]
+    @tensor NAB = l[1 2; 3 4] * r[3 4; 1 2]
+    @tensor trAA = lA[1 2; 3 4] * ftAAr(rA)[3 4; 1 2]
+    @tensor NAA = lA[1 2; 3 4] * rA[3 4; 1 2]
+    @tensor trBB = lB[1 2; 3 4] * ftBBr(rB)[3 4; 1 2]
+    @tensor NBB = lB[1 2; 3 4] * rB[3 4; 1 2]
 
-    λs, vrs = eigsolve(x->O_traced*x, vr, 1, :LM)
-    _, vls = eigsolve(x->x*O_traced, vl, 1, :LM)
-    @show λs
-    λ = λs[1]
-    vr = vrs[1]
-    vl = vls[1]
-
-    @tensor right[-1 -2] := vr[-1]*vr[-2]
-    @tensor left[-1 -2] := vl[-1]*vl[-2]
-    function transfer_r(A::AbstractMPOTensor,v)
-        @tensor result[-1 -2] := A[-1 3; 4 1] * A[-2 4; 3 2] * v[1 2]
-        return result
-    end
-
-    Nright = vr
-    for i in 1:L
-        right = transfer_r(O, right)
-        Nright = O_traced*Nright
-    end
-    @tensor S = left[1 2]*right[1 2]
-    @tensor N = vl[1]*vr[1]
-    @show norm(N)
-    @show S, N^2
-    @show S/N^2
-    # N *= λ^(L)
-    S = -log.(S/N^2)
-    # S = -log.(S)
-    return S
-end
-
-# MPO environments used in truncation
-function env_left(Os::InfiniteMPO, ix::Int)
-    timer_output = TimerOutput()
-    v1 = TensorMap(rand, ComplexF64, space(Os[ix+1], 1), space(Os[ix+1], 1))
-    transfer_left = transfer_left_mpo(Os[ix+1])
-    for jx in ix+2:1:ix+length(Os)
-        transfer_left = transfer_left_mpo(Os[jx]) ∘ transfer_left
-    end
-    @timeit timer_output "apply" begin
-        # v1 = TensorMap(rand, ComplexF64, space(Os[ix+1], 1), space(Os[ix+1], 1))
-        w = transfer_left(v1)
-    end
-    @timeit timer_output "eigs" begin
-        # _, ls = eigsolve(v -> transfer_left(v), v1, 1, :LM);
-         _, ls = eigsolve(transfer_left, v1, 1, :LM);
-    end
-    timer_output |> TimerOutputs.print
-    return ls[1]
-end
-
-function env_right(Os::InfiniteMPO, ix::Int)
-    v1 = TensorMap(rand, ComplexF64, space(Os[ix + 1], 1), space(Os[ix + 1], 1))
-    transfer_right = transfer_right_mpo(Os[ix])
-    for jx in ix-1:-1:ix-length(Os)+1
-        transfer_right = transfer_right_mpo(Os[jx]) ∘ transfer_right
-    end
-    _, ls = eigsolve(v -> transfer_right(v), v1, 1, :LM);
-    return ls[1]
-end
-
-function mpo_ovlp(A1::InfiniteMPO, A2::InfiniteMPO)
-    V1 = space(A1[1], 1)
-    V2 = space(A2[1], 1)
-
-    function mpo_transf(v)
-        for (M1, M2) in zip(A1, A2)
-            @tensor Tv[-1; -2] := M1[1 3; 4 -2] * conj(M2[2 3; 4 -1]) * v[2; 1]
-            v = Tv
-        end
-        return v
-    end
-
-    v0 = TensorMap(rand, ComplexF64, V2, V1)
-    λs, _ = eigsolve(mpo_transf, v0, 1, :LM)
-    return λs[1]
-end
-
-function mpo_fidelity(A1::InfiniteMPO, A2::InfiniteMPO)
-    return norm(mpo_ovlp(A1, A2) / sqrt(mpo_ovlp(A1, A1) * mpo_ovlp(A2, A2)))
-end
-
-function mpo_ovlp(ρ1::DisorderMPO, ρ2::DisorderMPO)
-    V1 = space(ρ1[1], 1)
-    V2 = space(ρ2[1], 1)
-
-    function mpo_transf(v)
-        for (M1, M2) in zip(ρ1, ρ2)
-            @tensor Tv[-1; -2] := M1[1 3 5; 4 6 -2] * conj(M2[2 3 5; 4 6 -1]) * v[2; 1]
-            v = Tv
-        end
-        return v
-    end
-
-    v0 = TensorMap(rand, ComplexF64, V2, V1)
-    λs, _ = eigsolve(mpo_transf, v0, 1, :LM)
-    return λs[1]
-end
-
-function mpo_fidelity(A1::DisorderMPO, A2::DisorderMPO)
-    return norm(mpo_ovlp(A1, A2) * mpo_ovlp(A2, A1) / mpo_ovlp(A2, A2))
+    F = (trAB / NAB) * conj(trAB / NAB)/ ((trAA/NAA) * (trBB/NBB))
+    return F
 end
