@@ -24,18 +24,26 @@ const AbstractEEnv = AbstractTensor{T, S, 4} where {T, S}
 const AbstractBondTensor = AbstractTensorMap{T, S, 1, 1} where {T, S}
 const AbstractDisorderMPSTensor = AbstractTensorMap{T, S, 2, 2} where {T, S}
 
-include("VOMPS_Inversion.jl")
-include("truncation_algorithms.jl")
+# include("VOMPS_Inversion.jl")
+# include("truncation_algorithms.jl")
 include("DisorderMPO.jl")
+# include("inversion.jl")
+include("DisorderMPOHam.jl")
+include("DisorderDensityMatrix.jl")
 include("utils.jl")
-include("svd_optimization.jl")
-include("mpo_truncation.jl")
+include("finalizer.jl")
+# include("partition_function.jl")
+include("PartitionFunction.jl")
+# include("svd_optimization.jl")
+# include("mpo_truncation.jl")
 include("iDTEBD.jl")
 include("models.jl")
-include("DisorderMPOHam.jl")
-include("InfiniteDisorderMPS.jl")
-include("InfiniteDisorderTangent.jl")
+# include("InfiniteDisorderMPS.jl")
+# include("InfiniteDisorderMPS2.jl")
+# include("InfiniteDisorderTangent.jl")
+# include("InfiniteDisorderTangent2.jl")
 include("SDRG.jl")
+include("truncation.jl")
 
 
 end # module DisorderKit
