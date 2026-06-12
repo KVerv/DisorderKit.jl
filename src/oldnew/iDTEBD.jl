@@ -34,22 +34,23 @@ function evolve_densitymatrix(ρ0::InfiniteDisorderDensityMatrix, Hs::DisorderMP
 
         (alg.verbosity > 0) && (@info(crayon"magenta"("Evolve")))
         @timeit alg.timer_output "evolve_one_time_step" ρs = ρs * Us
+        N1, N2 = norm_moments(ρs)
+        ϵ_acc = abs(N2 - 1)
+        (alg.verbosity > 1) && (@info(crayon"magenta"("Max. error before normalization: ϵ₁ = $(ϵ_acc)")))
 
         (alg.verbosity > 0) && (@info(crayon"magenta"("Normalize")))
         @timeit alg.timer_output "normalize_each_disorder_sector" begin
-            ρs_normalized = normalize(ρs)
+            ρs_normalized = normalize_density_matrix(ρs)
         end
 
         (alg.verbosity > 0) && (@info(crayon"magenta"("Truncating ρ")))
         (alg.verbosity > 1) && (@info(crayon"magenta"("Before truncation: Bonddimension of ρ = $(dim(space(ρs_normalized[1],1)))")))
         @timeit alg.timer_output "truncate_disorder_MPO" ρs = truncate(ρs_normalized, alg.trunc_method)
         (alg.verbosity > 1) && (@info(crayon"magenta"("After truncation: Bonddimension of ρ = $(dim(space(ρs[1],1)))")))
-        
         ρs = gauge!(ρs)
-        es = entanglement_spectrum_norm(ρs)
-        ϵ_acc = sum(es[1:end-1])
+        N1, N2 = norm_moments(ρs)
+        ϵ_acc = abs(N2 - 1)
         (alg.verbosity > 1) && (@info(crayon"magenta"("Max. error after normalization: ϵ₁ = $(ϵ_acc)")))
-        (alg.verbosity > 1) && (@info(crayon"magenta"("Max. error before normalization: ϵ₁ = $(ϵ_acc)")))
 
 
         @timeit alg.timer_output "finalizer" data[ix] = alg.finalizer.f!(ρs, Hs)
@@ -92,12 +93,12 @@ function evolve_densitymatrix(ρ0::InfiniteDisorderDensityMatrix, Hs::DisorderMP
     while (ϵ_conv > alg.convtol) && (ix <= alg.maxiter)
         ix += 1
         (alg.verbosity > 0) && (@info "Iteration $ix")
-        (alg.verbosity > 0) && (@info(crayon"cyan"("Constructing time evolution operator")))
+        (alg.verbosity > 0) && (@info(crayon"magenta"("Constructing time evolution operator")))
         @timeit alg.timer_output "construct_time_evolution_operator" begin
             Us = time_evolution_MPO(Hs, dβ/2)
         end
 
-        (alg.verbosity > 0) && (@info(crayon"cyan"("Evolve")))
+        (alg.verbosity > 0) && (@info(crayon"magenta"("Evolve")))
         @timeit alg.timer_output "evolve_one_time_step" ρs = ρs * Us
         # if ix < 20
         #     @timeit alg.timer_output "evolve_one_time_step" ρs = ρs * Us
@@ -105,13 +106,8 @@ function evolve_densitymatrix(ρ0::InfiniteDisorderDensityMatrix, Hs::DisorderMP
         #     @timeit alg.timer_output "evolve_one_time_step" ρs = ρs * ρs
         # end
 
-        (alg.verbosity > 1) && (@info(crayon"yellow"("Before Normalization: Bonddimension of ρ = $(dim(space(ρs[1],1)))")))
-        (alg.verbosity > 0) && (@info(crayon"yellow"("Normalize Density Matrix")))
         @timeit alg.timer_output "normalize_each_disorder_sector" begin
-            ρs_normalized = normalize(ρs)
-            ρs_normalized = gauge(ρs_normalized)
-            # ρs_normalized = ρs
-            # ρs_normalized = gauge(ρs)
+            ρs_normalized = normalize_density_matrix(ρs)
         end
 
         (alg.verbosity > 0) && (@info(crayon"magenta"("Truncating ρ")))
@@ -119,13 +115,15 @@ function evolve_densitymatrix(ρ0::InfiniteDisorderDensityMatrix, Hs::DisorderMP
         @timeit alg.timer_output "truncate_disorder_MPO" ρs = truncate(ρs_normalized, alg.trunc_method)
         (alg.verbosity > 1) && (@info(crayon"magenta"("After truncation: Bonddimension of ρ = $(dim(space(ρs[1],1)))")))
         
-        # ρs = gauge(ρs)
-        es, N2 = entanglement_spectrum_norm(ρs)
-        # ϵ_acc = abs.(1 - N2)
-        ϵ_acc = sum(es[1:end-1])
-        (alg.verbosity > 1) && (@info(crayon"light_blue"("Max. error after normalization: ϵ₁ = $(ϵ_acc), N2 = $(abs(N2))")))
+        ρs = gauge!(ρs)
+        # N1, N2 = norm_moments(ρs)
+        # N2 = 1
+        # ϵ_acc = abs(N2 - 1)
 
-        (alg.verbosity > 0) && (@info(crayon"cyan"("Finalize")))
+        es = entanglement_spectrum_norm(ρs)
+        ϵ_acc = sum(es[1:end-1])
+        (alg.verbosity > 1) && (@info(crayon"magenta"("Max. error after normalization: ϵ₁ = $(ϵ_acc)")))
+
         @timeit alg.timer_output "finalizer" push!(data, alg.finalizer.f!(ρs, Hs))
         # if space(ρs.opp[1], 1) == space(ρprev.opp[1], 1)
         #     # errors = norm.(ρs.opp .- ρprev.opp)
@@ -140,7 +138,7 @@ function evolve_densitymatrix(ρ0::InfiniteDisorderDensityMatrix, Hs::DisorderMP
         ϵ_conv = (abs(Eprev - E))
         Eprev = E
 
-        (alg.verbosity > 0) && (@info(crayon"light_blue"("Convergence error: ϵ_conv = $(ϵ_conv)")))
+        (alg.verbosity > 0) && (@info(crayon"magenta"("Convergence error: ϵ_conv = $(ϵ_conv)")))
 
         ρprev = deepcopy(ρs)
         push!(ϵsacc, ϵ_acc)

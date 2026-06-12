@@ -6,7 +6,7 @@ using DelimitedFiles
 
 chain = InfiniteChain(1)
 D = 4
-H = transverse_field_ising(chain)
+H = transverse_field_ising(chain; J=1.0, g=1.0)
 physical_space = ℂ^2
 virtual_space_inf = ℂ^D
 ψ₀_inf = InfiniteMPS([physical_space], [virtual_space_inf])

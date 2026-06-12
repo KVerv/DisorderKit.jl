@@ -36,23 +36,28 @@ end
 
 
 
-# Truncate ordinary mpo with standard truncation algorithm
-function truncate_disorder_mpo(Dmpo::DisorderMPO, trunc_method::MatrixAlgebraKit.TruncationStrategy)
-    mpo = get_MPOTensor(Dmpo)
-    PL, PR = truncation_matrices(mpo, trunc_method)
+# Truncate disorder mpo with standard truncation algorithm
+function truncate_disorder_mpo(Dmpo::InfiniteDisorderMPO, trunc_method::MatrixAlgebraKit.TruncationStrategy)
+    pspace = space(Dmpo[1], 2)
+    dspace = space(Dmpo[1], 3)
+    tspace = space(Dmpo[1], 4)'
+    isop = isomorphism(ComplexF64, fuse(pspace ⊗ dspace), pspace ⊗ dspace)
+    isot = isomorphism(ComplexF64, fuse(tspace ⊗ dspace), tspace ⊗ dspace)
+    @tensor mpo_fused[-1 -2; -3 -4] :=  isop[-2; 1 2] * Dmpo[1][-1 1 2; 3 4 -4] * conj(isot[-3; 3 4])
+    PL, PR = truncation_matrices(mpo_fused, trunc_method)
     L = length(Dmpo)
     mpo_updated = map(1:L) do ix
         PL = PL
         PR = PR
-        @tensor O_updated[-1 -2 ; -3 -4] := PL[-1; 1] * Dmpo[ix][1 -2; -3 2] * PR[2; -4]
+        @tensor O_updated[-1 -2 -3; -4 -5 -6] := PL[-1; 1] * Dmpo[ix][1 -2 -3; -4 -5 2] * PR[2; -6]
         return O_updated
     end
-    return DisorderMPO(mpo_updated)
+    return InfiniteDisorderMPO(mpo_updated)
 end
 
 
 # Truncate the density matrix in each disorder sector
 function truncate(ρs::InfiniteDisorderDensityMatrix, trunc_method::MatrixAlgebraKit.TruncationStrategy)
-    mpo_truncated = truncate_disorder_mpo(DisorderMPO(ρs.opp), trunc_method)
+    mpo_truncated = truncate_disorder_mpo(InfiniteDisorderMPO(ρs.opp), trunc_method)
     return InfiniteDisorderDensityMatrix(mpo_truncated.opp, ρs.ps)
 end
