@@ -30,16 +30,16 @@ function random_transverse_field_ising(Js::Vector{Float64}, hs::Vector{Float64})
     return DisorderMPOHam(A, L, R, D)
 end
 
-function time_evolution_MPO(H::DisorderMPOHam, dt::Real; N::Int = 2)
+function time_evolution_MPO(H::DisorderMPOHam, dt::Real; N::Int = 1)
     pspace = space(H.D, 1)
     N_disorder = dim(space(H.D, 2))
-    vspace = space(H.A, 1)
+    vspace = space(H.R, 1)
     
     #FIXME UVspace hardcoded for now
     if N == 1
-        Uvspace = BlockTensorKit.boxplus([ℂ^1, ℂ^1]...)
+        Uvspace = BlockTensorKit.boxplus([ℂ^1, vspace]...)
     elseif N == 2
-        Uvspace = BlockTensorKit.boxplus([ℂ^1, ℂ^1, ℂ^1]...)
+        Uvspace = BlockTensorKit.boxplus([ℂ^1, vspace, fuse(vspace,vspace)]...)
     end
 
     Ucodomain = BlockTensorKit.boxplus(Uvspace) ⊗ BlockTensorKit.boxplus(pspace) ⊗ space(H.D, 2)
@@ -56,16 +56,19 @@ function time_evolution_MPO(H::DisorderMPOHam, dt::Real; N::Int = 2)
 
         W[1, 1, 1, 1] = BraidingTensor{ComplexF64, ComplexSpace}(pspace[1], ℂ^1)
         W[1, 1, 1, 2] = TensorMap(H.L[1, i, 1, i, 1].data, ℂ^1 ⊗ pspace[1], pspace[1] ⊗ vspace[1])
-        W[1, 1, 1, 3] = TensorMap(H.D[1, i, 1, i].data, ℂ^1 ⊗ pspace[1], pspace[1] ⊗ ℂ^1)
+        W[1, 1, 1, end] = TensorMap(H.D[1, i, 1, i].data, ℂ^1 ⊗ pspace[1], pspace[1] ⊗ ℂ^1)
         W[2, 1, 1, 2] = TensorMap(H.A[1, 1, i, 1, i, 1].data, vspace[1] ⊗ pspace[1], pspace[1] ⊗ vspace[1])
-        W[2, 1, 1, 3] = TensorMap(H.R[1, 1, i, 1, i].data, vspace[1] ⊗ pspace[1], pspace[1] ⊗ ℂ^1)
-        W[3, 1, 1, 3] = BraidingTensor{ComplexF64, ComplexSpace}(pspace[1], ℂ^1)
+        W[2, 1, 1, end] = TensorMap(H.R[1, 1, i, 1, i].data, vspace[1] ⊗ pspace[1], pspace[1] ⊗ ℂ^1)
+        W[end, 1, 1, end] = BraidingTensor{ComplexF64, ComplexSpace}(pspace[1], ℂ^1)
+
         MPOham = MPOHamiltonian(PeriodicArray([MPSKit.JordanMPOTensor(W)]))
         Ui = MPSKit.make_time_mpo(MPOham, dt, TaylorCluster(;N=N, compression = true, extension = true); imaginary_evolution=true)
         
         for (q1, s1) in enumerate(space(Ui[1],1))
             for (q2, s2) in enumerate(space(Ui[1],4))
-                U[q1,1,i,1,i,q2] = TensorMap(Ui[1][q1,1,1,q2].data, ℂ^1 ⊗ pspace[1] ⊗ ℂ^1, pspace[1] ⊗ ℂ^1 ⊗ ℂ^1)
+                vspacel = space(Ui[1],1)
+                vspacer = space(Ui[1],4)'
+                U[q1,1,i,1,i,q2] = TensorMap(Ui[1][q1,1,1,q2].data, vspacel[q1] ⊗ pspace[1] ⊗ ℂ^1, pspace[1] ⊗ ℂ^1 ⊗ vspacer[q2])
             end
         end
     end

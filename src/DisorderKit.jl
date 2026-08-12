@@ -24,20 +24,23 @@ const AbstractEEnv = AbstractTensor{T, S, 4} where {T, S}
 const AbstractBondTensor = AbstractTensorMap{T, S, 1, 1} where {T, S}
 const AbstractDisorderMPSTensor = AbstractTensorMap{T, S, 2, 2} where {T, S}
 
+
 # include("VOMPS_Inversion.jl")
 # include("truncation_algorithms.jl")
 # include("inversion.jl")
+include("utils.jl")
 include("DisorderMPOHam.jl")
 include("DisorderDensityMatrix.jl")
 include("DisorderMPO.jl")
-include("utils.jl")
 include("finalizer.jl")
 # include("partition_function.jl")
-include("PartitionFunction.jl")
-include("inv_sqrt_mpo.jl")
+# include("PartitionFunction.jl")
+# include("inv_sqrt_mpo.jl")
 # include("svd_optimization.jl")
 # include("mpo_truncation.jl")
-include("iDTEBD.jl")
+include("renorm_op.jl")
+include("iDTEBD_groundstate.jl")
+# include("iDTEBD.jl")
 include("models.jl")
 # include("InfiniteDisorderMPS.jl")
 # include("InfiniteDisorderMPS2.jl")

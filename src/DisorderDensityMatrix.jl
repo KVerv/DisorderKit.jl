@@ -77,6 +77,25 @@ function environments(ρ::InfiniteDisorderDensityMatrix)
     return λl, l, r
 end
 
+# Compute singular environments
+function singular_environments(ρ::InfiniteDisorderDensityMatrix)
+    fused_space = fuse(space(ρ[1], 1)', space(ρ[1], 1))
+    iso = isomorphism(fused_space, space(ρ[1], 1)' ⊗ space(ρ[1], 1))
+    @tensor Z[-1 -2; -3 -4] := iso[-1; 1 6] * ρ[1][6 2 -2; 4 5 8] * conj(ρ[1][1 2 -3; 4 5 7]) * conj(iso[-4; 7 8])
+    @tensor Z2[-1 -2 -3; -4 -5 -6] := Z[-2 -3; -1 1] * Z[1 -6; -4 -5]
+
+    U, S, V, ϵ = svd_trunc(Z2, trunc = (maxrank = 1,))
+    c1 = ones(ComplexF64, space(S, 2)')
+    @tensor Ub[-1 -2 -3] := U[-3 -1 -2; 1] * S[1; 2] * c1[2]
+    @tensor Zb[-1 -2 -3; -4] := Z[-2 -3; -1 -4]
+    
+
+ 
+    b, _ = lssolve(Zb, Ub)
+
+    return a, b
+end
+
 # Right second moment transfer matrix
 function right_second_moment_transfer_matrix(ρ::InfiniteDisorderDensityMatrix)
     A = ρ[1]
@@ -174,20 +193,47 @@ function average_correlation_length(ρ::InfiniteDisorderDensityMatrix)
     return ξ
 end
 
-
 function entanglement_spectrum_norm(ρ::InfiniteDisorderDensityMatrix)
+    λ, l, r = DisorderKit.environments(ρ)
+
     ft_l = left_second_moment_transfer_matrix(ρ)
     ft_r = right_second_moment_transfer_matrix(ρ)
 
-    l = rand(ComplexF64,space(ρ[1],1)⊗space(ρ[1],1)',space(ρ[1],1)'⊗space(ρ[1],1))
-    r = rand(ComplexF64,space(ρ[1],1)'⊗space(ρ[1],1),space(ρ[1],1)⊗space(ρ[1],1)')
+    l0 = rand(ComplexF64,space(ρ[1],1)⊗space(ρ[1],1)',space(ρ[1],1)'⊗space(ρ[1],1))
+    r0 = rand(ComplexF64,space(ρ[1],1)'⊗space(ρ[1],1),space(ρ[1],1)⊗space(ρ[1],1)')
 
-
-    λ, ρls, infol = eigsolve(ft_l, l, 1, :LM)
-    _, ρrs, infor = eigsolve(ft_r, r, 1, :LM)
+    λs, ρls, infol = eigsolve(ft_l, l0, 1, :LM)
+    _, ρrs, infor = eigsolve(ft_r, r0, 1, :LM)
+    λ2 = λs[1]
 
     S = svd_vals((ρls[1] * ρrs[1]))
     es = S.data
     es /= sum(es)
-    return sort(es), λ[1]
+    return sort(es), real(log(λ2)-2*log(λ))
+end
+
+function lyapunovexp(ρ::InfiniteDisorderDensityMatrix; L::Int = 100, n_samples::Int = 20)
+    λs = Float64[]
+    As = []
+    Ps = []
+    for i in 1:length(ρ.ps)
+        ρi = ρ[1][1,1,i,1,i,1]
+        @tensor A[-1 -2; -3 -4] := ρi[-2 2 3; 4 5 -4] * conj(ρi[-1 2 3; 4 5 -3])
+        push!(As, A)
+    end
+    for _ in ProgressBar(1:n_samples)
+        P = 1
+        u = rand(ComplexF64,space(ρ[1],1)'⊗space(ρ[1],1))
+        for n in 1:L
+            sample = rand(1:length(ρ.ps), 1)
+            u = As[sample[1]]*u
+            P *= ρ.ps[sample[1]]
+        end
+        push!(λs, 1/L*log(TensorKit.norm(u)))
+        push!(Ps, P)
+    end
+    @show λs
+    average_λ = sum(λs.*Ps)/sum(Ps)
+    var_λ = sum(λs.^2 .*Ps)/sum(Ps) - average_λ^2
+    return average_λ, var_λ, λs
 end
