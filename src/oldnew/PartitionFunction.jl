@@ -4,26 +4,45 @@ struct PartitionFunction{T <: Number, S <: IndexSpace}
     L::AbstractTensorMap{T, S, 1, 2}
     R::AbstractTensorMap{T, S, 2, 1}
     D::AbstractTensorMap{T, S, 1, 1}
+    δ::Real
 end
 
 
-function PartitionFunction(ρ::InfiniteDisorderDensityMatrix; χ::Int=1)
+function PartitionFunction(ρ::InfiniteDisorderDensityMatrix)
     # @show space(ρ[1], 1)
     # Tζf, λ, lf, rf = compute_canonical_forms(ρ; maxiter = 100)
     iso = isomorphism(fuse(space(ρ[1], 1)'⊗space(ρ[1], 1)), space(ρ[1], 1)'⊗space(ρ[1], 1))
     @tensor Tζf[-1 -2; -3 -4] := iso[-1; 1 2] * ρ[1][2 5 -2; 6 7 4] * conj(ρ[1][1 5 -3; 6 7 3]) * conj(iso[-4; 3 4])
-
-    # @show space(Tζf, 1)
+    @show space(Tζf)
+    # Tζf, PL, PR = truncate_mpo(Tζf, MatrixAlgebraKit.truncerror(rtol = 1e-1))
+    Tζf, PL, PR = truncate_mpo(Tζf, MatrixAlgebraKit.truncrank(2))
+    @show space(Tζf)
+    # es = entanglement_spectrum(InfiniteMPO([Tζf]), 1)
+    # @show es
     dspace = space(ρ[1], 3)
     Id = id(ComplexF64, dspace)
     P = make_DiagonalBlockTensorMap(ρ.ps)
 
+    # Tbar_fused = zeros(ComplexF64, space(Tζf, 1)[1], space(Tζf, 1)[1])
+    # for i in eachindex(ρ.ps)
+    #     Zx = TensorMap(Tζf[1,i,i,1].data, space(Tζf, 1)[1], space(Tζf, 1)[1])
+    #     lZ = log(Zx)
+    #     Tbar_fused += ρ.ps[i] * lZ
+    # end
+    # Tbar_fused = exp(Tbar_fused)
+
+
     @tensor Tbar_fused[-1; -2] := Tζf[-1 1; 2 -2] * P[2; 1]
     @tensor Tbar_tensor[-1 -2; -3 -4] := Tbar_fused[-1; -4] * Id[-2; -3]
 
+    # vals = eig_vals(Zx)
+    # @show vals
+
     λ, l, r = environments(ρ)
-    @tensor lf[-1] := l[1;2] * conj(iso[-1;1 2])
-    @tensor rf[-1] := r[1;2] * iso[-1;2 1]
+    # @tensor lf[-1] := l[1;2] * conj(iso[-1;1 2])
+    # @tensor rf[-1] := r[1;2] * iso[-1;2 1]
+    @tensor lf[-1] := l[1;2] * conj(iso[3;1 2]) * PR[3;-1]
+    @tensor rf[-1] := r[1;2] * iso[3;2 1]  * PL[-1;3]
 
     # @tensor Pdom[-1; -2] := rf[-1] * lf[-2]
     # # @show space(Pdom)
@@ -35,7 +54,8 @@ function PartitionFunction(ρ::InfiniteDisorderDensityMatrix; χ::Int=1)
     # # @show abs.(vals)[1:min(6, length(vals))]
     # Uinv = pinv(U)
 
-    Λ, Vr = eig_trunc(Tbar_fused; trunc = truncrank(χ))
+    χ = dim(space(Tζf,1))
+    Λr, Vr = eig_trunc(Tbar_fused; trunc = truncrank(χ))
     Λ, Vl = eig_trunc(Tbar_fused'; trunc = truncrank(χ))
     @show abs.(Λ.data)
     Λ[1] = 0
@@ -47,7 +67,6 @@ function PartitionFunction(ρ::InfiniteDisorderDensityMatrix; χ::Int=1)
 
     # @tensor Vr[-1; -2] := Vr[-1; 1] * bd[1; -2]
     @tensor Vl[-1; -2] := Vl[-1; 1] * bd[1; -2]
-
 
     δT = Tζf - Tbar_tensor
     @tensor D[-1; -2] := lf[1] * δT[1 -1; -2 2] * rf[2]
@@ -86,7 +105,9 @@ function PartitionFunction(ρ::InfiniteDisorderDensityMatrix; χ::Int=1)
     # A *= 0
     # R *= 0
     # L *= 0
-    return PartitionFunction(ρ, A, L, R, D)
+    δ = norm(δT[1,1,1,1])
+    @info(crayon"red"("δ =  $(δ)"))
+    return PartitionFunction(ρ, A, L, R, D, δ)
 end
 
 
@@ -199,12 +220,14 @@ function compute_canonical_forms(ρ::InfiniteDisorderDensityMatrix; maxiter::Int
     return Z, λ, lf, rf
 end
 
-function normalize(ρ::InfiniteDisorderDensityMatrix; χ::Int=4, N::Int=3)
+function normalize(ρ::InfiniteDisorderDensityMatrix; N::Int=1)
     ρ = gauge(ρ)
-    Z = PartitionFunction(ρ; χ=χ)
+    Z = PartitionFunction(ρ)
 
     O = inv_sqrt_MPO(Z; N=N)
     ρ_product = ρ * O
 
-    return ρ_product
+    return ρ_product, Z.δ
 end
+
+
