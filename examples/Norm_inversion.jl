@@ -38,7 +38,7 @@ ps = ones(N^2)./N^2
 
 Hs = DisorderKit.random_transverse_field_ising(Js, hs)
 
-Δβ = 2.0
+Δβ = 0.2
 χ = 4
 
 Us = DisorderKit.time_evolution_MPO(Hs, Δβ; N=2)
@@ -47,7 +47,7 @@ Us = DisorderKit.time_evolution_MPO(Hs, Δβ; N=2)
 # ρ = DisorderKit.InfiniteDisorderDensityMatrix(ps, ℂ^2, ℂ^1, ℂ^2; σ=1e-8)
 # ρ = ρ * Us
 # ZL = DisorderKit.compute_ZL(ρ; maxiter = 10)
-Z = DisorderKit.PartitionFunction(ρ; χ=χ)
+Z = DisorderKit.PartitionFunction(ρ)
 
 function Tav(ρ)
     λ, l, r = DisorderKit.environments(ρ)
@@ -61,10 +61,16 @@ function Tav(ρ)
     @tensor Tbar_tensor[-1 -2; -3 -4] := Tbar_fused[-1; -4] * Id[-2; -3]
     δT = Tζf - Tbar_tensor
     
+    vspace= space(Tζf, 1)
+    Q = DisorderKit.make_DiagonalBlockTensorMap([0., .1, .0, .0])
+    @tensor M[-1; -2] := Tζf[-1 1; 2 -2] * Q[2;1]
+    vals = eig_vals(M)
+    @show vals
     return Tbar_fused, Tζf, δT
 end
 
 Test, Tz, δT = Tav(ρ)
+x=1
 
 # N₀ = DisorderKit.norm_moments(ρ)
 es, N = DisorderKit.entanglement_spectrum_norm(ρ)
