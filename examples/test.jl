@@ -2,35 +2,28 @@ using Revise, TensorKit, TimerOutputs, BlockTensorKit
 
 timer = TimerOutput()
 
-d = 50
-
-
-@timeit timer "prepare normal tensor" begin
-    T = rand(ComplexF64,ℂ^2⊗ℂ^(d),ℂ^(d)⊗ ℂ^2)
-end
-
-Wcodomain = BlockTensorKit.boxplus(fill(ℂ^1, d)...) ⊗  BlockTensorKit.boxplus([ℂ^2]...)
-Wdomain = BlockTensorKit.boxplus([ℂ^2]...) ⊗ BlockTensorKit.boxplus(fill(ℂ^1, d)...)
-
-@timeit timer "prepare zeros block tensor" begin
-    Z = spzeros(ComplexF64, Wdomain, Wcodomain)
-end
-
-@timeit timer "prepare diagonal block tensor" begin
-    W = spzeros(ComplexF64, Wdomain, Wcodomain)
-    for i in 1:d
-        @timeit timer "fill" W[1,i,i,1] = rand(ComplexF64, ℂ^2 ⊗ ℂ^1, ℂ^1 ⊗ ℂ^2)
+D = 50
+N = 10
+ps = ones(N)/N
+function construct_tensor()
+    A = spzeros(ComplexF64, BlockTensorKit.boxplus(ℂ^D) ⊗ BlockTensorKit.boxplus(ℂ^2) ⊗ BlockTensorKit.boxplus(fill(ℂ^1, length(ps))...), BlockTensorKit.boxplus(ℂ^1) ⊗ BlockTensorKit.boxplus(fill(ℂ^1, length(ps))...) ⊗ BlockTensorKit.boxplus(ℂ^D))
+    Aᵢ = rand(ComplexF64, ℂ^D ⊗ ℂ^2 ⊗ ℂ^1, ℂ^1 ⊗ ℂ^1 ⊗ ℂ^D) 
+    for i in eachindex(ps)
+            A[1, 1, i, 1, i, 1] = Aᵢ # Same tensor for each disorder sector
     end
-    @timeit timer "W" W = W
+    return A
 end
 
-V = [rand(ComplexF64, ℂ^2⊗ℂ^1, ℂ^1⊗ℂ^2) for i in 1:d]
+function construct_MPStensor()
+    A = spzeros(ComplexF64, BlockTensorKit.boxplus(ℂ^D) ⊗ BlockTensorKit.boxplus(ℂ^2) ⊗ BlockTensorKit.boxplus(fill(ℂ^1, length(ps))...), BlockTensorKit.boxplus(fill(ℂ^1, length(ps))...) ⊗ BlockTensorKit.boxplus(ℂ^D))
+    Aᵢ = rand(ComplexF64, ℂ^D ⊗ ℂ^2 ⊗ ℂ^1, ℂ^1 ⊗ ℂ^D) 
+    for i in eachindex(ps)
+            A[1, 1, i, i, 1] = Aᵢ # Same tensor for each disorder sector
+    end
+    return A
+end
 
-# @timeit timer " add normal" begin
-#     Q = T + 3*T
-# end
-
-# @timeit timer " add block" begin
-#     P = W + 3*W
-# end
-
+for i in 1:50
+    @timeit timer "construct_initial_state" construct_tensor()
+    @timeit timer "construct_initial_MPStensor" construct_MPStensor()
+end

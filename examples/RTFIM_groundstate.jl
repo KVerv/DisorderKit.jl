@@ -19,9 +19,9 @@ Hs = DisorderKit.random_transverse_field_ising(Js, hs)
 
 
 Δτ = 0.05 # Step size for imaginary time evolution
-maxiter = 1000 # Maximum number of iterations for the groundstate algorithm
+maxiter = 200 # Maximum number of iterations for the groundstate algorithm
 D = 4 # State Bonddimension
-D_R = 2 # Renormalization operator Bonddimension
+D_R = 4 # Renormalization operator Bonddimension
 
 # Construct Finalizer for computing observables after each iteration of the groundstate algorithm
 function my_finalize!(ρ, Hs)
@@ -31,10 +31,11 @@ function my_finalize!(ρ, Hs)
     M = real.(DisorderKit.expectation_value(ρ, Z))
     rmax = round(Int, 5*ξ)
     Cs = real.(DisorderKit.two_point_correlator(ρ, Z, Z, rmax+1))
-    return (E, M, ξ, Cs)
+    S = DisorderKit.average_entanglement_entropy(ρ)[1]
+    return (E, M, ξ, Cs, S)
 end
 
-myFinalizer = DisorderKit.Finalizer(Tuple{Float64, Float64, Float64, Vector{Float64}}, my_finalize!)
+myFinalizer = DisorderKit.Finalizer(Tuple{Float64, Float64, Float64, Vector{Float64}, Float64}, my_finalize!)
 
 # Generate algorithm object with corresponding parameters
 alg_evo = DisorderKit.Groundstate_iDTEBD(MatrixAlgebraKit.truncrank(D), MatrixAlgebraKit.truncrank(D_R); convtol = 1e-9, maxiter = maxiter, verbosity = 2, timer_output = TimerOutput(), finalizer = myFinalizer)
@@ -58,6 +59,7 @@ Es = getindex.(data, 1)
 Ms = getindex.(data, 2)
 ξs = getindex.(data, 3)
 Cs = getindex.(data, 4)
+Ss = getindex.(data, 5)
 
 E = Es[end]
 ξ = ξs[end]
@@ -69,33 +71,42 @@ fig = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
 ax1 = Axis(fig[1, 1], 
         xlabel = L"τ",
         ylabel = L"$E$",
-        # xscale = log10,
+        xscale = log10,
         # yscale = log10
         )
 ax2 = Axis(fig[1, 2], 
         xlabel = L"τ",
         ylabel = L"$ϵ_{conv}$",
-        # xscale = log10,
+        xscale = log10,
         yscale = log10
         )
 ax3 = Axis(fig[2, 1], 
         xlabel = L"τ",
         ylabel = L"$ϵ_σ$",
-        # xscale = log10,
+        xscale = log10,
         yscale = log10
         )
 ax4 = Axis(fig[2, 2], 
         xlabel = L"τ",
         ylabel = L"$ϵ_{z}$",
         # xscale = log10,
-        yscale = log10
+        # yscale = log10
         )
 
 colors = Makie.wong_colors()
 scatterlines!(ax1, τs, Es, label=L"$Δτ=%$Δτ$", markersize=20)
+# scatterlines!(ax1, τs, abs.(Es.-E), label=L"$Δτ=%$Δτ$", markersize=20)
 scatterlines!(ax2, τs, info.ϵsconv, label=L"$ϵ_{conv}$", markersize=20)
-scatterlines!(ax3, τs, (abs.(info.ϵsent)), label=L"$ϵ_{acc}$", markersize=20)
-scatterlines!(ax4, τs, (info.ϵsz), label=L"$ϵ_{acc}$", markersize=20, marker=:utriangle)
+# scatterlines!(ax3, τs, (abs.(info.ϵsent)), label=L"$ϵ_{acc}$", markersize=20)
+# scatterlines!(ax4, τs, (info.ϵsz), label=L"$ϵ_{acc}$", markersize=20, marker=:utriangle)
+scatterlines!(ax3, τs[10:end], ξs[10:end], label=L"$ϵ_{acc}$", markersize=20)
+scatterlines!(ax4, log.(ξs[10:end]), Ss[10:end], label=L"$S$", markersize=20)
+
+# Edens= FFs[end]/(Ls[end])
+
+# EF = linfit.param[1]
+# EF1, EF0 = confidence_interval(linfit)[1]
+
 
 axislegend(ax1, position=:rt)
 fig
@@ -105,25 +116,25 @@ fig2 = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
 ax21 = Axis(fig2[1, 1], 
         xlabel = L"τ",
         ylabel = L"$ϵ_ρ$",
-        # xscale = log10,
+        xscale = log10,
         yscale = log10
         )
 ax22 = Axis(fig2[1, 2], 
         xlabel = L"τ",
         ylabel = L"$ϵ_R$",
-        # xscale = log10,
+        xscale = log10,
         yscale = log10
         )
 ax23 = Axis(fig2[2, 1], 
         xlabel = L"τ",
         ylabel = L"$ϵ_{A1}$",
-        # xscale = log10,
+        xscale = log10,
         yscale = log10
         )
 ax24 = Axis(fig2[2, 2], 
         xlabel = L"τ",
         ylabel = L"$ϵ_{z}$",
-        # xscale = log10,
+        xscale = log10,
         yscale = log10
         )
 
@@ -135,46 +146,64 @@ scatterlines!(ax24, τs[2:end], info.ϵsA2[2:end], label=L"$ϵ_{acc}$", markersi
 
 axislegend(ax1, position=:rt)
 fig2
-# fig2 = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
-# ax21 = Axis(fig2[1, 1], 
-#         xlabel = L"\ln r",
-#         ylabel = L"$\ln (C_r)$",
-#         # xscale = log10,
-#         # yscale = log10
-# )
 
-# for (i, ys) in enumerate(Cs)
-#         ξ = ξs[i]
-#         rs = 1:length(ys)
-#         # rs *= 1/ξ
-#         yss = ys./ys[1]#.*rs.^0.38
-#         M = Ms[i]#.- M^2
 
-#         if i % length(Cs) == 220
-#         # if i % 100 == 0
-#             scatter!(ax21, log.(rs), log.(yss), label=L"$D=%$D$", markersize=20)
-#         # scatter!(ax21, (rs), (yss), label=L"$D=%$D$", markersize=20)
-#                 @show ξ
-#         end
-#         # if i == length(Cs)
-#         if i == 220
-#                 lines!(ax21, log.(rs), -0.25 *(log.(rs).-log.(rs[2])).+log.(yss[2]), color=:black, linewidth=2)
-#                 lines!(ax21, log.(rs), -0.38 *(log.(rs).-log.(rs[5])).+log.(yss[5]), color=:red, linewidth=2)
-#                 # lines!(ax21, log.(rs), -0.25 *(log.(rs).-log.(rs[2])).+log.(yss[2]), color=:black, linewidth=2)
-#                 # lines!(ax21, log.(rs), -0.38 *(log.(rs).-log.(rs[2])).+log.(yss[2]), color=:red, linewidth=2)
-           
-#                 # # lines!(ax21, log.(rs), -5/6 *(log.(rs).-log.(rs[3])).+log.(yss[3]), color=:blue, linewidth=2)
 
-#         end
+fig3 = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
+ax31 = Axis(fig3[1, 1], 
+        xlabel = L"\ln r",
+        ylabel = L"$\ln (C_r)$",
+        # xscale = log10,
+        # yscale = log10
+)
 
-#         # if i == 800
-#         #         scatter!(ax21, log.(rs), log.(yss), label=L"$D=%$D$", markersize=20)
-#         #         lines!(ax21, log.(rs), -0.38 *(log.(rs).-log.(rs[5])).+log.(yss[5]), color=:red, linewidth=2)
-#         # end
+for (i, ys) in enumerate(Cs)
+        ξ = ξs[i]
+        rs = 1:length(ys)
+        # rs *= 1/ξ
+        yss = ys#./ys[1]#.*rs.^0.38
+        j = 199
 
-# end
-# # rs = 1:length(Cs2[end])
-# # scatter!(ax21, log.(rs), log.(Cs2[end]), label=L"$D=%$D$", markersize=20)
-# # rs = 1:length(Cs4[180])
-# # scatter!(ax21, log.(rs), log.(Cs4[180]), label=L"$D=%$D$", markersize=20)
-# fig2
+        # if i % length(Cs) == j
+        if i % 50 == 0
+            scatter!(ax31, log.(rs), log.(yss), label=L"$D=%$D$", markersize=20)
+        # scatter!(ax21, (rs), (yss), label=L"$D=%$D$", markersize=20)
+                @show ξ
+        end
+        # if i == length(Cs)
+        if i == j
+                lines!(ax31, log.(rs), -0.25 *(log.(rs).-log.(rs[2])).+log.(yss[2]), color=:black, linewidth=2)
+                lines!(ax31, log.(rs), -0.38 *(log.(rs).-log.(rs[5])).+log.(yss[5]), color=:red, linewidth=2)
+        end
+
+end
+fig3
+
+minfit = 200
+maxfit = 300
+p0q = [1., 1.]
+linmodel(t, p) = p[1] .+ p[2] * t
+# linmodel(t, p) = p[1] ./ (t.*log.(t)).^p[2]
+# xs = τs[minfit:maxfit]
+# ys = info.ϵsconv[minfit:maxfit]
+xs = ξs[minfit:maxfit]
+ys = Ss[minfit:maxfit]
+# linfit = curve_fit(linmodel, log.(xs), log.(ys), p0q)
+linfit = curve_fit(linmodel, log.(xs), ys, p0q)
+# linfit = curve_fit(linmodel, xs, ys, p0q)
+
+set_theme!(theme_latexfonts())
+fig4 = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
+ax41 = Axis(fig4[1, 1], 
+        xlabel = L"log(τ)",
+        ylabel = L"$log(ϵ_{conv})$",
+        # xscale = log10,
+        # yscale = log10
+        )
+# scatter!(ax41, log.(xs), log.(ys), label=L"$D=%$D$", markersize=20)
+scatter!(ax41, log.(xs), ys, label=L"$D=%$D$", markersize=20)
+lines!(ax41, log.(xs), linmodel(log.(xs), linfit.param), color=:black, linewidth=2)
+# lines!(ax41, log.(xs), log.(linmodel(xs, linfit.param)), color=:black, linewidth=2)
+
+
+fig4
