@@ -36,7 +36,7 @@ function right_transfer_matrix(ρ::InfiniteDisorderDensityMatrix)
     A = ρ[1]
     P = make_DiagonalBlockTensorMap(ρ.ps)
     function ftransfer(vr)
-        @tensor v[-1; -2] := A[-1 7 3; 4 5 1] * conj(A[-2 7 6; 4 5 2]) * P[6; 3] * vr[1; 2]
+        @tensor v[-1; -2] := A[-1 4 3; 5 6 2] * conj(A[-2 4 1; 5 6 7]) * P[1; 3] * vr[2; 7]
         return v
     end
     return ftransfer
@@ -47,7 +47,7 @@ function left_transfer_matrix(ρ::InfiniteDisorderDensityMatrix)
     A = ρ[1]
     P = make_DiagonalBlockTensorMap(ρ.ps)
     function ftransfer(vl)
-        @tensor v[-1; -2] := A[1 3 6; 4 5 -2] * conj(A[2 3 7; 4 5 -1]) * P[7; 6] * vl[2; 1]
+        @tensor v[-1; -2] := A[2 5 3; 6 7 -2] * conj(A[4 5 1; 6 7 -1]) * P[1; 3] * vl[4; 2]
         return v
     end
     return ftransfer
@@ -77,31 +77,12 @@ function environments(ρ::InfiniteDisorderDensityMatrix)
     return λl, l, r
 end
 
-# Compute singular environments
-function singular_environments(ρ::InfiniteDisorderDensityMatrix)
-    fused_space = fuse(space(ρ[1], 1)', space(ρ[1], 1))
-    iso = isomorphism(fused_space, space(ρ[1], 1)' ⊗ space(ρ[1], 1))
-    @tensor Z[-1 -2; -3 -4] := iso[-1; 1 6] * ρ[1][6 2 -2; 4 5 8] * conj(ρ[1][1 2 -3; 4 5 7]) * conj(iso[-4; 7 8])
-    @tensor Z2[-1 -2 -3; -4 -5 -6] := Z[-2 -3; -1 1] * Z[1 -6; -4 -5]
-
-    U, S, V, ϵ = svd_trunc(Z2, trunc = (maxrank = 1,))
-    c1 = ones(ComplexF64, space(S, 2)')
-    @tensor Ub[-1 -2 -3] := U[-3 -1 -2; 1] * S[1; 2] * c1[2]
-    @tensor Zb[-1 -2 -3; -4] := Z[-2 -3; -1 -4]
-    
-
- 
-    b, _ = lssolve(Zb, Ub)
-
-    return a, b
-end
-
 # Right second moment transfer matrix
 function right_second_moment_transfer_matrix(ρ::InfiniteDisorderDensityMatrix)
     A = ρ[1]
     P = make_DiagonalBlockTensorMap(ρ.ps) 
     function ftransfer(vr)
-        @tensor v[-1 -2; -3 -4] := A[-2 2 6; 1 3 5] * conj(A[-1 2 7; 1 3 4]) * A[-4 9 7; 10 11 8] * conj(A[-3 9 13; 10 11 12]) * P[13; 6] * vr[4 5; 12 8]
+        @tensor v[-1 -2; -3 -4] := A[-2 10 1; 11 12 13] * conj(A[-1 10 7; 11 12 8]) * A[-4 3 7; 4 5 2] * conj(A[-3 3 9; 4 5 6]) * P[9; 1] * vr[8 13; 6 2]
         return v
     end
 end
@@ -111,7 +92,8 @@ function left_second_moment_transfer_matrix(ρ::InfiniteDisorderDensityMatrix)
     A = ρ[1]
     P = make_DiagonalBlockTensorMap(ρ.ps) 
     function ftransfer(vl)
-        @tensor v[-1 -2; -3 -4] := A[8 2 6; 1 3 -4] * conj(A[12 2 7; 1 3 -3]) * A[5 9 7; 10 11 -2] * conj(A[4 9 13; 10 11 -1]) * P[13; 6] * vl[4 5; 12 8]
+        @tensor v[-1 -2; -3 -4] := A[10 11 1; 12 13 -4] * conj(A[7 11 8; 12 13 -3]) * A[2 4 8; 5 6 -2] * conj(A[3 4 9; 5 6 -1]) * P[9; 1] * vl[3 2; 7 10]
+ 
         return v
     end
 end
@@ -236,4 +218,38 @@ function lyapunovexp(ρ::InfiniteDisorderDensityMatrix; L::Int = 100, n_samples:
     average_λ = sum(λs.*Ps)/sum(Ps)
     var_λ = sum(λs.^2 .*Ps)/sum(Ps) - average_λ^2
     return average_λ, var_λ, λs
+end
+
+# Right transfer matrix
+function right_mixed_transfer_matrix(ρ1::InfiniteDisorderDensityMatrix, ρ2::InfiniteDisorderDensityMatrix)
+    A = ρ1[1]
+    B = ρ2[1]
+    P = make_DiagonalBlockTensorMap(ρ1.ps)
+    function ftransfer(vr)
+        @tensor v[-1; -2] := A[-1 7 3; 4 5 1] * conj(B[-2 7 6; 4 5 2]) * P[6; 3] * vr[1; 2]
+        return v
+    end
+    return ftransfer
+end
+
+function average_trace_distance(ρ1::InfiniteDisorderDensityMatrix, ρ2::InfiniteDisorderDensityMatrix)
+    @assert ρ1.ps == ρ2.ps "Disorder sectors must match"
+    vr = rand(ComplexF64, space(ρ1[1],1), space(ρ2[1],1))
+    vals, vrs = eigsolve(x->right_mixed_transfer_matrix(ρ1, ρ2)(x), vr, 1, :LM)
+
+    ε = sqrt(1. - abs(vals[1])^2)
+    return ε
+end
+
+#FIXME: Is this the correct way to compute the entanglement entropy?
+function average_entanglement_entropy(ρ::InfiniteDisorderDensityMatrix)
+    _, r = right_environment(ρ)
+    r /= tr(r)
+
+    D, _ = eig_full(r)
+    S = D.data
+    Se = real.(-sum(S .*log.(S .+ 1e-16)))
+    @show S
+    @show sum(S)
+    return Se, real.(S)
 end
