@@ -45,7 +45,7 @@ function covariance_matrix(M::Matrix{<:Real}, β::Real)
 end
 
 
-function majorana_ED(L::Int, Js::Vector{Float64}, hs::Vector{Float64}; n_samples::Int=10)
+function majorana_ED(L::Int, Js::Vector{Float64}, hs::Vector{Float64}, ph::Dict{Float64, Float64}, pJ::Dict{Float64, Float64}; n_samples::Int=10)
     Jconfigs = all_combinations(Js, L-1)
     hconfigs = all_combinations(hs, L)
     GEs = []
@@ -61,11 +61,15 @@ function majorana_ED(L::Int, Js::Vector{Float64}, hs::Vector{Float64}; n_samples
     else
         sampled_Jh_configs = Iterators.product(Jconfigs, hconfigs)
     end
+    ps = []
     for (i,(Jconf,hconf)) in ProgressBar(enumerate(sampled_Jh_configs))
+        P = ph[hconf[end]]
         H = zeros(Float64, ℂ^(2L), ℂ^(2L))
         H[2L-1,2L] = -2 * hconf[end]
         H[2L,2L-1] = 2 * hconf[end]
         for n in 1:L-1
+            P *= ph[hconf[n]]
+            P *= pJ[Jconf[n]]
             H[2*n,2*n+1] = -2 * Jconf[n] 
             H[2*n+1,2*n] = 2 * Jconf[n] 
             H[2*n-1,2*n] = -2 * hconf[n] 
@@ -73,7 +77,8 @@ function majorana_ED(L::Int, Js::Vector{Float64}, hs::Vector{Float64}; n_samples
         end
         Λ, U, Σ = skew_canonical(reshape(H.data,(2L,2L)))
         # push!(GEs, -sum(filter(x -> x>=0, Σ.*0.5)))
-        push!(GEs, -sum(Σ.* 0.5))
+        push!(GEs, -sum(Σ.* 0.5)*P)
+        push!(ps, P)
 
         # j = round(Int, L/2)
         # C = covariance_matrix(reshape(H.data,(2L,2L)), 30.0)
@@ -83,7 +88,7 @@ function majorana_ED(L::Int, Js::Vector{Float64}, hs::Vector{Float64}; n_samples
         # @show length(Σ)
     end
 
-    return sum(GEs)/length(GEs), sum(Ms)/length(Ms)
+    return sum(GEs)/sum(ps), sum(Ms)/length(Ms)
 end
 
 
@@ -106,11 +111,28 @@ end
 # hs = [a, b]*exp(w*V)
 N = 2
 a = 0.7
-b = 1.3
+b = 1.0
 
-Js = Vector(a:(b-a)/(N-1):b)
-hs = Vector(a:(b-a)/(N-1):b)
-ps = ones(N^2)./N^2
+# Js = Vector(a:(b-a)/(N-1):b)
+# hs = Vector(a:(b-a)/(N-1):b)
+# # hs .-= 0.5
+# ps = ones(N^2)./N^2
+
+
+# ζs = [0.58579, 3.41421]
+# hs = exp.(-ζs)
+# Js = exp.(-ζs)
+# w1 = 0.853527437561
+# w2 = 1-w1
+# ph = Dict(hs[1] => w1, hs[2] => w2)
+# pJ = Dict(Js[1] => w1, Js[2] => w2)
+
+hs = [0.7, 1.3]
+Js = [0.7, 1.3]
+w1 = 0.5
+w2 = 1-w1
+ph = Dict(hs[1] => w1, hs[2] => w2)
+pJ = Dict(Js[1] => w1, Js[2] => w2)
 
 # hs = [0.2577952029653816, 0.7383152846434098, 0.21154225131386992, 0.6319157844800344]
 # Js = [0.3806987884083633, 0.2994504233053557, 0.2461909416843507, 0.32056795601359583, 0.27171366282084075, 0.6271996534235563, 0.8399309623164335, 0.7092336979417615, 0.5634881368851596, 0.744255627246975]
@@ -128,19 +150,19 @@ Ls = [4, 6, 8, 10, 12, 14]
 # Ls = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 # Ls = [6]
 
-result = majorana_ED.(Ls, Ref(Js), Ref(hs); n_samples=1000000)
+result = majorana_ED.(Ls, Ref(Js), Ref(hs), Ref(ph), Ref(pJ); n_samples=1000000)
 FFs = first.(result)
 Ms = last.(result)
 # tF = 1 .- Es[1]./FFs
 
-set_theme!(theme_latexfonts())
-fig = Figure(backgroundcolor=:white, fontsize=40, size=(1000, 600))
-ax1 = Axis(fig[1, 1], 
-        xlabel = L"1/L",
-        ylabel = L"$E/L$",
-        # xscale = log10,
-        # yscale = log10
-        )
+# set_theme!(theme_latexfonts())
+# fig = Figure(backgroundcolor=:white, fontsize=40, size=(1000, 600))
+# ax1 = Axis(fig[1, 1], 
+#         xlabel = L"1/L",
+#         ylabel = L"$E/L$",
+#         # xscale = log10,
+#         # yscale = log10
+#         )
 # ax2 = Axis(fig[1, 2], 
 # xlabel = L"1/L",
 # ylabel = L"$ϵ$",
@@ -149,18 +171,20 @@ ax1 = Axis(fig[1, 1],
 # )
 
 a = 1
-scatter!(ax1, 1 ./ (Ls).^(a), FFs./Ls, label=L"$FF$", markersize=20)
+# scatter!(ax1, 1 ./ (Ls).^(a), FFs./Ls, label=L"$FF$", markersize=20)
 maxfit = length(Ls)
 p0q = [1., 1.]
 linmodel(t, p) = p[1] .+ p[2] * t
 linfit = curve_fit(linmodel, 1 ./ (Ls).^(a), FFs./Ls, p0q)
 xs = [0, 1 ./ ((Ls).^(a))...]
-lines!(ax1, xs, linmodel(xs, linfit.param), color=:black, linewidth=2)
-fig
+# lines!(ax1, xs, linmodel(xs, linfit.param), color=:black, linewidth=2)
+# fig
 
 Edens= FFs[end]/(Ls[end])
 
 EF = linfit.param[1]
+EF1, EF0 = confidence_interval(linfit)[1]
+
 # t = E/EF
 # scatter!(ax1,Ls,Es, label=L"$MPS$",markersize = 20)
 # scatter!(ax2,1 ./Ls,abs.((FFs.-Es)./FFs), label=L"$data$",markersize = 20)

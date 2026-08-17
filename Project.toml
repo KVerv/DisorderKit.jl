@@ -1,9 +1,10 @@
 name = "DisorderKit"
 uuid = "e1ac6b9a-d9f4-4c19-af21-4cb9fffbe61a"
-authors = ["KVerv <kevin.vervoort@hotmail.com>"]
 version = "0.1.0"
+authors = ["KVerv <kevin.vervoort@hotmail.com>"]
 
 [deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 BlockTensorKit = "5f87ffc2-9cf1-4a46-8172-465d160bd8cd"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 Crayons = "a8cc5b0e-0ffa-5ad4-8c14-923d3ee1735f"
@@ -20,7 +21,12 @@ OptimKit = "77e91f04-9b3b-57a6-a776-40b61faaebe0"
 ProgressBars = "49802e3a-d2f1-5c88-81d8-b72133a6f568"
 Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
+Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
 TensorKit = "07d1fe3e-3e46-537d-9eac-e9e13d0d4cec"
 TensorKitManifolds = "11fa318c-39cb-4a83-b1ed-cdc7ba1e3684"
 TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
+
+[compat]
+Revise = "3.14.5"
+Symbolics = "6.58.0"
