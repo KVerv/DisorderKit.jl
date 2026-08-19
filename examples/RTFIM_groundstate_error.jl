@@ -108,6 +108,7 @@ ax4 = Axis(fig[2, 2],
 colors = Makie.wong_colors()
 scatterlines!(ax1, Δτs, Es, label=L"$E$", markersize=20)
 scatterlines!(ax2, Δτs, ϵsconv, label=L"$ϵ_{conv}$", markersize=20)
+scatterlines!(ax2, Δτs, ρ_trunc_err/Δτ, label=L"$ϵ_{ρ}$", markersize=20)
 scatterlines!(ax3, Δτs, ϵsent, label=L"$ϵ_{acc}$", markersize=20)
 scatterlines!(ax4, Δτs, ϵsz, label=L"$ϵ_{z}$", markersize=20, marker=:utriangle)
 
