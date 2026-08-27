@@ -184,7 +184,7 @@ function average_correlation_length(ρ::InfiniteDisorderDensityMatrix)
     end
     λ2 = λs[2]
 
-    ξ = real(-1/log(abs(λ2)))
+    ξ = real(-1/log(abs(λ2/λ1)))
 
     return ξ
 end
