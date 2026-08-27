@@ -29,7 +29,10 @@ ax21 = Axis(fig2[1, 1],
         # yscale = log10
         )
 
-ξ₀ = DisorderKit.correlation_length(ψ_inf)
+ξ₀ = MPSKit.correlation_length(ψ_inf)
+S₀ = MPSKit.entropy(ψ_inf, 1)
+
+
 scatter!(ax21, log.(rs), log.(Cs), markersize=20)
 
 lines!(ax21, log.(rs), -0.25 *(log.(rs).-log.(rs[1])).+log.(Cs[1]), color=:black, linewidth=2)
