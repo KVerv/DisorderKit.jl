@@ -17,8 +17,10 @@ end
 function truncation_matrices(O::AbstractMPOTensor, trunc_method::MatrixAlgebraKit.TruncationStrategy; timer::TimerOutput = TimerOutput())
     f_l = transfer_left_mpo(O)
     f_r = transfer_right_mpo(O)
+
     v_l = rand(ComplexF64, space(O, 1), space(O, 1))
     v_r = rand(ComplexF64, space(O, 1), space(O, 1))
+
 
     @timeit timer "eigsolves" begin
         _, ls = eigsolve(f_l, v_l, 1, :LM)
@@ -46,21 +48,21 @@ function truncation_matrices(O::AbstractMPOTensor, trunc_method::MatrixAlgebraKi
 end
 
 # Truncate ordinary mpo with standard truncation algorithm
-function truncate_mpo(O::AbstractMPOTensor, trunc_method::MatrixAlgebraKit.TruncationStrategy; timer::TimerOutput = TimerOutput())
-    PL, PR, ϵ = truncation_matrices(O, trunc_method; timer=timer)
+function truncate_mpo(O::AbstractMPOTensor, alg::StandardTruncation; timer::TimerOutput = TimerOutput())
+    PL, PR, ϵ = truncation_matrices(O, alg.trunc_method; timer=timer)
     @tensor O_updated[-1 -2 ; -3 -4] := PL[-1; 1] * O[1 -2; -3 2] * PR[2; -4]
-    return O_updated, PL, PR, ϵ
+    return O_updated, ϵ, PL, PR
 end
 
 # Truncate disorder mpo with standard truncation algorithm
-function truncate_disorder_mpo(Dmpo::InfiniteDisorderMPO, trunc_method::MatrixAlgebraKit.TruncationStrategy; timer::TimerOutput = TimerOutput())
+function truncate_disorder_mpo(Dmpo::InfiniteDisorderMPO, alg::StandardTruncation; timer::TimerOutput = TimerOutput())
     pspace = space(Dmpo[1], 2)
     dspace = space(Dmpo[1], 3)
     tspace = space(Dmpo[1], 4)'
     isop = isomorphism(ComplexF64, fuse(pspace ⊗ dspace), pspace ⊗ dspace)
     isot = isomorphism(ComplexF64, fuse(tspace ⊗ dspace), tspace ⊗ dspace)
     @tensor mpo_fused[-1 -2; -3 -4] :=  isop[-2; 1 2] * Dmpo[1][-1 1 2; 3 4 -4] * conj(isot[-3; 3 4])
-    PL, PR, ϵ = truncation_matrices(mpo_fused, trunc_method; timer=timer)
+    PL, PR, ϵ = truncation_matrices(mpo_fused, alg.trunc_method; timer=timer)
     L = length(Dmpo)
     mpo_updated = map(1:L) do ix
         PL = PL
@@ -72,7 +74,7 @@ function truncate_disorder_mpo(Dmpo::InfiniteDisorderMPO, trunc_method::MatrixAl
 end
 
 # Truncate the density matrix in each disorder sector
-function truncate(ρs::InfiniteDisorderDensityMatrix, trunc_method::MatrixAlgebraKit.TruncationStrategy; timer::TimerOutput = TimerOutput())
-    mpo_truncated, ϵ = truncate_disorder_mpo(InfiniteDisorderMPO(ρs.opp), trunc_method; timer=timer)
+function truncate(ρs::InfiniteDisorderDensityMatrix, alg::StandardTruncation; timer::TimerOutput = TimerOutput())
+    mpo_truncated, ϵ = truncate_disorder_mpo(InfiniteDisorderMPO(ρs.opp), alg; timer=timer)
     return InfiniteDisorderDensityMatrix(mpo_truncated.opp, ρs.ps), ϵ
 end

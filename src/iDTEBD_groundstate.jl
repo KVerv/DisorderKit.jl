@@ -26,7 +26,7 @@ function groundstate(ρ0::InfiniteDisorderDensityMatrix, Hs::DisorderMPOHam, dτ
     @timeit alg.timer_output "Copy" ρprev = deepcopy(ρs)
     @timeit alg.timer_output "energy_density" Eprev = DisorderKit.energy_density(ρs, Hs)
     while (ϵ_conv > alg.convtol) && (ix+1 <= alg.maxiter)
-        ρs = gauge(ρs)
+        @timeit alg.timer_output "gauge" ρs = gauge(ρs)
         ix += 1
         (alg.verbosity > 0) && (@info "Iteration $ix")
         (alg.verbosity > 0) && (@info(crayon"cyan"("Constructing time evolution operator")))
@@ -39,7 +39,7 @@ function groundstate(ρ0::InfiniteDisorderDensityMatrix, Hs::DisorderMPOHam, dτ
         end
 
         (alg.verbosity > 0) && (@info(crayon"cyan"("Evolve")))
-        @timeit alg.timer_output "evolve_one_time_step" ρs_normalized = ρs * Us * R
+        @timeit alg.timer_output "evolve_one_time_step" ρs_normalized = (ρs * Us) * R
 
         (alg.verbosity > 0) && (@info(crayon"magenta"("Truncating ρ")))
         (alg.verbosity > 1) && (@info(crayon"magenta"("Before truncation: Bonddimension of ρ = $(dim(space(ρs_normalized[1],1)))")))
@@ -59,9 +59,9 @@ function groundstate(ρ0::InfiniteDisorderDensityMatrix, Hs::DisorderMPOHam, dτ
         (alg.verbosity > 1) && (@info(crayon"light_blue"("Max. error after normalization: ϵ₁ = $(ϵent), N2 = $(ϵz)")))
 
         @timeit alg.timer_output "energy_density" E = DisorderKit.energy_density(ρs, Hs)
-        ϵ_conv = (abs(Eprev - E)/dτ)
-        Eprev = E
-        # @timeit alg.timer_output "trace_distance" ϵ_conv = average_trace_distance(ρs, ρprev)/dτ
+        # ϵ_conv = (abs(Eprev - E)/dτ)
+        # Eprev = E
+        @timeit alg.timer_output "trace_distance" ϵ_conv = average_trace_distance(ρs, ρprev)/dτ^2
 
         info.ϵsconv[ix] = ϵ_conv
         (alg.verbosity > 0) && (@info(crayon"light_blue"("Convergence error: ϵ_conv = $(ϵ_conv)")))

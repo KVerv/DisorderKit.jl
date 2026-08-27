@@ -4,13 +4,18 @@ using BlockTensorKit, MatrixAlgebraKit, OptimKit
 D = 4 # State Bonddimension
 D_R = 2 # Renormalization operator Bonddimension
 Δτ = 0.05 # Step size for imaginary time evolution
-δs = -0.5:0.1:0.5 # Disorder imbalance parameter
-maxiter = 300 # Maximum number of iterations for the groundstate algorithm
+# Ws = 0.0:0.1:0.5 # Disorder imbalance parameter
+W = 0.1 # Disorder strength
+δs = -0.2:0.05:0.2 # Disorder imbalance parameter
+maxiter = 500 # Maximum number of iterations for the groundstate algorithm
 
 
+# a = 0.7
+# b = 1.3
 w1 = 0.5
 w2 = 1-w1
 ps = [w1*w1, w1*w2, w2*w1, w2*w2]
+
 
 # Construct Finalizer for computing observables after each iteration of the groundstate algorithm
 function my_finalize!(ρ, Hs)
@@ -35,6 +40,17 @@ end
 ρ₀ = DisorderKit.gauge(ρ₀)
 
 
+# Es = zeros(length(Ws), maxiter)
+# ξs = zeros(length(Ws), maxiter)
+# Ms = zeros(length(Ws), maxiter)
+# Ss = zeros(length(Ws), maxiter)
+# ϵsconv = zeros(length(Ws), maxiter)
+# ϵsent = zeros(length(Ws), maxiter)
+# ϵsz = zeros(length(Ws), maxiter)
+# ρ_trunc_err = zeros(length(Ws), maxiter)
+# R_trunc_err = zeros(length(Ws), maxiter)
+# ϵsA1 = zeros(length(Ws), maxiter)
+# ϵsA2 = zeros(length(Ws), maxiter)
 Es = zeros(length(δs))
 ξs = zeros(length(δs))
 Ms = zeros(length(δs))
@@ -47,64 +63,94 @@ R_trunc_err = zeros(length(δs))
 ϵsA1 = zeros(length(δs))
 ϵsA2 = zeros(length(δs))
 
+τs = Δτ:Δτ:maxiter*Δτ
+
+# for (ix, δ) in enumerate(Ws)
 for (ix, δ) in enumerate(δs)
-        hs = [0.7, 1.3]*exp(δ)
-        Js = [0.7, 1.3]
+        # hs = [a, b]*exp(W)
+        # Js = [a, b]
+        hs = exp(δ) * [1., exp(-2W)]
+        Js = [1., exp(-2W)]
+        # h₀ = exp(2*δ)
+        # hs = [0.2113*h₀, 0.7887*h₀]
+        # Js = [0.2113, 0.7887]
+        # hs = [1.0]*exp(W)
+        # Js = [1.0]
 
         Hs = DisorderKit.random_transverse_field_ising(Js, hs)
 
         # Generate algorithm object with corresponding parameters
-        alg_evo = DisorderKit.Groundstate_iDTEBD(MatrixAlgebraKit.truncrank(D), MatrixAlgebraKit.truncrank(D_R); convtol = 1e-9, maxiter = maxiter, verbosity = 2, timer_output = TimerOutput(), finalizer = myFinalizer)
+        # alg_trunc_norm = DisorderKit.StandardTruncation(; trunc_method = MatrixAlgebraKit.truncrank(D_R))
+        alg_trunc_norm = DisorderKit.SuccessiveSVD(; trunc_method = MatrixAlgebraKit.truncrank(D_R))
+
+        alg_trunc_state = DisorderKit.StandardTruncation(; trunc_method = MatrixAlgebraKit.truncrank(D))
+        alg_evo = DisorderKit.Groundstate_iDTEBD(alg_trunc_state, alg_trunc_norm; convtol = 1e-9, maxiter = maxiter, verbosity = 2, timer_output = TimerOutput(), finalizer = myFinalizer)
 
         # Compute the groundstate
         @timeit alg_evo.timer_output "compute_groundstate" ρs, data, info = DisorderKit.groundstate(ρ₀, Hs, Δτ, alg_evo)
+
+        # Es[ix, :] = getindex.(data, 1)
+        # ξs[ix, :] = getindex.(data, 2)
+        # Ms[ix, :] = getindex.(data, 3)
+        # Ss[ix, :] = getindex.(data, 4)
+
+        # ϵsconv[ix, :] = info.ϵsconv
+        # ϵsent[ix, :] = info.ϵsent
+        # ϵsz[ix, :] = info.ϵsz
+        # ρ_trunc_err[ix, :] = info.ρ_trunc_err
+        # R_trunc_err[ix, :] = info.R_trunc_err
+        # ϵsA1[ix, :] = info.ϵsA1
+        # ϵsA2[ix, :] = info.ϵsA2
 
         Es[ix] = getindex.(data, 1)[end]
         ξs[ix] = getindex.(data, 2)[end]
         Ms[ix] = getindex.(data, 3)[end]
         Ss[ix] = getindex.(data, 4)[end]
-
-        ϵsconv[ix] = info.ϵsconv[end]
-        ϵsent[ix] = info.ϵsent[end]
-        ϵsz[ix] = info.ϵsz[end]
-        ρ_trunc_err[ix] = info.ρ_trunc_err[end]
-        R_trunc_err[ix] = info.R_trunc_err[end]
-        ϵsA1[ix] = info.ϵsA1[end]
-        ϵsA2[ix] = info.ϵsA2[end]
 end
 
-# set_theme!(theme_latexfonts())
-# fig = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
-# ax1 = Axis(fig[1, 1], 
-#         xlabel = L"δ",
-#         ylabel = L"$E$",
-#         # xscale = log10,
-#         # yscale = log10
-#         )
-# ax2 = Axis(fig[1, 2], 
-#         xlabel = L"δ",
-#         ylabel = L"$S$",
-#         # xscale = log10,
-#         # yscale = log10
-#         )
-# ax3 = Axis(fig[2, 1], 
-#         xlabel = L"δ",
-#         ylabel = L"$M$",
-#         # xscale = log10,
-#         # yscale = log10
-#         )
-# ax4 = Axis(fig[2, 2], 
-#         xlabel = L"δ",
-#         ylabel = L"$ξ$",
-#         # xscale = log10,
-#         # yscale = log10
-#         )
+set_theme!(theme_latexfonts())
+fig = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
+ax1 = Axis(fig[1, 1], 
+        xlabel = L"δ",
+        ylabel = L"$E$",
+        # xscale = log10,
+        # yscale = log10
+        )
+ax2 = Axis(fig[1, 2], 
+        xlabel = L"δ",
+        ylabel = L"$S$",
+        # xscale = log10,
+        # yscale = log10
+        )
+ax3 = Axis(fig[2, 1], 
+        xlabel = L"δ",
+        ylabel = L"$M$",
+        # xscale = log10,
+        # yscale = log10
+        )
+ax4 = Axis(fig[2, 2], 
+        xlabel = L"δ",
+        ylabel = L"$ξ$",
+        # xscale = log10,
+        # yscale = log10
+        )
 
 colors = Makie.wong_colors()
+
+# plotindices = 40:40:length(τs)
+# for i in plotindices
+#     scatterlines!(ax1, δs, Es[:, i], label=L"$D=%$D$", markersize=20)
+#     scatterlines!(ax2, δs, Ss[:, i], label=L"$S$", markersize=20)
+#     scatterlines!(ax3, δs, Ms[:, i], label=L"$ϵ_{acc}$", markersize=20)
+#     scatterlines!(ax4, δs, ξs[:, i], label=L"$ϵ_{z}$", markersize=20, marker=:utriangle)
+# end
+
 scatterlines!(ax1, δs, Es, label=L"$D=%$D$", markersize=20)
 scatterlines!(ax2, δs, Ss, label=L"$S$", markersize=20)
 scatterlines!(ax3, δs, Ms, label=L"$ϵ_{acc}$", markersize=20)
 scatterlines!(ax4, δs, ξs, label=L"$ϵ_{z}$", markersize=20, marker=:utriangle)
+
+
 
 axislegend(ax1, position=:rt)
 fig
@@ -144,3 +190,18 @@ fig
 
 # axislegend(ax1, position=:rt)
 # fig2
+
+# fig3 = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
+# ax31 = Axis(fig3[1, 1], 
+#         xlabel = L"δ",
+#         ylabel = L"$τ$",
+#         # xscale = log10,
+#         # yscale = log10
+#         )
+
+
+# contourf!(ax31, δs, τs, abs.(Ss), levels=0:0.1:1)
+
+
+# # axislegend(ax1, position=:rt)
+# fig3

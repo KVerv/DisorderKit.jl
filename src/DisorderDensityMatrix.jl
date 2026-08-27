@@ -71,6 +71,9 @@ end
 function environments(ρ::InfiniteDisorderDensityMatrix)
     λr, vr = right_environment(ρ)
     λl, vl = left_environment(ρ)
+    # vr *= exp(-1im*angle(tr(vr)))
+    # vl *= exp(-1im*angle(tr(vl)))
+
     l = vl/sqrt(tr(vl*vr))
     r = vr/sqrt(tr(vl*vr))
 
@@ -101,8 +104,19 @@ end
 # Gauge density matrix such that dominant eigenvalue is 1
 function gauge(ρ::InfiniteDisorderDensityMatrix)
     λ, _ = left_environment(ρ)
+
     return rescale(ρ, 1/sqrt(λ))
 end
+
+# function gauge(ρ::InfiniteDisorderDensityMatrix)
+#     λ, l, _ = environments(ρ)
+#     D, V = eigh_full(l)
+#     X = V * sqrt(D) * V'
+#     Xinv = V * inv(sqrt(D)) * V'
+#     @tensor A[-1 -2 -3; -4 -5 -6] := X[-1; 1] * ρ[1][1 -2 -3; -4 -5 2] * Xinv[2; -6]
+#     A *= 1/sqrt(λ)
+#     return InfiniteDisorderDensityMatrix([A], ρ.ps)
+# end
 
 # Measure local operator
 function expectation_value(ρ::InfiniteDisorderDensityMatrix, O::AbstractBondTensor)
@@ -170,7 +184,7 @@ function average_correlation_length(ρ::InfiniteDisorderDensityMatrix)
     end
     λ2 = λs[2]
 
-    ξ = real(-1/log(abs(λ2)))
+    ξ = real(-1/log(abs(λ2/λ1)))
 
     return ξ
 end
@@ -234,22 +248,26 @@ end
 
 function average_trace_distance(ρ1::InfiniteDisorderDensityMatrix, ρ2::InfiniteDisorderDensityMatrix)
     @assert ρ1.ps == ρ2.ps "Disorder sectors must match"
+    ρ1 = gauge(ρ1)
+    ρ2 = gauge(ρ2)
     vr = rand(ComplexF64, space(ρ1[1],1), space(ρ2[1],1))
     vals, vrs = eigsolve(x->right_mixed_transfer_matrix(ρ1, ρ2)(x), vr, 1, :LM)
 
-    ε = sqrt(1. - abs(vals[1])^2)
+    λ1, _ = right_environment(ρ1)
+    λ2, _ = right_environment(ρ2) 
+    λmixed = vals[1]/sqrt(real.(λ1*λ2))
+    @show λ1, λ2, vals[1], abs(λmixed)^2
+    # ε = sqrt(abs(1. - abs(λmixed)^2))
+    ε = 1 - abs(λmixed)
     return ε
 end
 
 #FIXME: Is this the correct way to compute the entanglement entropy?
 function average_entanglement_entropy(ρ::InfiniteDisorderDensityMatrix)
-    _, r = right_environment(ρ)
-    r /= tr(r)
+    λ, l, r = environments(ρ)
 
-    D, _ = eig_full(r)
-    S = D.data
-    Se = real.(-sum(S .*log.(S .+ 1e-16)))
-    @show S
-    @show sum(S)
+    Q = l*r
+    S = eig_vals(Q)
+    Se = real.(-sum(S .* log.(S .+ 1e-16)))
     return Se, real.(S)
 end
