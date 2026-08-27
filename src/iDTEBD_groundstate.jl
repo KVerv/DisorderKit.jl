@@ -5,15 +5,13 @@ struct GroundstateInfo
     ϵsz::Vector{Float64}
     ρ_trunc_err::Vector{Float64}
     R_trunc_err::Vector{Float64}
-    ϵsA1::Vector{Float64}
-    ϵsA2::Vector{Float64}
 
     function GroundstateInfo(maxiter::Int)
-        return new(Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter))
+        return new(Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter))
     end
 end
 
-function groundstate(ρ0::InfiniteDisorderDensityMatrix, Hs::DisorderMPOHam, dτ::Float64, alg::Groundstate_iDTEBD)
+function groundstate(ρ0::InfiniteDisorderMPS, Hs::DisorderMPOHam, dτ::Float64, alg::Groundstate_iDTEBD)
     data = Vector{alg.finalizer.E}()
     info = GroundstateInfo(alg.maxiter)
 
@@ -31,11 +29,11 @@ function groundstate(ρ0::InfiniteDisorderDensityMatrix, Hs::DisorderMPOHam, dτ
         (alg.verbosity > 0) && (@info "Iteration $ix")
         (alg.verbosity > 0) && (@info(crayon"cyan"("Constructing time evolution operator")))
         @timeit alg.timer_output "construct_time_evolution_operator" begin
-            Us = time_evolution_MPO(Hs, dτ/2; N = 2)
-            R, ϵR, ϵA1, ϵA2 = construct_renormalisation(ρs, Hs, dτ/2, alg)
+            Us = time_evolution_MPO(Hs, dτ; N = 2)
+        end
+        @timeit alg.timer_output "construct_renormalisation_operator" begin
+            R, ϵR = construct_renormalisation(ρs, Hs, dτ, alg)
             info.R_trunc_err[ix] = ϵR
-            info.ϵsA1[ix] = ϵA1
-            info.ϵsA2[ix] = ϵA2
         end
 
         (alg.verbosity > 0) && (@info(crayon"cyan"("Evolve")))

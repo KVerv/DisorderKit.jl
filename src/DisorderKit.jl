@@ -22,7 +22,7 @@ const AbstractDisorderMPOTensor = AbstractTensorMap{T, S, 3, 3} where {T, S}
 const AbstractRhoEnv = AbstractTensor{T, S, 2} where {T, S}
 const AbstractEEnv = AbstractTensor{T, S, 4} where {T, S}
 const AbstractBondTensor = AbstractTensorMap{T, S, 1, 1} where {T, S}
-const AbstractDisorderMPSTensor = AbstractTensorMap{T, S, 2, 2} where {T, S}
+const AbstractDisorderMPSTensor = AbstractTensorMap{T, S, 3, 2} where {T, S}
 
 
 # include("VOMPS_Inversion.jl")
@@ -31,6 +31,7 @@ const AbstractDisorderMPSTensor = AbstractTensorMap{T, S, 2, 2} where {T, S}
 include("utils.jl")
 include("DisorderMPOHam.jl")
 include("DisorderDensityMatrix.jl")
+include("InfiniteDisorderMPS.jl")
 include("DisorderMPO.jl")
 include("finalizer.jl")
 # include("partition_function.jl")

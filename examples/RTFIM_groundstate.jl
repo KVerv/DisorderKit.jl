@@ -24,7 +24,7 @@ using BlockTensorKit, MatrixAlgebraKit, OptimKit
 J₀ = 1.0
 δ = 0.05
 W = 0.1
-h₀ = exp(2*δ)
+# h₀ = exp(2*δ)
 # hs = [0.2113*h₀, 0.7887*h₀]
 # Js = J₀ * [0.2113, 0.7887]
 hs = exp(δ) * [1., exp(-2W)]
@@ -37,7 +37,7 @@ Hs = DisorderKit.random_transverse_field_ising(Js, hs)
 
 
 Δτ = 0.05 # Step size for imaginary time evolution
-maxiter = 500 # Maximum number of iterations for the groundstate algorithm
+maxiter = 3000 # Maximum number of iterations for the groundstate algorithm
 D = 4 # State Bonddimension
 D_R = 2 # Renormalization operator Bonddimension
 
@@ -81,20 +81,20 @@ end
 myFinalizer = DisorderKit.Finalizer(Tuple{Float64, Float64, Float64, Vector{Float64}, Float64}, my_finalize!)
 
 # Generate algorithm object with corresponding parameters
-alg_trunc_norm = DisorderKit.StandardTruncation(; trunc_method = MatrixAlgebraKit.truncrank(D_R))
-# alg_trunc_norm = DisorderKit.SuccessiveSVD(; trunc_method = MatrixAlgebraKit.truncrank(D_R))
+# alg_trunc_norm = DisorderKit.StandardTruncation(; trunc_method = MatrixAlgebraKit.truncrank(D_R))
+alg_trunc_norm = DisorderKit.SuccessiveSVD(; trunc_method = MatrixAlgebraKit.truncrank(D_R))
 
 alg_trunc_state = DisorderKit.StandardTruncation(; trunc_method = MatrixAlgebraKit.truncrank(D))
 alg_evo = DisorderKit.Groundstate_iDTEBD(alg_trunc_state, alg_trunc_norm; convtol = 1e-9, maxiter = maxiter, verbosity = 2, timer_output = TimerOutput(), finalizer = myFinalizer)
 
 # Construct initial random state
-A = spzeros(ComplexF64, BlockTensorKit.boxplus(ℂ^1) ⊗ BlockTensorKit.boxplus(ℂ^2) ⊗ BlockTensorKit.boxplus(fill(ℂ^1, length(ps))...), BlockTensorKit.boxplus(ℂ^1) ⊗ BlockTensorKit.boxplus(fill(ℂ^1, length(ps))...) ⊗ BlockTensorKit.boxplus(ℂ^1))
-Aᵢ = rand(ComplexF64, ℂ^1 ⊗ ℂ^2 ⊗ ℂ^1, ℂ^1 ⊗ ℂ^1 ⊗ ℂ^1)
+A = spzeros(ComplexF64, BlockTensorKit.boxplus(ℂ^1) ⊗ BlockTensorKit.boxplus(ℂ^2) ⊗ BlockTensorKit.boxplus(fill(ℂ^1, length(ps))...), BlockTensorKit.boxplus(fill(ℂ^1, length(ps))...) ⊗ BlockTensorKit.boxplus(ℂ^1))
+Aᵢ = rand(ComplexF64, ℂ^1 ⊗ ℂ^2 ⊗ ℂ^1, ℂ^1 ⊗ ℂ^1)
 for i in eachindex(ps)
-        A[1, 1, i, 1, i, 1] = Aᵢ # Same tensor for each disorder sector
+        A[1, 1, i, i, 1] = Aᵢ # Same tensor for each disorder sector
 end
 
-ρ₀ = DisorderKit.InfiniteDisorderDensityMatrix([A], ps)
+ρ₀ = DisorderKit.InfiniteDisorderMPS([A], ps)
 ρ₀ = DisorderKit.gauge(ρ₀)
 
 # Compute the groundstate
@@ -113,32 +113,32 @@ S = Ss[end]
 
 @show (E, ξ, S)
 
-# set_theme!(theme_latexfonts())
-# fig = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
-# ax1 = Axis(fig[1, 1], 
-#         xlabel = L"τ",
-#         ylabel = L"$E$",
-#         xscale = log10,
-#         # yscale = log10
-#         )
-# ax2 = Axis(fig[1, 2], 
-#         xlabel = L"τ",
-#         ylabel = L"$ϵ_{conv}$",
-#         xscale = log10,
-#         yscale = log10
-#         )
-# ax3 = Axis(fig[2, 1], 
-#         xlabel = L"τ",
-#         ylabel = L"$M$",
-#         # xscale = log10,
-#         # yscale = log10
-#         )
-# ax4 = Axis(fig[2, 2], 
-#         xlabel = L"τ",
-#         ylabel = L"$ξ$",
-#         # xscale = log10,
-#         # yscale = log10
-#         )
+set_theme!(theme_latexfonts())
+fig = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
+ax1 = Axis(fig[1, 1], 
+        xlabel = L"τ",
+        ylabel = L"$E$",
+        xscale = log10,
+        # yscale = log10
+        )
+ax2 = Axis(fig[1, 2], 
+        xlabel = L"τ",
+        ylabel = L"$ϵ_{conv}$",
+        xscale = log10,
+        yscale = log10
+        )
+ax3 = Axis(fig[2, 1], 
+        xlabel = L"τ",
+        ylabel = L"$M$",
+        # xscale = log10,
+        # yscale = log10
+        )
+ax4 = Axis(fig[2, 2], 
+        xlabel = L"τ",
+        ylabel = L"$ξ$",
+        # xscale = log10,
+        # yscale = log10
+        )
 
 colors = Makie.wong_colors()
 scatterlines!(ax1, τs, Es, label=L"$Δτ=%$Δτ$", markersize=20)
@@ -209,18 +209,18 @@ for (i, ys) in enumerate(Cs)
         M = Ms[i]
         rs = 1:length(ys)
         # yss = ys./ys[1]#.*rs.^0.38
-        yss = ys# .- M^2
-        yss ./= yss[1]
+        yss = ys #.- M^2
+        # yss ./= yss[1]
         # yss .*= rs.^0.4
         j = 1000
 
-        η = -diff(log.(yss))./diff(log.(rs))
-        rs *= 1/ξ
+        η = -diff(log.(abs.(yss)))./diff(log.(rs))
+        # rs *= 1/ξ
         # yss .*= rs.^0.38
         # yss .*= ξ^0.38
 
         # if i % length(Cs) == j
-        if (i % 50  == 0) && (i>=500)
+        if (i % 100  == 0) && (i>=1000)
             scatter!(ax31, log.(rs), log.(yss), label=L"$D=%$D$", markersize=20)
         # scatter!(ax21, (rs), (yss), label=L"$D=%$D$", markersize=20)
                 @show ξ
@@ -239,8 +239,8 @@ end
 fig3
 
 
-# minfit = 500
-# maxfit = 1000
+# minfit = 800
+# maxfit = 2000
 # p0q = [1., 1.]
 # linmodel(t, p) = p[1] .+ p[2] * t
 # xs = ξs[minfit:maxfit]
@@ -256,7 +256,7 @@ fig3
 #         # xscale = log10,
 #         # yscale = log10
 #         )
-# scatter!(ax41, log.(ξs[10:end]), Ss[10:end], label=L"$D=%$D$", markersize=20)
+# scatter!(ax41, log.(ξs[minfit:end]), Ss[minfit:end], label=L"$D=%$D$", markersize=20)
 # lines!(ax41, log.(xs), linmodel(log.(xs), linfit.param), color=:black, linewidth=2)
 
 # fig4
