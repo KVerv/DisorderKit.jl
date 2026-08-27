@@ -39,7 +39,7 @@ function groundstate(ρ0::InfiniteDisorderDensityMatrix, Hs::DisorderMPOHam, dτ
         end
 
         (alg.verbosity > 0) && (@info(crayon"cyan"("Evolve")))
-        @timeit alg.timer_output "evolve_one_time_step" ρs_normalized = ρs * Us * R
+        @timeit alg.timer_output "evolve_one_time_step" ρs_normalized = (ρs * Us) * R
 
         (alg.verbosity > 0) && (@info(crayon"magenta"("Truncating ρ")))
         (alg.verbosity > 1) && (@info(crayon"magenta"("Before truncation: Bonddimension of ρ = $(dim(space(ρs_normalized[1],1)))")))
@@ -47,6 +47,7 @@ function groundstate(ρ0::InfiniteDisorderDensityMatrix, Hs::DisorderMPOHam, dτ
         info.ρ_trunc_err[ix] = ϵρ
         (alg.verbosity > 1) && (@info(crayon"magenta"("After truncation: Bonddimension of ρ = $(dim(space(ρs[1],1)))")))
         
+        @timeit alg.timer_output "gauge" ρs = gauge(ρs)
         # @timeit alg.timer_output "Compute error" es, ϵz = entanglement_spectrum_norm(ρs)
         # ϵent = sum(es[1:end-1])
 

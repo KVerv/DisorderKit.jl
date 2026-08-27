@@ -38,6 +38,7 @@ include("finalizer.jl")
 # include("inv_sqrt_mpo.jl")
 # include("svd_optimization.jl")
 # include("mpo_truncation.jl")
+include("truncation_algorithms.jl")
 include("algorithms.jl")
 include("renorm_op.jl")
 include("iDTEBD_groundstate.jl")
@@ -48,7 +49,8 @@ include("models.jl")
 # include("InfiniteDisorderTangent.jl")
 # include("InfiniteDisorderTangent2.jl")
 include("SDRG.jl")
-include("truncation.jl")
+include("ordinary_truncation.jl")
+include("SVD_truncation.jl")
 
 
 end # module DisorderKit

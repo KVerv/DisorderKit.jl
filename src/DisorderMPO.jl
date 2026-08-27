@@ -52,3 +52,4 @@ function Base.:*(ρ::InfiniteDisorderDensityMatrix, O::AbstractMPOTensor)
 
     return InfiniteDisorderDensityMatrix([W], ρ.ps)
 end
+
