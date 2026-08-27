@@ -1,17 +1,21 @@
 using Revise, TensorKit, MPSKit, MPSKitModels, DisorderKit, TimerOutputs, CairoMakie, LsqFit
 using BlockTensorKit, MatrixAlgebraKit, OptimKit
 
-D = 6 # State Bonddimension
+D = 4 # State Bonddimension
 D_R = 2 # Renormalization operator Bonddimension
 Δτ = 0.05 # Step size for imaginary time evolution
-Ws = -0.5:0.1:0.5 # Disorder imbalance parameter
+# Ws = 0.0:0.1:0.5 # Disorder imbalance parameter
+W = 0.1 # Disorder strength
+δs = -0.2:0.05:0.2 # Disorder imbalance parameter
 maxiter = 500 # Maximum number of iterations for the groundstate algorithm
 
-a = 0.7
-b = 1.3
+
+# a = 0.7
+# b = 1.3
 w1 = 0.5
 w2 = 1-w1
 ps = [w1*w1, w1*w2, w2*w1, w2*w2]
+
 
 # Construct Finalizer for computing observables after each iteration of the groundstate algorithm
 function my_finalize!(ρ, Hs)
@@ -27,7 +31,7 @@ myFinalizer = DisorderKit.Finalizer(Tuple{Float64, Float64, Float64, Float64}, m
 
 # Construct initial random state
 A = spzeros(ComplexF64, BlockTensorKit.boxplus(ℂ^1) ⊗ BlockTensorKit.boxplus(ℂ^2) ⊗ BlockTensorKit.boxplus(fill(ℂ^1, length(ps))...), BlockTensorKit.boxplus(ℂ^1) ⊗ BlockTensorKit.boxplus(fill(ℂ^1, length(ps))...) ⊗ BlockTensorKit.boxplus(ℂ^1))
-Aᵢ = rand(ComplexF64, ℂ^1 ⊗ ℂ^2 ⊗ ℂ^1, ℂ^1 ⊗ ℂ^1 ⊗ ℂ^1) 
+# Aᵢ = rand(ComplexF64, ℂ^1 ⊗ ℂ^2 ⊗ ℂ^1, ℂ^1 ⊗ ℂ^1 ⊗ ℂ^1) 
 for i in eachindex(ps)
         A[1, 1, i, 1, i, 1] = Aᵢ # Same tensor for each disorder sector
 end
@@ -47,30 +51,40 @@ end
 # R_trunc_err = zeros(length(Ws), maxiter)
 # ϵsA1 = zeros(length(Ws), maxiter)
 # ϵsA2 = zeros(length(Ws), maxiter)
-Es = zeros(length(Ws))
-ξs = zeros(length(Ws))
-Ms = zeros(length(Ws))
-Ss = zeros(length(Ws))
-ϵsconv = zeros(length(Ws))
-ϵsent = zeros(length(Ws))
-ϵsz = zeros(length(Ws))
-ρ_trunc_err = zeros(length(Ws))
-R_trunc_err = zeros(length(Ws))
-ϵsA1 = zeros(length(Ws))
-ϵsA2 = zeros(length(Ws))
+Es = zeros(length(δs))
+ξs = zeros(length(δs))
+Ms = zeros(length(δs))
+Ss = zeros(length(δs))
+ϵsconv = zeros(length(δs))
+ϵsent = zeros(length(δs))
+ϵsz = zeros(length(δs))
+ρ_trunc_err = zeros(length(δs))
+R_trunc_err = zeros(length(δs))
+ϵsA1 = zeros(length(δs))
+ϵsA2 = zeros(length(δs))
 
-δs = Ws
 τs = Δτ:Δτ:maxiter*Δτ
 
-for (ix, W) in enumerate(Ws)
-        hs = [a, b]*exp(W)
-        Js = [a, b]
-
+# for (ix, δ) in enumerate(Ws)
+for (ix, δ) in enumerate(δs)
+        # hs = [a, b]*exp(W)
+        # Js = [a, b]
+        hs = exp(δ) * [1., exp(-2W)]
+        Js = [1., exp(-2W)]
+        # h₀ = exp(2*δ)
+        # hs = [0.2113*h₀, 0.7887*h₀]
+        # Js = [0.2113, 0.7887]
+        # hs = [1.0]*exp(W)
+        # Js = [1.0]
 
         Hs = DisorderKit.random_transverse_field_ising(Js, hs)
 
         # Generate algorithm object with corresponding parameters
-        alg_evo = DisorderKit.Groundstate_iDTEBD(MatrixAlgebraKit.truncrank(D), MatrixAlgebraKit.truncrank(D_R); convtol = 1e-6, maxiter = maxiter, verbosity = 2, timer_output = TimerOutput(), finalizer = myFinalizer)
+        # alg_trunc_norm = DisorderKit.StandardTruncation(; trunc_method = MatrixAlgebraKit.truncrank(D_R))
+        alg_trunc_norm = DisorderKit.SuccessiveSVD(; trunc_method = MatrixAlgebraKit.truncrank(D_R))
+
+        alg_trunc_state = DisorderKit.StandardTruncation(; trunc_method = MatrixAlgebraKit.truncrank(D))
+        alg_evo = DisorderKit.Groundstate_iDTEBD(alg_trunc_state, alg_trunc_norm; convtol = 1e-9, maxiter = maxiter, verbosity = 2, timer_output = TimerOutput(), finalizer = myFinalizer)
 
         # Compute the groundstate
         @timeit alg_evo.timer_output "compute_groundstate" ρs, data, info = DisorderKit.groundstate(ρ₀, Hs, Δτ, alg_evo)
