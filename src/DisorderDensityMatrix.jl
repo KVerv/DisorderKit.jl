@@ -253,12 +253,8 @@ function average_trace_distance(ρ1::InfiniteDisorderDensityMatrix, ρ2::Infinit
     vr = rand(ComplexF64, space(ρ1[1],1), space(ρ2[1],1))
     vals, vrs = eigsolve(x->right_mixed_transfer_matrix(ρ1, ρ2)(x), vr, 1, :LM)
 
-    λ1, _ = right_environment(ρ1)
-    λ2, _ = right_environment(ρ2) 
-    λmixed = vals[1]/sqrt(real.(λ1*λ2))
-    @show λ1, λ2, vals[1], abs(λmixed)^2
-    # ε = sqrt(abs(1. - abs(λmixed)^2))
-    ε = 1 - abs(λmixed)
+    # ε = sqrt(1. - abs(vals[1])^2)
+    ε = 1. - abs(vals[1])
     return ε
 end
 
