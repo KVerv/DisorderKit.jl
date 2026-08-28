@@ -1,9 +1,9 @@
 #!/bin/bash
 #
 #PBS -m a
-#PBS -l walltime=24:00:00
-#PBS -l nodes=1:ppn=96
-#PBS -l mem=264GB
+#PBS -l walltime=1:00:00
+#PBS -l nodes=4:ppn=12
+#PBS -l mem=64GB
 #
 
 STARTDIR=$PBS_O_WORKDIR
@@ -21,5 +21,5 @@ echo "Job number $ix"
 ls
 
 echo "Job started at : "`date`
-julia --project=. --threads=96 density_matrices.jl $ix $ij $in
+~/.juliaup/bin/julia +1.12.6 --project=. --threads=1 RTFIM_groundstate.jl $ix $ij $iW $id
 echo "Job ended at : "`date`

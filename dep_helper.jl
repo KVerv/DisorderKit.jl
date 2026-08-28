@@ -1,6 +1,7 @@
 import Pkg
 Pkg.activate(".")
 Pkg.instantiate()
+Pkg.resolve()
 
 # do all adds
 Pkg.add("JLD2")
