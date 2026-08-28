@@ -78,3 +78,20 @@ function truncate(ρs::InfiniteDisorderDensityMatrix, alg::StandardTruncation; t
     mpo_truncated, ϵ = truncate_disorder_mpo(InfiniteDisorderMPO(ρs.opp), alg; timer=timer)
     return InfiniteDisorderDensityMatrix(mpo_truncated.opp, ρs.ps), ϵ
 end
+
+# Truncate the InfiniteDisorderMPS in each disorder sector
+function truncate(ρ::InfiniteDisorderMPS, alg::StandardTruncation; timer::TimerOutput = TimerOutput())
+    pspace = space(ρ[1], 2)
+    dspace = space(ρ[1], 3)
+    isop = isomorphism(ComplexF64, fuse(pspace ⊗ dspace), pspace ⊗ dspace)
+    @tensor mpo_fused[-1 -2; -3 -4] :=  isop[-2; 1 2] * ρ[1][-1 1 2; -3 -4]
+    PL, PR, ϵ = truncation_matrices(mpo_fused, alg.trunc_method; timer=timer)
+    L = length(ρ)
+    mpo_updated = map(1:L) do ix
+        PL = PL
+        PR = PR
+        @tensor O_updated[-1 -2 -3; -4 -5] := PL[-1; 1] * ρ[ix][1 -2 -3; -4 2] * PR[2; -5]
+        return O_updated
+    end
+    return InfiniteDisorderMPS(mpo_updated, ρ.ps), ϵ
+end

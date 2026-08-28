@@ -1,4 +1,4 @@
-function left_orthonormalize_mpo(A::AbstractMPOTensor, L₀::AbstractBondTensor, trunc_method::MatrixAlgebraKit.TruncationStrategy; conv_tol::Real = 1e-6, timer::TimerOutput = TimerOutput())
+function left_orthonormalize_mpo(A::AbstractMPOTensor, L₀::AbstractBondTensor; conv_tol::Real = 1e-6, timer::TimerOutput = TimerOutput())
     L = L₀
     L /= norm(L)
     Lold = L
@@ -13,7 +13,9 @@ function left_orthonormalize_mpo(A::AbstractMPOTensor, L₀::AbstractBondTensor,
     else
         ε = 1.
     end
-    while ε > conv_tol
+    ix = 0
+    while ε > conv_tol && ix < 100
+        ix += 1
         L /= norm(L)
         Lold = L
         @tensor LA[-1 -2 -3; -4] := L[-1; 1] * Amps[1 -2 -3; -4]
@@ -22,7 +24,8 @@ function left_orthonormalize_mpo(A::AbstractMPOTensor, L₀::AbstractBondTensor,
         λ = norm(L)
         L /= λ
         if space(L) == space(Lold)
-            ε = norm(L - Lold)
+            ϕ = tr(Lold' * L)/tr(Lold' * Lold)
+            ε = norm(L - ϕ*Lold)/norm(L)
         end
     end
     @info(crayon"red"("Left canonicalization: ε = $ε"))
@@ -30,7 +33,7 @@ function left_orthonormalize_mpo(A::AbstractMPOTensor, L₀::AbstractBondTensor,
     return AL, L, λ, ε
 end
 
-function right_orthonormalize_mpo(A::AbstractMPOTensor, C₀::AbstractBondTensor, trunc_method::MatrixAlgebraKit.TruncationStrategy; conv_tol::Real = 1e-6, timer::TimerOutput = TimerOutput())
+function right_orthonormalize_mpo(A::AbstractMPOTensor, C₀::AbstractBondTensor; conv_tol::Real = 1e-6, timer::TimerOutput = TimerOutput())
     C = C₀
     C /= norm(C)
     Cold = C
@@ -63,11 +66,10 @@ function right_orthonormalize_mpo(A::AbstractMPOTensor, C₀::AbstractBondTensor
 end
 
 function truncate_mpo(O::AbstractMPOTensor, alg::SuccessiveSVD; timer::TimerOutput = TimerOutput())
-    @show space(O, 1)
     L₀ = rand(ComplexF64, space(O, 1), space(O, 1))
-    OL, L, λ, ϵL = left_orthonormalize_mpo(O, L₀, alg.trunc_method; conv_tol=alg.conv_tol, timer=timer)
+    OL, L, λ, ϵL = left_orthonormalize_mpo(O, L₀; conv_tol=alg.conv_tol, timer=timer)
     C₀ = rand(ComplexF64, space(OL, 4)', space(OL, 4)')
-    OR, C, λ, ϵR = right_orthonormalize_mpo(OL, C₀, alg.trunc_method; conv_tol=alg.conv_tol, timer=timer)
+    OR, C, λ, ϵR = right_orthonormalize_mpo(OL, C₀; conv_tol=alg.conv_tol, timer=timer)
     U, S, V, ϵC = svd_trunc(C; trunc=alg.trunc_method)
     # @show S
     # @show ϵC

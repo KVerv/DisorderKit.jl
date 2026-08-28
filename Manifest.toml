@@ -551,7 +551,7 @@ version = "0.7.18"
     Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [[deps.DisorderKit]]
-deps = ["BenchmarkTools", "BlockTensorKit", "CairoMakie", "Crayons", "Distributions", "HypothesisTests", "JLD2", "KrylovKit", "LinearAlgebra", "LsqFit", "MPSKit", "MPSKitModels", "MatrixAlgebraKit", "OptimKit", "ProgressBars", "Revise", "StatsBase", "TensorKit", "TensorKitManifolds", "TimerOutputs", "Zygote"]
+deps = ["BenchmarkTools", "BlockTensorKit", "CairoMakie", "Crayons", "Distributions", "HypothesisTests", "JLD2", "KrylovKit", "LinearAlgebra", "LsqFit", "MPSKit", "MPSKitModels", "MatrixAlgebraKit", "OptimKit", "ProgressBars", "Revise", "StatsBase", "Symbolics", "TensorKit", "TensorKitManifolds", "TimerOutputs", "Zygote"]
 path = "."
 uuid = "e1ac6b9a-d9f4-4c19-af21-4cb9fffbe61a"
 version = "0.1.0"
