@@ -22,13 +22,15 @@ using BlockTensorKit, MatrixAlgebraKit, OptimKit
 # ps = [1.]
 
 J₀ = 1.0
-δ = 0.05
+δ = 0.0
 W = 0.1
 # h₀ = exp(2*δ)
 # hs = [0.2113*h₀, 0.7887*h₀]
 # Js = J₀ * [0.2113, 0.7887]
 hs = exp(δ) * [1., exp(-2W)]
 Js = [1., exp(-2W)]
+# hs = [1., 1.5]
+# Js = [1., 1.5]
 w1 = 0.5
 w2 = 1-w1
 ps = [w1*w1, w1*w2, w2*w1, w2*w2]
@@ -37,7 +39,7 @@ Hs = DisorderKit.random_transverse_field_ising(Js, hs)
 
 
 Δτ = 0.05 # Step size for imaginary time evolution
-maxiter = 3000 # Maximum number of iterations for the groundstate algorithm
+maxiter = 100 # Maximum number of iterations for the groundstate algorithm
 D = 4 # State Bonddimension
 D_R = 2 # Renormalization operator Bonddimension
 
@@ -74,7 +76,8 @@ function my_finalize!(ρ, Hs)
     M = real.(DisorderKit.expectation_value(ρ, Z))
     rmax = round(Int, 5*ξ)
     Cs = real.(DisorderKit.two_point_correlator(ρ, Z, Z, rmax+1))
-    S = DisorderKit.average_entanglement_entropy(ρ)[1]
+#     S = DisorderKit.average_entanglement_entropy(ρ)[1]
+        S = 0
     return (E, M, ξ, Cs, S)
 end
 
@@ -113,32 +116,32 @@ S = Ss[end]
 
 @show (E, ξ, S)
 
-set_theme!(theme_latexfonts())
-fig = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
-ax1 = Axis(fig[1, 1], 
-        xlabel = L"τ",
-        ylabel = L"$E$",
-        xscale = log10,
-        # yscale = log10
-        )
-ax2 = Axis(fig[1, 2], 
-        xlabel = L"τ",
-        ylabel = L"$ϵ_{conv}$",
-        xscale = log10,
-        yscale = log10
-        )
-ax3 = Axis(fig[2, 1], 
-        xlabel = L"τ",
-        ylabel = L"$M$",
-        # xscale = log10,
-        # yscale = log10
-        )
-ax4 = Axis(fig[2, 2], 
-        xlabel = L"τ",
-        ylabel = L"$ξ$",
-        # xscale = log10,
-        # yscale = log10
-        )
+# set_theme!(theme_latexfonts())
+# fig = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
+# ax1 = Axis(fig[1, 1], 
+#         xlabel = L"τ",
+#         ylabel = L"$E$",
+#         xscale = log10,
+#         # yscale = log10
+#         )
+# ax2 = Axis(fig[1, 2], 
+#         xlabel = L"τ",
+#         ylabel = L"$ϵ_{conv}$",
+#         xscale = log10,
+#         yscale = log10
+#         )
+# ax3 = Axis(fig[2, 1], 
+#         xlabel = L"τ",
+#         ylabel = L"$M$",
+#         # xscale = log10,
+#         # yscale = log10
+#         )
+# ax4 = Axis(fig[2, 2], 
+#         xlabel = L"τ",
+#         ylabel = L"$ξ$",
+#         # xscale = log10,
+#         # yscale = log10
+#         )
 
 colors = Makie.wong_colors()
 scatterlines!(ax1, τs, Es, label=L"$Δτ=%$Δτ$", markersize=20)
@@ -212,7 +215,7 @@ for (i, ys) in enumerate(Cs)
         yss = ys #.- M^2
         # yss ./= yss[1]
         # yss .*= rs.^0.4
-        j = 1000
+        j = 500
 
         η = -diff(log.(abs.(yss)))./diff(log.(rs))
         # rs *= 1/ξ
@@ -220,7 +223,7 @@ for (i, ys) in enumerate(Cs)
         # yss .*= ξ^0.38
 
         # if i % length(Cs) == j
-        if (i % 100  == 0) && (i>=1000)
+        if (i % 100  == 0) && (i>=200)
             scatter!(ax31, log.(rs), log.(yss), label=L"$D=%$D$", markersize=20)
         # scatter!(ax21, (rs), (yss), label=L"$D=%$D$", markersize=20)
                 @show ξ
@@ -244,7 +247,7 @@ fig3
 # p0q = [1., 1.]
 # linmodel(t, p) = p[1] .+ p[2] * t
 # xs = ξs[minfit:maxfit]
-# ys = Ss[minfit:maxfit]
+# ys = Ss[min1 #fit:maxfit]
 # linfit = curve_fit(linmodel, log.(xs), ys, p0q)
 
 
@@ -260,3 +263,34 @@ fig3
 # lines!(ax41, log.(xs), linmodel(log.(xs), linfit.param), color=:black, linewidth=2)
 
 # fig4
+
+
+# ftransfer =  DisorderKit.right_transfer_matrix(ρs)
+# vr = rand(ComplexF64, space(ρs[1],1), space(ρs[1],1))
+# vals, vrs = eigsolve(x->ftransfer(x), vr, 4, :LM)
+# ftransfer = DisorderKit.left_transfer_matrix(ρs)
+# vl = rand(ComplexF64, space(ρs[1],1), space(ρs[1],1))
+# vals, vls = eigsolve(x->ftransfer(x), vl, 4, :LM)
+# iso = isomorphism(fuse(space(ρs[1], 1)⊗space(ρs[1], 1)'), space(ρs[1], 1)⊗space(ρs[1], 1)')
+
+# i = 2
+# j = 2
+# r = vrs[i]/sqrt(tr(vls[i]*vrs[i]))
+# l = vls[j]/sqrt(tr(vls[j]*vrs[j]))
+
+# tr(vls[4]*vrs[1])
+# @tensor Q[-1 -2; -3 -4] := iso[-1; 1 4] * ρs[1][1 2 3; -3 5] * conj(ρs[1][4 2 3; -2 6]) * conj(iso[-4; 5 6])
+# @tensor QQ[-1 -2 -3; -4 -5 -6] := Q[-1 -2; -3 1] * Q[1 -4; -5 -6]
+# @tensor QQQ[-1 -2 -3; -4 -5 -6] := Q[-1 -2; -3 1] * iso[1; 2 3] * r[2; 3] * l[4; 5] *conj(iso[6; 5 4]) * Q[6 -4; -5 -6]
+# @show norm(QQ-QQQ)
+
+# @tensor T[-1; -2] := l[3; 2] * conj(iso[1; 2 3]) * Q[1 -1; -2 4] * iso[4; 5 6] * r[5; 6]
+# norm(T - id(space(T, 1)))
+# norm(T)
+
+# _, S, _, ϵ = MatrixAlgebraKit.svd_trunc(QQ; trunc=truncrank(16))
+# S = S.data
+# # S ./= sum(S)
+# sqrt(sum(S[2:end].^2))
+# Q
+

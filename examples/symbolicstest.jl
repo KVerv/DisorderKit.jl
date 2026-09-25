@@ -1,21 +1,32 @@
 using Symbolics
 
-N = 10
+N = 3
 # generate W matrices
-@variables A[1:N] R[1:N] L[1:N] D[1:N] U[1:N] t
+@variables A[1:N] R[1:N] L[1:N] D[1:N] U[1:N] t B[1:N]
+# Ws = map(1:N) do l
+#     return [1 A[l] 0 0
+#             0 0 L[l] D[l]
+#             0 0 0 R[l]
+#             t*U[l] 0 0 0]
+# end
+
+# Xs = map(1:N) do l
+#     return [1 A[l] 0 0 0
+#             0 0 L[l] D[l] 0
+#             0 0 0 R[l] 0
+#             0 0 0 0 U[l]
+#             0 0 0 0 1]
+# end
+
 Ws = map(1:N) do l
-    return [1 A[l] 0 0
-            0 0 L[l] D[l]
-            0 0 0 R[l]
-            t*U[l] 0 0 0]
+    return [A[l] L[l] 0
+            0 0 R[l]
+            0 0 A[l]]
 end
 
 Xs = map(1:N) do l
-    return [1 A[l] 0 0 0
-            0 0 L[l] D[l] 0
-            0 0 0 R[l] 0
-            0 0 0 0 U[l]
-            0 0 0 0 1]
+    return [1 + A[l] -B[l]
+            0 A[l]]
 end
 
 # Ys = map(1:N) do l
@@ -38,19 +49,19 @@ end
 # end
 
 # generate boundary vectors
-Vₗ = [1, 0, 0, 0]'
-Vᵣ = [1, 0, 0, 0]
-Vhl = [1, 0, 0, 0, 0]'
-Vhr = [0, 0, 0, 0, 1]
+Vₗ = [1, 0, 0]'
+Vᵣ = [1, 0, 1]
+Vhl = [1, 0]'
+Vhr = [0, 1]
 
 # expand the MPO
 Z = expand(Vₗ * prod(Ws) * Vᵣ) 
-H = expand(Vhl * prod(Xs) * Vhr)
+Zinv = expand(Vhl * prod(Xs) * Vhr)
 # expId = expand(Zinv*Z*Zinv)
-# expId = expand(Zinv*Z)
+expId = expand(Vₗ * Zinv * Z * Vᵣ)
 # expId = expand(Vₗ * prod(Ys) * Vᵣ)
 
-Zt = terms(Z)
+Zt = terms(expId)
 Zt = sort(Zt, by = Symbolics.degree)
 
 Ht = terms(H)
