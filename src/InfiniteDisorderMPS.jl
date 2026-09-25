@@ -1,207 +1,245 @@
-# Convention virtual, physical, disorder ← disorder, virtual
-struct InfiniteDisorderMPS{T<:AbstractDisorderMPSTensor}
-    opp::PeriodicVector{T}
+# Convention virtual, physical ← virtual
+
+# One site unit-cell isometric InfiniteDMPS
+struct InfiniteDisorderMPS{T<:AbstractMPSTensor}
+    opp::Vector{T}
     ps::Vector{<:Real}
 end
 
-function InfiniteDisorderMPS(opp::Vector{<:AbstractDisorderMPSTensor}, ps::Vector{<:Real})
-    return InfiniteDisorderMPS(PeriodicVector(opp), ps)
-end
-
-function InfiniteDisorderMPS(ps::Vector{Float64}, pspace::ElementarySpace, vspace::ElementarySpace; T=ComplexF64)
-    D_dis = length(ps)
-    Wdomain = BlockTensorKit.boxplus(fill(ℂ^1, D_dis)...) ⊗  BlockTensorKit.boxplus([vspace]...)
-    Wcodomain = BlockTensorKit.boxplus([vspace]...) ⊗ BlockTensorKit.boxplus([pspace]...) ⊗ BlockTensorKit.boxplus(fill(ℂ^1, D_dis)...)
-
-    W = spzeros(ComplexF64, Wcodomain, Wdomain)
-    for i in 1:D_dis
-        W[1,1,i,1,i,1] = rand(ComplexF64, vspace ⊗ pspace ⊗ ℂ^1, ℂ^1 ⊗ vspace)
+function InfiniteDisorderMPS(ps::Vector{Float64}, D_dis::Int, D_phys::Int, D::Int; T=ComplexF64)
+    As = [rand(T, ℂ^D⊗ℂ^D_phys,ℂ^D) for i in 1:D_dis]
+    for (p,A) in enumerate(As)
+        Q, _ = qr_compact(A)
+        As[p] = Q
     end
-    return InfiniteDisorderMPS([W], ps)
+    return InfiniteDisorderMPS{typeof(As[1])}(As, ps)
 end
 
 Base.getindex(T::InfiniteDisorderMPS, ix::Int) = T.opp[ix]
 Base.size(T::InfiniteDisorderMPS) = size(T.opp)
 Base.length(T::InfiniteDisorderMPS) = length(T.opp)
+Base.eachindex(T::InfiniteDisorderMPS) = 1:length(T.opp)
 Base.iterate(t::InfiniteDisorderMPS, i=1) = (i > length(t.opp)) ? nothing : (t[i], i + 1)
 
-# Rescale the tensors of the MPS by a scalar
 function rescale(ρ::InfiniteDisorderMPS, α::Number)
     opp = ρ.opp*α
     return InfiniteDisorderMPS(opp, ρ.ps)
 end
 
-# Right transfer matrix
-function right_transfer_matrix(ρ::InfiniteDisorderMPS)
-    A = ρ[1]
-    P = make_DiagonalBlockTensorMap(ρ.ps)
-    function ftransfer(vr)
-        @tensor v[-1; -2] := A[-1 3 4; 2 1] * conj(A[-2 3 4; 5 6]) * P[2; 5] * vr[1; 6]
-        return v
-    end
-    return ftransfer
-end
-
-# Left transfer matrix
-function left_transfer_matrix(ρ::InfiniteDisorderMPS)
-    A = ρ[1]
-    P = make_DiagonalBlockTensorMap(ρ.ps)
+# Construct application left transfer matrix: v*T -> v
+function transfer_left(ρ::InfiniteDisorderMPS)
     function ftransfer(vl)
-        @tensor v[-1; -2] := A[1 3 4; 2 -2] * conj(A[6 3 4; 5 -1]) * P[2; 5] * vl[6; 1]
+        v = zeros(ComplexF64,space(ρ.opp[1],3)',space(ρ.opp[1],3)')
+        for (p,W) in enumerate(ρ.opp)
+            @tensor vp[-2; -1] := W[1 3; -1] * conj(W[2 3; -2]) * vl[2; 1]
+            v += ρ.ps[p]*vp
+        end
         return v
     end
     return ftransfer
 end
 
-# Compute environments
-function right_environment(ρ::InfiniteDisorderMPS)
-    ftransfer = right_transfer_matrix(ρ)
-    vr = rand(ComplexF64, space(ρ[1],1), space(ρ[1],1))
-    vals, vrs = eigsolve(x->ftransfer(x), vr, 1, :LM)
-    return vals[1], vrs[1]
+# Construct application right transfer matrix: T*v -> v
+function transfer_right(ρ::InfiniteDisorderMPS)
+    function ftransfer(vr)
+        v = zeros(ComplexF64,space(ρ.opp[1],1),space(ρ.opp[1],1))
+        for (p,W) in enumerate(ρ.opp)
+            @tensor vp[-1; -2] := W[-1 3; 1] * conj(W[-2 3; 2]) * vr[1; 2]
+            v += ρ.ps[p]*vp
+        end
+        return v
+    end
+    return ftransfer
 end
 
+# Compute right environment of InfiniteDisorderMPS
+function right_environment(ρ::InfiniteDisorderMPS)
+    v0 = id(ComplexF64, space(ρ.opp[length(ρ.opp)], 3)')
+    f_t = transfer_right(ρ)
+    λ, Er = eigsolve(f_t, v0, 2, :LM)
+
+    Er = Er[1]/tr(Er[1])
+    return λ[1], Er
+end
+
+# Compute left environment of InfiniteDisorderMPS
 function left_environment(ρ::InfiniteDisorderMPS)
-    ftransfer = left_transfer_matrix(ρ)
-    vl = rand(ComplexF64, space(ρ[1],1), space(ρ[1],1))
-    vals, vls = eigsolve(x->ftransfer(x), vl, 1, :LM)
-    return vals[1], vls[1]
+    v0 = id(ComplexF64, space(ρ.opp[1], 1))
+    f_t = transfer_left(ρ)
+    λ, El = eigsolve(f_t, v0, 1, :LM)
+
+    El = El[1]/El[1][1]
+    return λ[1], El
 end
 
 function environments(ρ::InfiniteDisorderMPS)
-    λr, vr = right_environment(ρ)
-    λl, vl = left_environment(ρ)
+    λr, Er = right_environment(ρ)
+    λl, El = left_environment(ρ)
 
-    l = vl/sqrt(tr(vl*vr))
-    r = vr/sqrt(tr(vl*vr))
-
-    return λl, l, r
+    return λl, El, Er
 end
 
-# Gauge density matrix such that dominant eigenvalue is 1
-function gauge(ρ::InfiniteDisorderMPS)
-    λ, _ = left_environment(ρ)
+# Compute the norm of a InfiniteDisorderMPS
+function norm(ρ::InfiniteDisorderMPS)
+    _, Er = right_environment(ρ)
 
-    return rescale(ρ, 1/sqrt(λ))
+    N = tr(Er)
+    imag(N) < 1e-4 || @warn("Norm has imaginary part: N = $N")
+    N = real.(N)
+    return N
 end
 
-# Measure local operator
+# Compute the energy density of a InfiniteDisorderMPS with respect to a DisorderMPOHam
+function energy_density(ρ::InfiniteDisorderMPS, Hs::DisorderMPOHam)
+    λ, l, r = environments(ρ)
+
+    E = 0
+    for (p, W) in enumerate(ρ.opp)
+        @tensor ED = l[4; 1] * W[1 2; 5] * Hs.Ds[p][3; 2] * conj(W[4 3; 6]) * r[5; 6]
+        E += ρ.ps[p] * ED/λ
+        for (q, V) in enumerate(ρ.opp)
+            @tensor ECB = W[1 2; 4] * Hs.Cs[p][3; 2 5] * conj(W[1 3; 6]) * V[4 7; 9] * Hs.Bs[p][5 8; 7] * conj(V[6 8; 10]) * r[9;10]
+            E += ρ.ps[p] * ρ.ps[q] * ECB/λ^2
+        end
+        #FIXME : currently only nearest-neighbor interactions
+    end
+
+    imag(E) < 1e-4 || @warn("Energy density has imaginary part: E = $E")
+
+    return real.(E)
+end
+
+# Expectation value of a local operator O at site p
 function expectation_value(ρ::InfiniteDisorderMPS, O::AbstractBondTensor)
-    λ, l, r = DisorderKit.environments(ρ)
+    Os = [O for i in 1:length(ρ.opp)]
 
-    P = make_DiagonalBlockTensorMap(ρ.ps)
-    A = ρ[1]
-    @tensor E = l[6; 1] * O[4; 3] * A[1 3 5; 2 8] * conj(A[6 4 5; 7 9]) * P[2; 7] * r[8; 9]
-
-    return E/λ
+    return expectation_value(ρ, Os)
 end
 
-# Measure two-point correlation function
-function two_point_correlator(ρ::InfiniteDisorderMPS, O1::AbstractBondTensor, O2::AbstractBondTensor, r::Int)
-    d = max(1, r)
-    d = min(d, 100)
-    λ, l, r = DisorderKit.environments(ρ)
-    ft = left_transfer_matrix(ρ)
-    P = make_DiagonalBlockTensorMap(ρ.ps)
-    A = ρ[1]
+# Expectation value of a local disorder operator O at site p
+function expectation_value(ρ::InfiniteDisorderMPS, Os::Vector{<:AbstractBondTensor})
+    _, vr = right_environment(ρ)    
+    vl = zeros(ComplexF64, space(ρ.opp[1],3)',space(ρ.opp[1],3)')
 
-    Cs = zeros(ComplexF64, d)
-    @tensor lO[-1; -2] := l[6; 1] * O1[4; 3] * A[1 3 5; 2 -2] * conj(A[6 4 5; 7 -1]) * P[2; 7]
-    @tensor rO[-1; -2] := r[1; 6] * O2[4; 3] * A[-1 3 5; 2 1] * conj(A[-2 4 5; 7 6]) * P[2; 7]
-    lO /= λ
-    rO /= λ
-
-    @tensor C = tr(lO*rO)
-    Cs[1] = C
-    for i in 2:d
-        lO = ft(lO)/λ
-        @tensor C = tr(lO*rO)
-        Cs[i] = C
+    @show space(vl)
+    for (p, W) in enumerate(ρ.opp)
+        @tensor vlO1[-1; -2] := W[1 3; -2] * Os[p][2; 3] * conj(W[1 2; -1]) 
+        vl += ρ.ps[p]*vlO1
     end
-    return Cs
+
+    return tr(vl * vr)
 end
 
-# Measure energy density
-function energy_density(ρ::InfiniteDisorderMPS, H::DisorderMPOHam)
-    λ, l, r = DisorderKit.environments(ρ)
-    P = make_DiagonalBlockTensorMap(ρ.ps)
-    A = ρ[1]
-    E = 0.
-    @tensor ED =  l[7; 1] * H.D[5 6; 3 4] * A[1 3 4; 2 9] * conj(A[7 5 6; 8 10]) * P[2; 8] * r[9; 10]
-    ED /= λ
-    #FIXME Include long range interactions
-    @tensor vL[-1; -2 -3] := l[7; 1] * H.L[5 6; 3 4 -3] * A[1 3 4; 2 -2] * conj(A[7 5 6; 8 -1]) * P[2; 8]
-    @tensor vR[-1 -2; -3] := r[1; 7] * H.R[-2 5 6; 3 4] * A[-1 3 4; 2 1] * conj(A[-3 5 6; 8 7]) * P[2; 8]
 
-    @tensor ECB = vL[1; 3 2] * vR[3 2; 1]
-    ECB /= λ^2
+# Compute correlation function of two local operators at site i and site j
+function correlator(ρ::InfiniteDisorderMPS, O1::AbstractBondTensor, O2::AbstractBondTensor, i::Int, j::Int)
+    O1s = [O1 for i in 1:length(ρ.opp)]
+    O2s = [O2 for i in 1:length(ρ.opp)]
 
-    E = ED + ECB
-    imag(E) > 1e-12 && @warn("Energy density has a large imaginary part: $E")
-    return real(E)
+    return correlator(ρ, O1s, O2s, i, j)
 end
 
-# Measure average correlation length
+# Compute correlation function of two local operators at distance r
+function correlator(ρ::InfiniteDisorderMPS, O1s::Vector{<:AbstractBondTensor}, O2s::Vector{<:AbstractBondTensor}, i::Int, j::Int)
+    Cs = Vector{ComplexF64}(undef, j-i)
+    _, vr = right_environment(ρ)
+    f_l = transfer_left(ρ)
+    f_r = transfer_right(ρ)
+    vl = zeros(ComplexF64, space(ρ.opp[1],3)',space(ρ.opp[1],3)')
+    vrt = zeros(ComplexF64, space(vr))
+    for (p, W) in enumerate(ρ.opp)
+        @tensor vlO1[-1; -2] := W[1 3; -2] * O1s[p][2; 3] * conj(W[1 2; -1])
+        vl += ρ.ps[p]*vlO1
+    end
+    for (q, W) in enumerate(ρ.opp)
+        @tensor vrO2[-1; -2] := W[-1 3; 1] * O2s[q][2; 3] * conj(W[-2 2; 4]) * vr[1; 4]
+        vrt += ρ.ps[q]*vrO2
+    end
+    Cs[1] = tr(vl * vrt)
+    for k in 1:j-i
+        vl = f_l(vl)
+        C = tr(vl * vrt)
+        Cs[k] = C
+    end
+    return real.(Cs)
+end
+
 function average_correlation_length(ρ::InfiniteDisorderMPS)
-    f_t = left_transfer_matrix(ρ)
+    f_l = transfer_left(ρ)
 
-    vl = rand(ComplexF64, space(ρ[1], 1), space(ρ[1], 1))
+    v0 = rand(ComplexF64, space(ρ.opp[1],1), space(ρ.opp[1],1))
+    λl, _ = eigsolve(f_l, v0, 3, :LM)
 
-    λs, _ = eigsolve(x->f_t(x), vl, 3, :LM)
-    λ1 = λs[1]
-    if length(λs) < 2
-        return ξ = 1e-16
+    if length(λl) < 2
+        @warn("Only one eigenvalue found for the left transfer matrix. Cannot compute correlation length.")
+        ξ = 0
+    else
+        ξ = -1/log.(abs(λl[2]))
     end
-    λ2 = λs[2]
-
-    ξ = real(-1/log(abs(λ2/λ1)))
-
     return ξ
 end
 
-# Right transfer matrix
-function right_mixed_transfer_matrix(ρ1::InfiniteDisorderMPS, ρ2::InfiniteDisorderMPS)
-    A = ρ1[1]
-    B = ρ2[1]
-    P = make_DiagonalBlockTensorMap(ρ1.ps)
+function transfer_mixed_right(ρ1::InfiniteDisorderMPS, ρ2::InfiniteDisorderMPS)
+    v1space = space(ρ1.opp[1],1)
+    v2space = space(ρ2.opp[1],1)
     function ftransfer(vr)
-        @tensor v[-1; -2] := A[-1 3 4; 2 1] * conj(B[-2 3 4; 5 6]) * P[2; 5] * vr[1; 6]
+        v = zeros(ComplexF64,v2space, v1space)
+        for (p,X) in enumerate(ρ1.opp)
+            Y = ρ2.opp[p]
+            @tensor vp[-1; -2] := Y[-1 3; 1] * conj(X[-2 3; 2]) * vr[1; 2]
+            v += ρ1.ps[p]*vp
+        end
         return v
     end
     return ftransfer
 end
 
-function average_trace_distance(ρ1::InfiniteDisorderMPS, ρ2::InfiniteDisorderMPS)
-    @assert ρ1.ps == ρ2.ps "Disorder sectors must match"
-    ρ1 = gauge(ρ1)
-    ρ2 = gauge(ρ2)
-    vr = rand(ComplexF64, space(ρ1[1],1), space(ρ2[1],1))
-    vals, vrs = eigsolve(x->right_mixed_transfer_matrix(ρ1, ρ2)(x), vr, 1, :LM)
 
-
-    λmixed = vals[1]
- 
-    ε = 1 - abs(λmixed)
-    return ε
+function transfer_mixed2_right(ρ1::InfiniteDisorderMPS, ρ2::InfiniteDisorderMPS)
+    v1space = space(ρ1.opp[1],1)
+    v2space = space(ρ2.opp[1],1)
+    function ftransfer(vr)
+        v = zeros(ComplexF64,v2space ⊗ v1space', v1space' ⊗ v2space)
+        for (p,X) in enumerate(ρ1.opp)
+            Y = ρ2.opp[p]
+            @tensor vp[-1 -2; -3 -4] := Y[-1 2; 1] * conj(X[-2 2; 3]) * X[-3 5; 4] * conj(Y[-4 5; 6]) * vr[1 3; 4 6]
+            v += ρ1.ps[p]*vp
+        end
+        return v
+    end
+    return ftransfer
 end
 
-#FIXME: Is this the correct way to compute the entanglement entropy?
-function average_entanglement_entropy(ρ::InfiniteDisorderMPS)
-    @info("Computing entanglement entropy...")
-    pspace = space(ρ[1], 2)
-    dspace = space(ρ[1], 3)
-    isop = isomorphism(ComplexF64, fuse(pspace ⊗ dspace), pspace ⊗ dspace)
-    @tensor O[-1 -2; -3 -4] :=  isop[-2; 1 2] * ρ[1][-1 1 2; -3 -4]
+function overlap(ρ1::InfiniteDisorderMPS, ρ2::InfiniteDisorderMPS)
+    (length(ρ1.opp) == length(ρ2.opp)) || throw(ArgumentError("ρ1 and ρ2 should have the same amount of disorder sectors"))
+    
+    v1space = space(ρ1.opp[1],1)
+    v2space = space(ρ2.opp[1],1)
+    v0 = ones(ComplexF64,v2space, v1space)
+    f_t = transfer_mixed_right(ρ1, ρ2)
+    λ, _ = eigsolve(f_t, v0, 1, :LM)
 
-    L₀ = rand(ComplexF64, space(O, 1), space(O, 1))
-    OL, L, λ, ϵL = left_orthonormalize_mpo(O, L₀; conv_tol=1e-9)
-    C₀ = rand(ComplexF64, space(OL, 4)', space(OL, 4)')
-    OR, C, λ, ϵR = right_orthonormalize_mpo(OL, C₀; conv_tol=1e-9)
-    U, S, V, ϵC = svd_trunc(C; trunc=truncerror(atol=1e-12))
+    return λ[1]
+end
 
-    S = S.data
-    @show sum(S.^2)
-    Se = real.(-sum(S.^2 .* log.(S.^2 .+ 1e-16)))
-    @info("Entanglement entropy: $Se")
-    return Se, real.(S)
+
+function overlap_squared(ρ1::InfiniteDisorderMPS, ρ2::InfiniteDisorderMPS)
+    (length(ρ1.opp) == length(ρ2.opp)) || throw(ArgumentError("ρ1 and ρ2 should have the same amount of disorder sectors"))
+    
+    v1space = space(ρ1.opp[1],1)
+    v2space = space(ρ2.opp[1],1)
+    v0 = ones(ComplexF64,v2space ⊗ v1space', v1space' ⊗ v2space)
+    f_t = transfer_mixed2_right(ρ1, ρ2)
+    λ, _ = eigsolve(f_t, v0, 1, :LM)
+
+    return λ[1]
+end
+
+function fidelity(ρ1::InfiniteDisorderMPS, ρ2::InfiniteDisorderMPS)
+    # ov11 = overlap(ρ1, ρ1)
+    ov22 = overlap(ρ2, ρ2)
+    ov12 = overlap_squared(ρ1, ρ2)
+
+    F = ov12/ov22
+    return abs(F)
 end

@@ -41,3 +41,41 @@ function all_combinations(A::AbstractVector, L::Integer)
     end
     return combos
 end
+
+function mixed_mpo_right_transfer(A::AbstractMPOTensor, B::AbstractMPOTensor)
+    function ftransfer(vr)
+        @tensor vr[-1; -2] := A[-1 4; 3 1] * conj(B[-2 4; 3 2]) * vr[1; 2]
+        return vr
+    end
+    return ftransfer
+end
+
+function mixed_mpo_left_transfer(A::AbstractMPOTensor, B::AbstractMPOTensor)
+    function ftransfer(vl)
+        @tensor vl[-1; -2] := A[1 4; 3 -2] * conj(B[2 4; 3 -1]) * vl[2; 1]
+        return vl
+    end
+    return ftransfer
+end
+
+function mpo_overlap(O1::AbstractMPOTensor, O2::AbstractMPOTensor)
+    @assert space(O1, 1) == space(O2, 1) "Physical spaces must match"
+    @assert space(O1, 2) == space(O2, 2) "Physical spaces must match"
+
+
+    v0 = rand(ComplexF64, space(O1, 1), space(O2, 1))
+    mixed_transfer_r = mixed_mpo_right_transfer(O1, O2) 
+    λ, _ = eigsolve(mixed_transfer_r, v0, 1, :LM)
+
+    return λ[1]
+end
+function mpo_fidelity(O1::AbstractMPOTensor, O2::AbstractMPOTensor)
+    @assert space(O1, 1) == space(O2, 1) "Physical spaces must match"
+    @assert space(O1, 2) == space(O2, 2) "Physical spaces must match"
+
+    overlap12 = mpo_overlap(O1, O2)
+    overlap11 = mpo_overlap(O1, O1)
+    overlap22 = mpo_overlap(O2, O2)
+    return norm(overlap12) / sqrt(norm(overlap11) * norm(overlap22))
+end
+

@@ -14,7 +14,7 @@ function left_orthonormalize_mpo(A::AbstractMPOTensor, L₀::AbstractBondTensor;
         ε = 1.
     end
     ix = 0
-    while ε > conv_tol && ix < 100
+    while ε > conv_tol && ix < 500
         ix += 1
         L /= norm(L)
         Lold = L
@@ -48,7 +48,9 @@ function right_orthonormalize_mpo(A::AbstractMPOTensor, C₀::AbstractBondTensor
     else
         ϵ = 1.
     end
-    while ϵ > conv_tol
+    ix=0
+    while ϵ > conv_tol && ix < 500
+        ix += 1
         C /= norm(C)
         Cold = C
         @tensor AC[-1; -2 -3 -4] := Amps[-1; -2 -3 1] * C[1; -4]
@@ -71,8 +73,9 @@ function truncate_mpo(O::AbstractMPOTensor, alg::SuccessiveSVD; timer::TimerOutp
     C₀ = rand(ComplexF64, space(OL, 4)', space(OL, 4)')
     OR, C, λ, ϵR = right_orthonormalize_mpo(OL, C₀; conv_tol=alg.conv_tol, timer=timer)
     U, S, V, ϵC = svd_trunc(C; trunc=alg.trunc_method)
-    # @show S
+    @show S
     # @show ϵC
     @tensor O_updated[-1 -2; -3 -4] := conj(U[1; -1]) * OL[1 -2; -3 2] * U[2; -4]
+    # @tensor OC[-1 -2; -3 -4] := O_updated[-1 -2; -3 1] * S[1; -4]
     return O_updated, ϵC, ϵL, ϵR
 end
