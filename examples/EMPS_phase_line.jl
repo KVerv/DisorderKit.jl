@@ -97,27 +97,27 @@ fig
 
 # ξWs = []
 # Ws = []
-push!(ξWs, ξs)
-push!(Ws, W)
+# push!(ξWs, ξs)
+# push!(Ws, W)
 
 
-set_theme!(theme_latexfonts())
-fig2 = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
-ax21 = Axis(fig2[1, 1], 
-        xlabel = L"$δ/W^2$",
-        ylabel = L"$ξW^α$",
-        # xscale = log10,
-        # yscale = log10
-        )
+# set_theme!(theme_latexfonts())
+# fig2 = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
+# ax21 = Axis(fig2[1, 1], 
+#         xlabel = L"$δ/W^2$",
+#         ylabel = L"$ξW^α$",
+#         # xscale = log10,
+#         # yscale = log10
+#         )
 
-ϕ = 0.72
-iδ0 = 3
-for (iW,W) in enumerate(Ws[1:end])
-    # ys = ξWs[iW]./ξWs[iW][iδ0]
-    # xs = δs/W^ϕ
-    ys = ξWs[iW][iδ0]
-    xs = W
-    scatter!(ax21, xs, ys, markersize=20, color=:blue)
-end
+# ϕ = 0.72
+# iδ0 = 3
+# for (iW,W) in enumerate(Ws[1:end])
+#     # ys = ξWs[iW]./ξWs[iW][iδ0]
+#     # xs = δs/W^ϕ
+#     ys = ξWs[iW][iδ0]
+#     xs = W
+#     scatter!(ax21, xs, ys, markersize=20, color=:blue)
+# end
 
-fig2
+# fig2
