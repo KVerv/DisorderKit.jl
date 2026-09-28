@@ -243,3 +243,14 @@ function fidelity(ρ1::InfiniteDisorderMPS, ρ2::InfiniteDisorderMPS)
     F = ov12/ov22
     return abs(F)
 end
+
+#FIXME: Is this the correct way to compute the entanglement entropy?
+function average_entanglement_entropy(ρ::InfiniteDisorderMPS)
+    λ, l, r = environments(ρ)
+
+    Q = l*r
+    S = eig_vals(Q)
+    S = S ./ sum(S) # Schmidt spectrum normalized to one
+    Se = real.(-sum(S .* log.(S .+ 1e-16)))
+    return Se, real.(S)
+end

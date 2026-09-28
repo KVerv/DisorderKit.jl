@@ -20,9 +20,9 @@ Hs = DisorderKit.random_transverse_field_ising(Js, hs)
 
 
 Δτ = 0.02 # Step size for imaginary time evolution
-maxiter = 2000 # Maximum number of iterations for the groundstate algorithm
+maxiter = 100 # Maximum number of iterations for the groundstate algorithm
 D = 1 # State Bonddimension
-Dmax = 4
+Dmax = 16
 D_dis = length(ps) # Disorder Bonddimension
 D_phys = 2 # Physical dimension
 ψ = DisorderKit.InfiniteDisorderMPS(ps, D_dis, D_phys, D)
@@ -42,8 +42,8 @@ function my_finalize!(ρ, Hs)
 end
 
 myFinalizer = DisorderKit.Finalizer(Tuple{Float64, Float64, Float64, Vector{Float64}}, my_finalize!)
-
-ψgs, data, info = DisorderKit.groundstate(ψ, Hs, Δτ, DisorderKit.Groundstate_iDTEBD(1e-6, 1e-7, maxiter, 5, TimerOutput(), myFinalizer), maxD = Dmax)
+alg = DisorderKit.Groundstate_iDTEBD(1e-6, 1e-7, maxiter, 5, TimerOutput(), myFinalizer)
+ψgs, data, info = DisorderKit.groundstate(ψ, Hs, Δτ, alg, maxD = Dmax)
 
 Es = getindex.(data, 1)
 Ms = getindex.(data, 2)
@@ -57,32 +57,32 @@ M = Ms[end]
 
 @show (E, ξ)
 
-# set_theme!(theme_latexfonts())
-# fig = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
-# ax1 = Axis(fig[1, 1], 
-#         xlabel = L"τ",
-#         ylabel = L"$E$",
-#         # xscale = log10,
-#         # yscale = log10
-#         )
-# ax2 = Axis(fig[1, 2], 
-#         xlabel = L"τ",
-#         ylabel = L"$ϵ_{conv}$",
-#         # xscale = log10,
-#         yscale = log10
-#         )
-# ax3 = Axis(fig[2, 1], 
-#         xlabel = L"τ",
-#         ylabel = L"$M$",
-#         # xscale = log10,
-#         # yscale = log10
-#         )
-# ax4 = Axis(fig[2, 2], 
-#         xlabel = L"τ",
-#         ylabel = L"$ξ$",
-#         # xscale = log10,
-#         # yscale = log10
-#         )
+set_theme!(theme_latexfonts())
+fig = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
+ax1 = Axis(fig[1, 1], 
+        xlabel = L"τ",
+        ylabel = L"$E$",
+        # xscale = log10,
+        # yscale = log10
+        )
+ax2 = Axis(fig[1, 2], 
+        xlabel = L"τ",
+        ylabel = L"$ϵ_{conv}$",
+        # xscale = log10,
+        yscale = log10
+        )
+ax3 = Axis(fig[2, 1], 
+        xlabel = L"τ",
+        ylabel = L"$M$",
+        # xscale = log10,
+        # yscale = log10
+        )
+ax4 = Axis(fig[2, 2], 
+        xlabel = L"τ",
+        ylabel = L"$ξ$",
+        # xscale = log10,
+        # yscale = log10
+        )
 
 colors = Makie.wong_colors()
 scatterlines!(ax1, τs, Es, label=L"$Δτ=%$Δτ$", markersize=20)

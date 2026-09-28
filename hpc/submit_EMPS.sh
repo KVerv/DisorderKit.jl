@@ -15,7 +15,7 @@ module purge
 
 cd $STARTDIR
 echo "PBS: $PBS_JOBID"
-echo "Parameters: W = $W, Dmax = $DMAX"
+echo "Parameters: W = $W, Dmax = $DMAX, δ from $DELTA_MIN to $DELTA_MAX ($NDELTA points)"
 
 echo "Job started at : "`date`
 ~/.juliaup/bin/julia +1.12.6 --project=. --threads=1 hpc/EMPS_hpc.jl $W $DMAX
