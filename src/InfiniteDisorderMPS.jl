@@ -6,11 +6,17 @@ struct InfiniteDisorderMPS{T<:AbstractMPSTensor}
     ps::Vector{<:Real}
 end
 
-function InfiniteDisorderMPS(ps::Vector{Float64}, D_dis::Int, D_phys::Int, D::Int; T=ComplexF64)
-    As = [rand(T, ℂ^D⊗ℂ^D_phys,ℂ^D) for i in 1:D_dis]
-    for (p,A) in enumerate(As)
+function InfiniteDisorderMPS(ps::Vector{Float64}, D_dis::Int, D_phys::Int, D::Int; T=ComplexF64, zero_variance::Bool=false)
+    if zero_variance
+        A = rand(T, ℂ^D⊗ℂ^D_phys,ℂ^D)
         Q, _ = qr_compact(A)
-        As[p] = Q
+        As = [Q for i in 1:D_dis]
+    else
+        As = [rand(T, ℂ^D⊗ℂ^D_phys,ℂ^D) for i in 1:D_dis]
+        for (p,A) in enumerate(As)
+            Q, _ = qr_compact(A)
+            As[p] = Q
+        end
     end
     return InfiniteDisorderMPS{typeof(As[1])}(As, ps)
 end
@@ -68,7 +74,7 @@ function left_environment(ρ::InfiniteDisorderMPS)
     f_t = transfer_left(ρ)
     λ, El = eigsolve(f_t, v0, 1, :LM)
 
-    El = El[1]/El[1][1]
+    El = El[1]/(El[1][1])
     return λ[1], El
 end
 
@@ -95,7 +101,8 @@ function energy_density(ρ::InfiniteDisorderMPS, Hs::DisorderMPOHam)
 
     E = 0
     for (p, W) in enumerate(ρ.opp)
-        @tensor ED = l[4; 1] * W[1 2; 5] * Hs.Ds[p][3; 2] * conj(W[4 3; 6]) * r[5; 6]
+        # @tensor ED = l[4; 1] * W[1 2; 5] * Hs.Ds[p][3; 2] * conj(W[4 3; 6]) * r[5; 6]
+         @tensor ED = W[4 2; 5] * Hs.Ds[p][3; 2] * conj(W[4 3; 6]) * r[5; 6]
         E += ρ.ps[p] * ED/λ
         for (q, V) in enumerate(ρ.opp)
             @tensor ECB = W[1 2; 4] * Hs.Cs[p][3; 2 5] * conj(W[1 3; 6]) * V[4 7; 9] * Hs.Bs[p][5 8; 7] * conj(V[6 8; 10]) * r[9;10]
@@ -121,7 +128,6 @@ function expectation_value(ρ::InfiniteDisorderMPS, Os::Vector{<:AbstractBondTen
     _, vr = right_environment(ρ)    
     vl = zeros(ComplexF64, space(ρ.opp[1],3)',space(ρ.opp[1],3)')
 
-    @show space(vl)
     for (p, W) in enumerate(ρ.opp)
         @tensor vlO1[-1; -2] := W[1 3; -2] * Os[p][2; 3] * conj(W[1 2; -1]) 
         vl += ρ.ps[p]*vlO1
@@ -210,6 +216,22 @@ function transfer_mixed2_right(ρ1::InfiniteDisorderMPS, ρ2::InfiniteDisorderMP
     return ftransfer
 end
 
+
+function transfer_mixed2_left(ρ1::InfiniteDisorderMPS, ρ2::InfiniteDisorderMPS)
+    v1space = space(ρ1.opp[1],1)
+    v2space = space(ρ2.opp[1],1)
+    function ftransfer(vl)
+        v = zeros(ComplexF64,v1space' ⊗ v2space, v2space ⊗ v1space')
+        for (p,X) in enumerate(ρ1.opp)
+            Y = ρ2.opp[p]
+            @tensor vp[-1 -2; -3 -4] := Y[1 2; -3] * conj(X[3 2; -4]) * X[4 5; -1] * conj(Y[6 5; -2]) * vl[4 6; 1 3]
+            v += ρ1.ps[p]*vp
+        end
+        return v
+    end
+    return ftransfer
+end
+
 function overlap(ρ1::InfiniteDisorderMPS, ρ2::InfiniteDisorderMPS)
     (length(ρ1.opp) == length(ρ2.opp)) || throw(ArgumentError("ρ1 and ρ2 should have the same amount of disorder sectors"))
     
@@ -242,4 +264,34 @@ function fidelity(ρ1::InfiniteDisorderMPS, ρ2::InfiniteDisorderMPS)
 
     F = ov12/ov22
     return abs(F)
+end
+
+#FIXME: Is this the correct way to compute the entanglement entropy?
+function average_entanglement_entropy(ρ::InfiniteDisorderMPS)
+    λ, l, r = environments(ρ)
+
+    Q = l*r
+    S = eig_vals(Q)
+    S = S ./ sum(S) # Schmidt spectrum normalized to one
+    Se = real.(-sum(S .* log.(S .+ 1e-16)))
+    return Se, real.(S)
+end
+
+
+function fixed_point_moments(ρ::InfiniteDisorderMPS)
+    λ, l1, r1 = environments(ρ)
+
+    f_tr2 = transfer_mixed2_right(ρ, ρ)
+    f_tl2 = transfer_mixed2_left(ρ, ρ)
+    
+    v1space = space(ρ1.opp[1],1)
+    v2space = space(ρ2.opp[1],1)
+    vr0 = ones(ComplexF64,v2space ⊗ v1space', v1space' ⊗ v2space)
+    vl0 = ones(ComplexF64,v1space' ⊗ v2space, v2space ⊗ v1space')
+    λ, vrs = eigsolve(f_tr2, vr0, 1, :LM)
+    λ, vls = eigsolve(f_tl2, vl0, 1, :LM)
+
+    Ls = [l1, vls[1]]
+    Rs = [r1, vrs[1]]
+    return Ls, Rs
 end

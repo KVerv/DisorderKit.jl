@@ -5,6 +5,8 @@ __precompile__(true)
 using TensorKit, MPSKit, MPSKitModels, KrylovKit, BlockTensorKit, MatrixAlgebraKit
 using LinearAlgebra, StatsBase, Zygote, OptimKit, TensorKitManifolds
 using Crayons, TimerOutputs, ProgressBars
+using BenchmarkFreeFermions, Random
+using TensorCrossInterpolation
 
 # export VOMPS_Inversion, invert_mpo 
 # export test_identity, mpo_fidelity
@@ -32,7 +34,9 @@ include("utils.jl")
 include("DisorderMPOHam.jl")
 include("DisorderDensityMatrix.jl")
 include("InfiniteDisorderMPS.jl")
+include("FiniteDisorderMPS.jl")
 include("InfiniteDisorderTangent.jl")
+include("FiniteDisorderTangent.jl")
 include("DisorderMPO.jl")
 include("finalizer.jl")
 # include("partition_function.jl")
@@ -44,8 +48,14 @@ include("truncation_algorithms.jl")
 include("algorithms.jl")
 include("renorm_op.jl")
 include("iDTEBD_groundstate.jl")
+include("FiniteIDTEBD.jl")
+include("FiniteDisorderFilter.jl")
+include("FiniteDisorderFilterTCI.jl")
+include("FiniteSRC.jl")
+include("FiniteNormalizedITE.jl")
 # include("iDTEBD.jl")
 include("models.jl")
+include("FreeFermionEd.jl")
 # include("InfiniteDisorderMPS.jl")
 # include("InfiniteDisorderMPS2.jl")
 # include("InfiniteDisorderTangent2.jl")

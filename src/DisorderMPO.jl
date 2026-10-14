@@ -35,6 +35,9 @@ function approximate(ψ::InfiniteDisorderMPS, ϕ0::InfiniteDisorderMPS; gradtol=
         return target_val, gradp
     end
 
+    # for ϕ in ϕ0.opp
+    #     ϕ += rand(ComplexF64, space(ϕ)) * gradtol
+    # end
     ψ_opt, _, _, _, gradhist = optimize(fg, ϕ0, LBFGS(;maxiter=maxiter,verbosity=verbosity, gradtol = gradtol); retract = retract, inner = inner, (scale!) = scale!, (transport!) = transport!, (add!) = add!, precondition = precondition)
     return ψ_opt, gradhist
 end

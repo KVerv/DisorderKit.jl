@@ -3,29 +3,33 @@ using BlockTensorKit, MatrixAlgebraKit, OptimKit
 
 
 # Define model
-J₀ = 1.0
-δ = 0.0
-W = 0.1
-hs = exp(δ) * [1., exp(-2W)]
-Js = J₀*[1., exp(-2W)]
-w1 = 0.5
-w2 = 1-w1
-ps = [w1*w1, w1*w2, w2*w1, w2*w2]
+# J₀ = 1.0
+# δ = 0.0
+# W = 0.5
+# hs = exp(δ) * [exp(W), exp(-W)]
+# Js = J₀*[exp(W), exp(-W)]
+# w1 = 0.5
+# w2 = 1-w1
+# ps = [w1*w1, w1*w2, w2*w1, w2*w2]
 
 # Js = [1., 1.]
 # hs = [1., 1.]
-# ps = [0.25, 0.25, 0.25, 0.25]
+h0 = 1.0
+hs = [h0*exp(-2), h0]
+Js = [exp(-2)/h0, 1/h0]
+ps = [0.25, 0.25, 0.25, 0.25]
+
 
 Hs = DisorderKit.random_transverse_field_ising(Js, hs)
 
 
-Δτ = 0.02 # Step size for imaginary time evolution
-maxiter = 2000 # Maximum number of iterations for the groundstate algorithm
-D = 1 # State Bonddimension
-Dmax = 4
+Δτ = 0.05 # Step size for imaginary time evolution
+maxiter = 100 # Maximum number of iterations for the groundstate algorithm
+D = 2 # State Bonddimension
+Dmax = 16
 D_dis = length(ps) # Disorder Bonddimension
 D_phys = 2 # Physical dimension
-ψ = DisorderKit.InfiniteDisorderMPS(ps, D_dis, D_phys, D)
+ψ = DisorderKit.InfiniteDisorderMPS(ps, D_dis, D_phys, D; zero_variance = false)
 
 # U = DisorderKit.time_evolution_MPO(Hs, Δτ; N=2)
 # ψ = U*ψ
@@ -42,8 +46,9 @@ function my_finalize!(ρ, Hs)
 end
 
 myFinalizer = DisorderKit.Finalizer(Tuple{Float64, Float64, Float64, Vector{Float64}}, my_finalize!)
-
-ψgs, data, info = DisorderKit.groundstate(ψ, Hs, Δτ, DisorderKit.Groundstate_iDTEBD(1e-6, 1e-7, maxiter, 5, TimerOutput(), myFinalizer), maxD = Dmax)
+alg = DisorderKit.Groundstate_iDTEBD(1e-7, 1e-7, maxiter, 5, TimerOutput(), myFinalizer)
+ψgs, data, info = DisorderKit.groundstate(ψ, Hs, Δτ, alg, maxD = Dmax)
+ψgs2 = DisorderKit.groundstate!(ψ, Hs; gradtol = 1e-6, verbosity=5, maxiter = 1000)
 
 Es = getindex.(data, 1)
 Ms = getindex.(data, 2)
@@ -57,37 +62,37 @@ M = Ms[end]
 
 @show (E, ξ)
 
-# set_theme!(theme_latexfonts())
-# fig = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
-# ax1 = Axis(fig[1, 1], 
-#         xlabel = L"τ",
-#         ylabel = L"$E$",
-#         # xscale = log10,
-#         # yscale = log10
-#         )
-# ax2 = Axis(fig[1, 2], 
-#         xlabel = L"τ",
-#         ylabel = L"$ϵ_{conv}$",
-#         # xscale = log10,
-#         yscale = log10
-#         )
-# ax3 = Axis(fig[2, 1], 
-#         xlabel = L"τ",
-#         ylabel = L"$M$",
-#         # xscale = log10,
-#         # yscale = log10
-#         )
-# ax4 = Axis(fig[2, 2], 
-#         xlabel = L"τ",
-#         ylabel = L"$ξ$",
-#         # xscale = log10,
-#         # yscale = log10
-#         )
+set_theme!(theme_latexfonts())
+fig = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
+ax1 = Axis(fig[1, 1], 
+        xlabel = L"τ",
+        ylabel = L"$E$",
+        # xscale = log10,
+        # yscale = log10
+        )
+ax2 = Axis(fig[1, 2], 
+        xlabel = L"τ",
+        ylabel = L"$ϵ_{conv}$",
+        # xscale = log10,
+        yscale = log10
+        )
+ax3 = Axis(fig[2, 1], 
+        xlabel = L"τ",
+        ylabel = L"$M$",
+        # xscale = log10,
+        # yscale = log10
+        )
+ax4 = Axis(fig[2, 2], 
+        xlabel = L"τ",
+        ylabel = L"$ξ$",
+        # xscale = log10,
+        # yscale = log10
+        )
 
 colors = Makie.wong_colors()
 scatterlines!(ax1, τs, Es, label=L"$Δτ=%$Δτ$", markersize=20)
 scatterlines!(ax2, τs[1:length(τs)-1], info.ϵsconv[1:length(τs)-1], label=L"$ϵ_{conv}$", markersize=20)
-scatterlines!(ax3, τs, Ms, label=L"$ϵ_{acc}$", markersize=20)
+scatterlines!(ax3, τs, abs.(Ms), label=L"$ϵ_{acc}$", markersize=20)
 scatterlines!(ax4, τs, ξs, label=L"$ϵ_{acc}$", markersize=20)
 # lines!(ax1, τs, fill(EF, length(τs)), color=:red, linestyle=:dash, label=L"$E_{gs}$")
 
