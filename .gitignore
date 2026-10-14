@@ -3,4 +3,5 @@ tmpdata
 tmp.jl
 plots
 data
-plot_makelogs
+logs
+disorder_itebd/
