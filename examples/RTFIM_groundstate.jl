@@ -21,19 +21,25 @@ using BlockTensorKit, MatrixAlgebraKit, OptimKit
 # w2 = 1-w1
 # ps = [1.]
 
-J₀ = 1.0
-δ = 0.0
-W = 0.1
-# h₀ = exp(2*δ)
-# hs = [0.2113*h₀, 0.7887*h₀]
-# Js = J₀ * [0.2113, 0.7887]
-hs = exp(δ) * [1., exp(-2W)]
-Js = [1., exp(-2W)]
-# hs = [1., 1.5]
-# Js = [1., 1.5]
-w1 = 0.5
-w2 = 1-w1
-ps = [w1*w1, w1*w2, w2*w1, w2*w2]
+# J₀ = 1.0
+# δ = 0.0
+# W = 0.1
+# # h₀ = exp(2*δ)
+# # hs = [0.2113*h₀, 0.7887*h₀]
+# # Js = J₀ * [0.2113, 0.7887]
+# hs = exp(δ) * [1., exp(-2W)]
+# Js = [1., exp(-2W)]
+# # hs = [1., 1.5]
+# # Js = [1., 1.5]
+# w1 = 0.5
+# w2 = 1-w1
+# ps = [w1*w1, w1*w2, w2*w1, w2*w2]
+
+h0 = 1.0
+hs = [h0*exp(-2), h0]
+Js = [exp(-2)/h0, 1/h0]
+ps = [0.25, 0.25, 0.25, 0.25]
+
 
 Hs = DisorderKit.random_transverse_field_ising(Js, hs)
 
@@ -91,13 +97,13 @@ alg_trunc_state = DisorderKit.StandardTruncation(; trunc_method = MatrixAlgebraK
 alg_evo = DisorderKit.Groundstate_iDTEBD(alg_trunc_state, alg_trunc_norm; convtol = 1e-9, maxiter = maxiter, verbosity = 2, timer_output = TimerOutput(), finalizer = myFinalizer)
 
 # Construct initial random state
-A = spzeros(ComplexF64, BlockTensorKit.boxplus(ℂ^1) ⊗ BlockTensorKit.boxplus(ℂ^2) ⊗ BlockTensorKit.boxplus(fill(ℂ^1, length(ps))...), BlockTensorKit.boxplus(fill(ℂ^1, length(ps))...) ⊗ BlockTensorKit.boxplus(ℂ^1))
-Aᵢ = rand(ComplexF64, ℂ^1 ⊗ ℂ^2 ⊗ ℂ^1, ℂ^1 ⊗ ℂ^1)
-for i in eachindex(ps)
-        A[1, 1, i, i, 1] = Aᵢ # Same tensor for each disorder sector
-end
+# A = spzeros(ComplexF64, BlockTensorKit.boxplus(ℂ^1) ⊗ BlockTensorKit.boxplus(ℂ^2) ⊗ BlockTensorKit.boxplus(fill(ℂ^1, length(ps))...), BlockTensorKit.boxplus(fill(ℂ^1, length(ps))...) ⊗ BlockTensorKit.boxplus(ℂ^1))
+# Aᵢ = rand(ComplexF64, ℂ^1 ⊗ ℂ^2 ⊗ ℂ^1, ℂ^1 ⊗ ℂ^1)
+# for i in eachindex(ps)
+#         A[1, 1, i, i, 1] = Aᵢ # Same tensor for each disorder sector
+# end
 
-ρ₀ = DisorderKit.InfiniteDisorderMPS([A], ps)
+ρ₀ = DisorderKit.InfiniteDisorderDensityMatrix(ps, ℂ^2, ℂ^1, ℂ^2)
 ρ₀ = DisorderKit.gauge(ρ₀)
 
 # Compute the groundstate
@@ -116,32 +122,32 @@ S = Ss[end]
 
 @show (E, ξ, S)
 
-# set_theme!(theme_latexfonts())
-# fig = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
-# ax1 = Axis(fig[1, 1], 
-#         xlabel = L"τ",
-#         ylabel = L"$E$",
-#         xscale = log10,
-#         # yscale = log10
-#         )
-# ax2 = Axis(fig[1, 2], 
-#         xlabel = L"τ",
-#         ylabel = L"$ϵ_{conv}$",
-#         xscale = log10,
-#         yscale = log10
-#         )
-# ax3 = Axis(fig[2, 1], 
-#         xlabel = L"τ",
-#         ylabel = L"$M$",
-#         # xscale = log10,
-#         # yscale = log10
-#         )
-# ax4 = Axis(fig[2, 2], 
-#         xlabel = L"τ",
-#         ylabel = L"$ξ$",
-#         # xscale = log10,
-#         # yscale = log10
-#         )
+set_theme!(theme_latexfonts())
+fig = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 2000))
+ax1 = Axis(fig[1, 1], 
+        xlabel = L"τ",
+        ylabel = L"$E$",
+        xscale = log10,
+        # yscale = log10
+        )
+ax2 = Axis(fig[1, 2], 
+        xlabel = L"τ",
+        ylabel = L"$ϵ_{conv}$",
+        xscale = log10,
+        yscale = log10
+        )
+ax3 = Axis(fig[2, 1], 
+        xlabel = L"τ",
+        ylabel = L"$M$",
+        # xscale = log10,
+        # yscale = log10
+        )
+ax4 = Axis(fig[2, 2], 
+        xlabel = L"τ",
+        ylabel = L"$ξ$",
+        # xscale = log10,
+        # yscale = log10
+        )
 
 colors = Makie.wong_colors()
 scatterlines!(ax1, τs, Es, label=L"$Δτ=%$Δτ$", markersize=20)

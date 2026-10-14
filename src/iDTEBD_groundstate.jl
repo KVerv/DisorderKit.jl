@@ -1,15 +1,15 @@
 # Algorithm for computing the groundstate of a disordered system through imaginary time evolution
-# struct GroundstateInfo
-#     ϵsconv::Vector{Float64}
-#     ϵsent::Vector{Float64}
-#     ϵsz::Vector{Float64}
-#     ρ_trunc_err::Vector{Float64}
-#     R_trunc_err::Vector{Float64}
+struct GroundstateInfo
+    ϵsconv::Vector{Float64}
+    ϵsent::Vector{Float64}
+    ϵsz::Vector{Float64}
+    ρ_trunc_err::Vector{Float64}
+    R_trunc_err::Vector{Float64}
 
-#     function GroundstateInfo(maxiter::Int)
-#         return new(Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter))
-#     end
-# end
+    function GroundstateInfo(maxiter::Int)
+        return new(Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter))
+    end
+end
 
 # function groundstate(ρ0::InfiniteDisorderMPS, Hs::DisorderMPOHam, dτ::Float64, alg::Groundstate_iDTEBD)
 #     data = Vector{alg.finalizer.E}()
@@ -73,7 +73,7 @@
 # end
 
 
-# function groundstate(ρ0::InfiniteDisorderMPS, Hs::DisorderMPOHam, dτ::Float64, alg::Groundstate_iDTEBD)
+# function groundstate(ρ0::InfiniteDisorderDensityMatrix, Hs::DisorderMPOHam, dτ::Float64, alg::Groundstate_iDTEBD)
 #     data = Vector{alg.finalizer.E}()
 #     info = GroundstateInfo(alg.maxiter)
 
@@ -131,14 +131,14 @@
 #     return ρs, data, info
 # end
 
-struct GroundstateInfo
-    ϵsconv::Vector{Float64}
-    Fid_err::Vector{Float64}
+# struct GroundstateInfo
+#     ϵsconv::Vector{Float64}
+#     Fid_err::Vector{Float64}
 
-    function GroundstateInfo(maxiter::Int)
-        return new(Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter))
-    end
-end
+#     function GroundstateInfo(maxiter::Int)
+#         return new(Vector{Float64}(undef, maxiter), Vector{Float64}(undef, maxiter))
+#     end
+# end
 
 function groundstate(ψ0::InfiniteDisorderMPS, Hs::DisorderMPOHam, dτ::Float64, alg::Groundstate_iDTEBD; maxD::Int = 2)
     data = Vector{alg.finalizer.E}()
@@ -183,7 +183,8 @@ function groundstate(ψ0::InfiniteDisorderMPS, Hs::DisorderMPOHam, dτ::Float64,
 
         @timeit alg.timer_output "energy_density" E = DisorderKit.energy_density(ψ, Hs)
         dE = (abs(Eprev - E)/dτ)
-        ϵ_conv = Fid_err/dτ^2
+        # ϵ_conv = Fid_err/dτ^2
+        ϵ_conv = dE
         Eprev = E
         # @timeit alg.timer_output "trace_distance" ϵ_conv = average_trace_distance(ρs, ρprev)/dτ^2
 

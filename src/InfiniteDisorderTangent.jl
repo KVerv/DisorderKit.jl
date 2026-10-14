@@ -80,9 +80,19 @@ function precondition(ρ::InfiniteDisorderMPS, ξ::InfiniteDisorderTangent)
     return InfiniteDisorderTangent(ξ.ρ, newtangents)
 end
 
+function Ecost_func(Hs::DisorderMPOHam)
+    function fg(ρ::InfiniteDisorderMPS)
+        E = DisorderKit.energy_density(ρ, Hs)
+        grad = gradient(x -> DisorderKit.energy_density(x, Hs), ρ)
+        gradp = project(grad[1].opp, ρ)
 
-function groundstate!(ρ::InfiniteDisorderMPS, Hs::DisorderMPOHam; λ::Real=1, gradtol = 1e-2, verbosity=1, maxiter = 1000)
-    fg = icost_func(Hs; λ = λ)
+        return E, gradp
+    end
+    return fg
+end
+
+function groundstate!(ρ::InfiniteDisorderMPS, Hs::DisorderMPOHam; gradtol = 1e-2, verbosity=1, maxiter = 1000)
+    fg = Ecost_func(Hs)
     # ρ_opt, _, _, _, gradhist = optimize(fg, ρ, GradientDescent(;maxiter=maxiter,verbosity=verbosity, gradtol = gradtol); retract = retract, inner = inner, (scale!) = scale!, precondition = precondition)
     # ρ_opt, _, _, _, gradhist = optimize(fg, ρ, ConjugateGradient(;maxiter=maxiter,verbosity=verbosity, gradtol = gradtol); retract = retract, inner = inner, (scale!) = scale!, (transport!) = transport!, (add!) = add!, precondition = precondition)
     ρ_opt, _, _, _, gradhist = optimize(fg, ρ, LBFGS(;maxiter=maxiter,verbosity=verbosity, gradtol = gradtol); retract = retract, inner = inner, (scale!) = scale!, (transport!) = transport!, (add!) = add!)#, precondition = precondition)

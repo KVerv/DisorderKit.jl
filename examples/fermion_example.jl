@@ -50,6 +50,7 @@ function majorana_ED(L::Int, Js::Vector{Float64}, hs::Vector{Float64}, ph::Dict{
     hconfigs = all_combinations(hs, L)
     GEs = []
     Ms = []
+    @show length(Jconfigs), length(hconfigs)
     if n_samples < length(Jconfigs)*length(hconfigs)
         sampled_indices = rand(1:length(Jconfigs)*length(hconfigs), n_samples)
         sampled_Jh_configs = []
@@ -127,11 +128,16 @@ b = 1.0
 # ph = Dict(hs[1] => w1, hs[2] => w2)
 # pJ = Dict(Js[1] => w1, Js[2] => w2)
 
+# J₀ = 1.0
+# δ = 0.0
+# W = 0.1
+# hs = exp(δ) * [1., exp(-2W)]
+# Js = J₀*[1., exp(-2W)]
 J₀ = 1.0
 δ = 0.0
 W = 0.1
 hs = exp(δ) * [1., exp(-2W)]
-Js = J₀*[1., exp(-2W)]
+Js = J₀ * [1., exp(-2W)]
 w1 = 0.5
 w2 = 1-w1
 ps = [w1*w1, w1*w2, w2*w1, w2*w2]
@@ -152,10 +158,10 @@ pJ = Dict(Js[1] => w1, Js[2] => w2)
 # hs = Vector(a:(b-a)/(N-1):b)
 # Js = [b]
 # hs = [a]
-Ls = [4, 6, 8, 10, 12, 14]
+# Ls = [4, 6, 8, 10, 12, 14]
 # Ls = [3, 5, 7, 9, 11, 13, 15]
 # Ls = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
-# Ls = [6]
+Ls = [6]
 
 result = majorana_ED.(Ls, Ref(Js), Ref(hs), Ref(ph), Ref(pJ); n_samples=1000000)
 FFs = first.(result)

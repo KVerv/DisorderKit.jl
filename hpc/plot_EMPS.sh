@@ -2,17 +2,17 @@
 #
 # Submit hpc/plot_EMPS.jl as a job. Run on the login node from the repo root:
 #   bash hpc/plot_EMPS.sh                                  # plot the default data folder
-#   FOLDER=$VSC_DATA/data/EMPS_phase_line/dtau0.05_maxiter20 bash hpc/plot_EMPS.sh
-#   PLOT_MODE=fixW bash hpc/plot_EMPS.sh                   # one figure per W (fixD: one per Dmax, all: default)
+#   FOLDER=$VSC_DATA/data/RTFIM_phase_line/dtau0.05_maxiter20 bash hpc/plot_EMPS.sh
+#   MFIT_SIDE=both bash hpc/plot_EMPS.sh                   # δ side for the log|M| vs log|δ| fits (neg: default, pos, both)
 #   DRYRUN=1 bash hpc/plot_EMPS.sh                         # only print the qsub command and job
 #
-# Plots end up in <PLOT_DIR>/EMPS_phase_line/<data folder name>/ (PLOT_DIR defaults to $VSC_DATA/plots).
+# Plots end up in <PLOT_DIR>/RTFIM_phase_line/<data folder name>/ (PLOT_DIR defaults to $VSC_DATA/plots).
 
-WALLTIME="1:00:00"
+WALLTIME="0:30:00"
 MEM="8GB"
 NODES=1
 PPN=1   # CPUs per node
-CLUSTER="shinx"
+CLUSTER="skiddo"
 
 module swap cluster/$CLUSTER   # qsub submits to the currently loaded cluster module
 
