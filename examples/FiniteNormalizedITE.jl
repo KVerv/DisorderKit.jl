@@ -8,14 +8,17 @@ W = 0.1
 hs = exp(δ) * [1., exp(-2W)]
 Js = J₀ * [1., exp(-2W)]
 ps = [0.25, 0.25, 0.25, 0.25]
+# hs = [1.]
+# Js = [1.]
+# ps = [1.]
 
 Hs = DisorderKit.random_transverse_field_ising(Js, hs)
 
 
 Δτ = 0.02 # Step size for imaginary time evolution
-maxiter = 100 # Maximum number of time steps
-L = 20 # System size
-Dmax = [100 => 8, 200 => 16, 300 => 32] # Cap schedule (number of steps => cap of partition, filter and state), the last cap is kept
+maxiter = 300 # Maximum number of time steps
+L = 10 # System size
+Dmax = [300 => 30, 100 => 16, 100 => 32] # Cap schedule (number of steps => cap of partition, filter and state), the last cap is kept
 ψ0 = DisorderKit.plus_state(ps, L) # |+x⟩ on every site, every disorder word normalized
 
 Z = TensorMap([1. 0.; 0. -1.], ℂ^2, ℂ^2)
@@ -44,10 +47,9 @@ Ms = real.(DisorderKit.expectation_value(ψgs, Z)) # ⟨Zᵢ⟩ on every site
 Mxs = real.(DisorderKit.expectation_value(ψgs, X)) # ⟨Xᵢ⟩ on every site
 M = sum(abs.(Ms))/L
 
-# Spin-spin correlation function from site i0
-i0 = 1
-j0 = L
-Cs = DisorderKit.correlator(ψgs, Z, Z, i0, j0) # ⟨Z_{i0} Z_{i0+r}⟩, r = 1..j0-i0
+# Bulk spin-spin correlation function ⟨Z_i Z_{i+r}⟩, centred on the chain: i = (L-r)÷2
+pairs = [((L-r)÷2, (L-r)÷2 + r) for r in 1:round(Int, L/2)]
+Cs = [DisorderKit.correlator(ψgs, Z, Z, i, j)[end] for (i, j) in pairs]
 rs = 1:length(Cs)
 
 # Raw energy density after an additional normalization filter (not divided by the global norm)
@@ -56,14 +58,23 @@ E_filtered, N_filtered, _ = DisorderKit.filter_normalized_energy_density(ψgs, H
 @show (E, E_filtered, N_filtered, M)
 
 # Free fermion reference (exact enumeration of the disorder configurations for small L)
-n_samples = 100000
-data_FF = DisorderKit.sample_RTFIM(L, Js, hs; ps=ps, n_samples=n_samples, β=Inf, i0=i0)
+n_samples = 1000000
+data_FF = DisorderKit.sample_RTFIM(L, Js, hs; ps=ps, n_samples=n_samples, β=Inf, pairs=pairs)
 EFF = data_FF.E
 @show abs(E-EFF), abs(E_filtered-EFF)
 
 # Disorder averaged entanglement entropy on every bond (enumerated exactly when 4^L ≤ n_samples)
 Ss, Ss_err = DisorderKit.average_entanglement_entropy(ψgs; n_samples=10000)
 @show maximum(abs.(Ss .- data_FF.Ss))
+
+# Calabrese-Cardy fit for an open chain: S(k) = c/6 log[(2L/π) sin(πk/L)] + s₀
+ks = 1:L-1
+chord = log.((2L/π) .* sin.(π .* ks ./ L)) ./ 6
+kfit = 3:L-3 # drop bonds near the edges where boundary corrections dominate
+c_fit, s0_fit = hcat(chord[kfit], ones(length(kfit))) \ data_FF.Ss[kfit]
+@show c_fit # compare with c = 1/2 (clean Ising) and c_eff = ln(2)/2 (IRFP)
+
+intersection_point = 4
 
 set_theme!(theme_latexfonts())
 fig = Figure(backgroundcolor=:white, fontsize=40, size=(3000, 4000))
@@ -113,20 +124,21 @@ lines!(ax4, τs, info.caps, label=L"$\mathrm{cap}$", color=:black, linestyle=:da
 scatterlines!(ax5, 1:L, Ms, label=L"$\langle Z_i \rangle$", markersize=20)
 scatterlines!(ax5, 1:L, Mxs, label=L"$\langle X_i \rangle$", markersize=20)
 scatterlines!(ax5, 1:L, data_FF.Xs, label=L"$\langle X_i \rangle_{FF}$", linestyle=:dash, markersize=20)
-scatterlines!(ax6, rs, Cs, label=L"$\langle Z_{%$i0} Z_{%$i0+r} \rangle$", markersize=20)
+scatterlines!(ax6, rs, Cs, label=L"$\langle Z_{(L-r)/2} Z_{(L+r)/2} \rangle$", markersize=20)
 scatterlines!(ax6, rs, data_FF.ZZs, label=L"$\mathrm{FF}$", linestyle=:dash, markersize=20)
-lines!(ax6, rs, abs(data_FF.ZZs[1]) .* rs .^ (-0.25), label=L"$r^{-1/4}\ \mathrm{(clean)}$", color=:black, linestyle=:dot, linewidth=3)
-lines!(ax6, rs, abs(data_FF.ZZs[1]) .* rs .^ (-0.38), label=L"$r^{-0.38}\ \mathrm{(IRFP)}$", color=:gray, linestyle=:dashdot, linewidth=3)
+lines!(ax6, rs, abs(data_FF.ZZs[intersection_point]) .* (rs ./ intersection_point) .^ (-0.25), label=L"$r^{-1/4}\ \mathrm{(clean)}$", color=:black, linestyle=:dot, linewidth=3)
+lines!(ax6, rs, abs(data_FF.ZZs[intersection_point]) .* (rs ./ intersection_point) .^ (-0.38), label=L"$r^{-0.38}\ \mathrm{(IRFP)}$", color=:gray, linestyle=:dashdot, linewidth=3)
 errorbars!(ax7, 1:L-1, Ss, Ss_err, whiskerwidth=10)
 scatterlines!(ax7, 1:L-1, Ss, label=L"\mathrm{MPS}", markersize=20)
 errorbars!(ax7, 1:L-1, data_FF.Ss, data_FF.Ss_err, whiskerwidth=10)
 scatterlines!(ax7, 1:L-1, data_FF.Ss, label=L"\mathrm{FF}", linestyle=:dash, markersize=20)
+lines!(ax7, ks, c_fit .* chord .+ s0_fit, label=L"$\mathrm{CC},\ c=%$(round(c_fit, digits=3))$", color=:black, linestyle=:dot, linewidth=3)
 
 axislegend(ax1, position=:rt)
 axislegend(ax3, position=:rt)
 axislegend(ax4, position=:rb)
 axislegend(ax5, position=:rt)
 axislegend(ax6, position=:rt)
-axislegend(ax7, position=:rt)
+axislegend(ax7, position=:cb)
 
 fig

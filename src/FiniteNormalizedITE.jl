@@ -1,6 +1,6 @@
 # Groundstate of a FiniteDisorderMPS through disorder-normalized imaginary time evolution.
 # Every step works on the separate layers A (state) and W (time evolution MPO), Us ψ is never formed:
-# (1) compress the prior-weighted partition function √P(w) Z(w) of Us ψ with SRC (rank ≤ cap),
+# (1) compress the prior-weighted partition function √P(w) Z(w) of Us ψ with SRC (rank ≤ cap D_max),
 # (2) construct a normalization filter f(w) ≈ |Z(w)|^(-1/2) from a nested cross of the compressed partition,
 # (3) compress f ⊙ (Us ψ) with SRC in the prior-weighted joint metric from the layers A, W, f and round to the cap.
 # Every conditional state ψ_w stays normalized, the tensors are not isometric.
@@ -15,14 +15,15 @@ end
 bond_dimensions(ψ::FiniteDisorderMPS) = [dim(space(ψ[i,1], 3)) for i in 1:length(ψ)-1]
 
 struct Groundstate_FiniteNormalizedITE <: AbstractAlgorithm
-    maxD::Vector{Pair{Int, Int}}    # stage schedule (number of steps => cap), the last cap is kept afterwards
+    maxD::Vector{Pair{Int, Int}}    # stage schedule (number of steps => cap D_max), the last cap is kept afterwards
     order::Int
     partition_rtol::Float64
     cross_width::Int
     cross_cycles::Int
     filter_tail_tol::Float64
     src_rtol::Float64
-    src_sketch_cap::Int
+    src_sketch_cap::Int             # upper bound of the state sketch width per cut
+    src_oversampling::Int           # state sketch width per cut ≤ 2 D_max + src_oversampling
     src_rank_threshold::Float64
     round_tol::Float64
     n_assess::Int
@@ -38,6 +39,7 @@ struct Groundstate_FiniteNormalizedITE <: AbstractAlgorithm
     function Groundstate_FiniteNormalizedITE(; maxD::Union{Int, Vector{Pair{Int, Int}}} = 16, order::Int = 4,
                                              partition_rtol::Float64 = 1e-10, cross_width::Int = 32, cross_cycles::Int = 2,
                                              filter_tail_tol::Float64 = 1e-8, src_rtol::Float64 = 1e-11, src_sketch_cap::Int = 128,
+                                             src_oversampling::Int = 10,
                                              src_rank_threshold::Float64 = 1e-13, round_tol::Float64 = 1e-10, n_assess::Int = 128,
                                              post_warn::Float64 = 1e-3, seed::Int = 20266001, convtol::Float64 = 1e-8, maxiter::Int = 100,
                                              verbosity::Int = 0, timer_output::TimerOutput = TimerOutput(),
@@ -45,7 +47,7 @@ struct Groundstate_FiniteNormalizedITE <: AbstractAlgorithm
         schedule = maxD isa Int ? [1 => maxD] : maxD
         (!isempty(schedule) && all(s -> s.first >= 1 && s.second >= 1, schedule)) || throw(ArgumentError("invalid cap schedule"))
         return new(schedule, order, partition_rtol, cross_width, cross_cycles, filter_tail_tol, src_rtol, src_sketch_cap,
-                   src_rank_threshold, round_tol, n_assess, post_warn, seed, convtol, maxiter, verbosity, timer_output, finalizer)
+                   src_oversampling, src_rank_threshold, round_tol, n_assess, post_warn, seed, convtol, maxiter, verbosity, timer_output, finalizer)
     end
 end
 
@@ -120,7 +122,7 @@ function groundstate(ψ0::FiniteDisorderMPS, Hs::DisorderMPOHam, dτ::Float64, a
         (alg.verbosity > 0) && (@info(crayon"magenta"("Compress")))
         # Warm start from the previous sketch widths only within a stage
         previous_widths = (cap == previous_cap) ? widths : nothing
-        @timeit to "src_compress" ψ, src = src_compress(ψ, Us, F; maxD = cap, rtol = alg.src_rtol, sketch_cap = alg.src_sketch_cap, rank_threshold = alg.src_rank_threshold, round_tol = alg.round_tol, previous_widths = previous_widths, rng = rng(:physical), to = to)
+        @timeit to "src_compress" ψ, src = src_compress(ψ, Us, F; maxD = cap, rtol = alg.src_rtol, sketch_cap = min(alg.src_sketch_cap, 2cap + alg.src_oversampling), rank_threshold = alg.src_rank_threshold, round_tol = alg.round_tol, previous_widths = previous_widths, rng = rng(:physical), to = to)
         widths, previous_cap = src.sketch_widths, cap
         (alg.verbosity > 1) && (@info(crayon"magenta"("Bond dimensions: before rounding = $(src.pre_round_ranks), after rounding = $(bond_dimensions(ψ)), rounding error = $(src.rounding_error)")))
 
@@ -155,6 +157,11 @@ function groundstate(ψ0::FiniteDisorderMPS, Hs::DisorderMPOHam, dτ::Float64, a
     end
     return ψ, data, info
 end
+
+# Dense layers of the state and the filter with the sector as last index: A[a, t, b, u], f[x, y, u]
+_stack(Ts) = cat([ComplexF64.(convert(Array, T)) for T in Ts]...; dims = numind(first(Ts))+1)
+_dense_layers(ψ::FiniteDisorderMPS) = [_stack(ψ[i]) for i in 1:length(ψ)]
+_dense_layers(F::FiniteDisorderFilter) = [_stack(F[i]) for i in 1:length(F)]
 
 # Raw energy density of the filtered state, Σ_w P(w) f(w)² ⟨ψ_w|H_w|ψ_w⟩ / L, and its norm Σ_w P(w) f(w)² Z(w),
 # contracted with the layers A, f and H kept separate. The energy is not divided by the norm.

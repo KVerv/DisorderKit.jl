@@ -286,24 +286,24 @@ function fidelity(ρ1::FiniteDisorderMPS, ρ2::FiniteDisorderMPS)
     return abs(F)
 end
 
-# Entanglement entropy S_w(k) of the conditional state ψ_w of word w on every bond k = 1..L-1, from the dense tensors
-# A = _dense(ρ). The scaled environments of _advance (FiniteDisorderFilter.jl) are Gram matrices [bra, ket] of the
-# left (sites 1..k) and right (sites k+1..L) Schmidt vectors; the Schmidt spectrum is eig(transpose(r) * l) normalized
-# to one, so ψ_w does not have to be normalized
-function conditional_entanglement_entropy(A::Vector{<:Vector{<:Array{ComplexF64, 3}}}, word::AbstractVector{Int})
+# Entanglement entropy S_w(k) of the conditional state ψ_w of word w on every bond k = 1..L-1. The scaled norm
+# environments of _advance (FiniteDisorderFilter.jl) are the Gram matrices l[bra; ket] and r[ket; bra] of the left
+# (sites 1..k) and right (sites k+1..L) Schmidt vectors; the Schmidt spectrum is eig(r * l) normalized to one, so ψ_w
+# does not have to be normalized
+function conditional_entanglement_entropy(ρ::FiniteDisorderMPS, word::AbstractVector{Int})
     L = length(word)
-    lefts = Vector{Tuple{Matrix{ComplexF64}, Float64}}(undef, L)
-    rights = Vector{Tuple{Matrix{ComplexF64}, Float64}}(undef, L+1)
-    lefts[1] = _boundary_environment
+    lefts = Vector{Any}(undef, L)
+    rights = Vector{Any}(undef, L+1)
+    lefts[1] = _boundary_environment(space(ρ[1, 1], 1))
     for i in 1:L-1
-        lefts[i+1] = _advance(lefts[i], A[i][word[i]])
+        lefts[i+1] = _advance(lefts[i], ρ[i, word[i]])
     end
-    rights[L+1] = _boundary_environment
+    rights[L+1] = _boundary_environment(domain(ρ[L, 1])[1])
     for i in L:-1:2
-        rights[i] = _advance(rights[i+1], A[i][word[i]]; right = true)
+        rights[i] = _advance(rights[i+1], ρ[i, word[i]]; right = true)
     end
     return map(1:L-1) do k
-        λ = max.(real.(eigvals(transpose(rights[k+1][1]) * lefts[k+1][1])), 0.0)
+        λ = max.(real.(eigvals(convert(Array, rights[k+1][1] * lefts[k+1][1]))), 0.0)
         λ ./= sum(λ)
         -sum(x -> x > 0 ? x * log(x) : 0.0, λ)
     end
@@ -313,19 +313,18 @@ end
 # w = (p₁…p_L) with pᵢ ~ ρ.ps iid. If there are at most n_samples words they are all enumerated (exact, zero error),
 # otherwise n_samples words are sampled
 function average_entanglement_entropy(ρ::FiniteDisorderMPS; n_samples::Int = 1000, rng::AbstractRNG = Random.default_rng())
-    A = _dense(ρ)
     L, d = length(ρ), length(ρ.ps)
     if float(d)^L <= n_samples
         S_avg = zeros(Float64, L-1)
         for word in Iterators.product(fill(1:d, L)...)
             w = prod(ρ.ps[p] for p in word)
             iszero(w) && continue
-            S_avg .+= w .* conditional_entanglement_entropy(A, collect(word))
+            S_avg .+= w .* conditional_entanglement_entropy(ρ, collect(word))
         end
         return S_avg, zeros(Float64, L-1)
     end
 
-    Ss = reduce(hcat, [conditional_entanglement_entropy(A, sample(rng, 1:d, Weights(ρ.ps), L)) for _ in 1:n_samples])
+    Ss = reduce(hcat, [conditional_entanglement_entropy(ρ, sample(rng, 1:d, Weights(ρ.ps), L)) for _ in 1:n_samples])
     return vec(mean(Ss; dims=2)), vec(std(Ss; dims=2)) ./ sqrt(n_samples)
 end
 
