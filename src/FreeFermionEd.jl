@@ -21,9 +21,11 @@ function RTFIM_hopping(hs::Vector{<:Real}, Js::Vector{<:Real})
     return -H_BdG
 end
 
-# Energy, transverse magnetisation ⟨Xᵢ⟩ and spin-spin correlator ⟨Z_{i0} Z_{i0+r}⟩ (r = 1..L-i0)
+# Energy, transverse magnetisation ⟨Xᵢ⟩ and spin-spin correlator ⟨Zᵢ Zⱼ⟩ for every (i, j) in pairs
+# (default ⟨Z_{i0} Z_{i0+r}⟩, r = 1..L-i0)
 # of the RTFIM for a single configuration (hs, Js) at inverse temperature β
-function RTFIM_free_fermion(hs::Vector{<:Real}, Js::Vector{<:Real}; β::Real=Inf, i0::Int=1)
+function RTFIM_free_fermion(hs::Vector{<:Real}, Js::Vector{<:Real}; β::Real=Inf, i0::Int=1,
+                            pairs::Vector{Tuple{Int,Int}}=[(i0, i0+r) for r in 1:length(hs)-i0])
     L = length(hs)
     T = RTFIM_hopping(hs, Js)
 
@@ -44,8 +46,8 @@ function RTFIM_free_fermion(hs::Vector{<:Real}, Js::Vector{<:Real}; β::Real=Inf
     # Majorana correlator ⟨Bₖ Aₗ⟩ with Aₖ = cₖ† + cₖ, Bₖ = cₖ† - cₖ
     BA(k, l) = c_dagc_dag(k, l) + c_dagc(k, l) - cc_dag(k, l) - cc(k, l)
     # Zᵢ Zⱼ = ∏_{k=i}^{j-1} Bₖ Aₖ₊₁, evaluated with Wick's theorem as a determinant
-    ZZs = map(1:L-i0) do r
-        M = [BA(k, l+1) for k in i0:i0+r-1, l in i0:i0+r-1]
+    ZZs = map(pairs) do (i, j)
+        M = [BA(k, l+1) for k in i:j-1, l in i:j-1]
         real(det(M))
     end
 
@@ -97,15 +99,16 @@ end
 # Disorder average of the RTFIM on a chain of length L. If the number of distinct configurations is at most
 # n_samples, every configuration is enumerated and the average is exact (zero errors); otherwise n_samples
 # configurations are sampled
-function sample_RTFIM(L::Int, Js::Vector{<:Real}, hs::Vector{<:Real}; ps::Vector{<:Real}=fill(1/(length(Js)*length(hs)), length(Js)*length(hs)), n_samples::Int=1000, β::Real=Inf, i0::Int=L÷4)
+function sample_RTFIM(L::Int, Js::Vector{<:Real}, hs::Vector{<:Real}; ps::Vector{<:Real}=fill(1/(length(Js)*length(hs)), length(Js)*length(hs)), n_samples::Int=1000, β::Real=Inf, i0::Int=L÷4,
+                     pairs::Vector{Tuple{Int,Int}}=[(i0, i0+r) for r in 1:L-i0])
     n_conf = float(length(ps))^(L-1) * length(hs)
     if n_conf <= n_samples
         E_avg = 0.0
         X_avg = zeros(Float64, L)
-        ZZ_avg = zeros(Float64, L-i0)
+        ZZ_avg = zeros(Float64, length(pairs))
         S_avg = zeros(Float64, L-1)
         for (w, hconf, Jconf) in ProgressBar(enumerate_RTFIM_configurations(L, Js, hs; ps=ps))
-            E, X, ZZ, S = RTFIM_free_fermion(hconf, Jconf; β=β, i0=i0)
+            E, X, ZZ, S = RTFIM_free_fermion(hconf, Jconf; β=β, pairs=pairs)
             E_avg += w * E / L
             X_avg .+= w .* X
             ZZ_avg .+= w .* ZZ
@@ -113,19 +116,19 @@ function sample_RTFIM(L::Int, Js::Vector{<:Real}, hs::Vector{<:Real}; ps::Vector
         end
         return (E = E_avg, E_err = 0.0,
                 Xs = X_avg, Xs_err = zeros(Float64, L),
-                ZZs = ZZ_avg, ZZs_err = zeros(Float64, L-i0),
+                ZZs = ZZ_avg, ZZs_err = zeros(Float64, length(pairs)),
                 Ss = S_avg, Ss_err = zeros(Float64, L-1),
                 n_samples = Int(n_conf), exact = true)
     end
 
     Es = zeros(Float64, n_samples)
     Xs = zeros(Float64, n_samples, L)
-    ZZs = zeros(Float64, n_samples, L-i0)
+    ZZs = zeros(Float64, n_samples, length(pairs))
     Ss = zeros(Float64, n_samples, L-1)
 
     for n in ProgressBar(1:n_samples)
         hconf, Jconf = sample_RTFIM_configuration(L, Js, hs; ps=ps)
-        E, X, ZZ, S = RTFIM_free_fermion(hconf, Jconf; β=β, i0=i0)
+        E, X, ZZ, S = RTFIM_free_fermion(hconf, Jconf; β=β, pairs=pairs)
         Es[n] = E / L
         Xs[n, :] = X
         ZZs[n, :] = ZZ
