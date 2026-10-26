@@ -1,13 +1,34 @@
 # Disorder normalization filter of a FiniteDisorderMPS.
-# For every disorder word w = (p₁…p_L) the state defines a conditional state ψ_w with norm Z(w) = ⟨ψ_w|ψ_w⟩.
-# The filter is a scalar disorder MPS f(w) ≈ |Z(w)|^(-1/2) such that f ⊙ ψ has Z(w) = 1 for every word.
+# For every disorder word w = (w₁…w_L) the state defines a conditional state ψ_w with norm Z(w) = ⟨ψ_w|ψ_w⟩.
+# The filter is a scalar disorder MPS f(w) ≈ |Z(w)|^(-1/2), such that f ⊙ ψ has Z(w) = 1 for every word.
 # It is built compress first: √P(w) Z(w) is compressed with SRC (FiniteSRC.jl, from the separate state and evolution
-# layers), and a nested QR-pivoted cross samples the cheap scalar partition. The prior is removed once per label.
-# Magnitude policy: the phase of every queried Z(w) is recorded, then -½ log|Z(w)| is used; only zero or
-# nonfinite queries fail.
+# layers), and a nested QR-pivoted cross samples the cheap compressed partition. The step numbers refer to the filter
+# chapter of docs/FiniteNormalizedITE:
+#   The filter object       FiniteDisorderFilter, F * ψ, filter_log_amplitude
+#   Conditional norms       log Z(w) of a FiniteDisorderMPS word by word, the end-to-end normalization check
+#   Step 0                  the input: the compressed partition, sliced into one matrix per site and sector
+#   Step 1                  families of partial words and the cross targets -½ log|Z(w)|
+#   Step 2                  pivot selection by a column-pivoted QR
+#   Step 3                  the nested cross: alternating prefix and suffix sweeps, cut and site blocks
+#   Step 4                  reconstruction of the filter cores from the blocks (CUR)
+#   Step 5                  entry points
+#
+# Dimensions (docs, table "Dimensions and symbols"): q number of disorder sectors (labels p = 1..q), D_{Z,i} bond of the
+# compressed partition, D_{f,i} bond of the filter (the filter ranks), both capped by D_max = max_rank.
+# Conventions:
+#   G_i[p] : ℂ^{D_{Z,i-1}} ← ℂ^{D_{Z,i}}       matrix of site i, sector p of the compressed partition
+#   prefix family C : ℂ^{|I|} ← ℂ^{D_{Z,i}}    one row per partial word on sites 1..i (like the SRC prefix sketches)
+#   suffix family R : ℂ^{D_{Z,i}} ← ℂ^{|J|}    one column per partial word on sites i+1..L
+#   filter core F_i[p] : ℂ^{D_{f,i-1}} ← ℂ^{D_{f,i}}
+# Magnitude policy: the phase of every queried Z(w) is recorded, then -½ log|Z(w)| is used; only zero or nonfinite
+# queries fail.
 
-# Filter: opp[i][p] is a matrix ℂ^{r_{i-1}} ← ℂ^{r_i} at site i for disorder sector p, representing
-# f(w) = exp(log_scale) * opp[1][p₁] ⋯ opp[L][p_L]
+#==========================================================================================
+ The filter object
+==========================================================================================#
+
+# Filter: opp[i][p] is a matrix ℂ^{D_{f,i-1}} ← ℂ^{D_{f,i}} at site i for disorder sector p, representing
+# f(w) = exp(log_scale) * opp[1][w₁] ⋯ opp[L][w_L]
 struct FiniteDisorderFilter{T<:AbstractBondTensor}
     opp::Vector{Vector{T}}
     log_scale::Float64
@@ -33,88 +54,138 @@ function Base.:*(F::FiniteDisorderFilter, ψ::FiniteDisorderMPS)
     return FiniteDisorderMPS(opp, ψ.ps)
 end
 
-# Dense tensors A[i][p][vL, s, vR] of a FiniteDisorderMPS
-_dense(ψ::FiniteDisorderMPS) = [[convert(Array, W) for W in ψ[i]] for i in 1:length(ψ)]
-
-# Grow a scaled conditional norm environment (env, log) by one site with tensor A[vL, s, vR].
-# Left environments env[bra, ket] contain the sites left of a bond, right environments the sites right of it.
-# Both the tensor and the result are rescaled by their maximal entry, the logarithms are accumulated.
-function _advance(env::Tuple{Matrix{ComplexF64}, Float64}, A::Array{ComplexF64, 3}; right::Bool = false)
-    return _advance(env, A, maximum(abs, A); right = right)
-end
-
-# _advance with a precomputed amplitude max|A| (only used to detect vanishing tensors), as two matrix products on reshaped tensors
-function _advance(env::Tuple{Matrix{ComplexF64}, Float64}, A::Array{ComplexF64, 3}, amplitude::Float64; right::Bool = false)
-    E, logE = env
-    na, ns, nb = size(A)
-    if amplitude == 0 || logE == -Inf
-        n = right ? na : nb
-        return zeros(ComplexF64, n, n), -Inf
-    end
-    if right
-        # value[a, c] = Σ conj(A[a,s,b]) E[b,d] A[c,s,d]
-        X = reshape(A, na*ns, nb) * transpose(E)
-        value = conj(reshape(A, na, ns*nb)) * transpose(reshape(X, na, ns*nb))
-    else
-        # value[b, d] = Σ conj(A[a,s,b]) E[a,c] A[c,s,d]
-        X = E * reshape(A, na, ns*nb)
-        value = reshape(A, na*ns, nb)' * reshape(X, na*ns, nb)
-    end
-    scale = maximum(abs, value)
-    scale == 0 && return value, -Inf
-    value ./= scale
-    # value is computed from the unscaled A, so its scale already contains the amplitude
-    return value, logE + log(scale)
-end
-
-const _boundary_environment = (ones(ComplexF64, 1, 1), 0.0)
-
-# log|Z(w)| of the conditional state of word w
-function conditional_log_norm(A::Vector{<:Vector{<:Array{ComplexF64, 3}}}, word::AbstractVector{Int})
-    env = _boundary_environment
-    for (i, p) in enumerate(word)
-        env = _advance(env, A[i][p])
-    end
-    return log(abs(env[1][1])) + env[2]
-end
-conditional_log_norm(ψ::FiniteDisorderMPS, word::AbstractVector{Int}) = conditional_log_norm(_dense(ψ), word)
-
-# log|f(w)| of the filter for word w
+# log|f(w)| of the filter for word w: a row vector v: ℂ^1 ← ℂ^r swept through the sites, rescaled to max |entry| 1
 function filter_log_amplitude(F::FiniteDisorderFilter, word::AbstractVector{Int})
-    v = ones(ComplexF64, 1, 1)
+    v = ones(ComplexF64, ℂ^1 ← ℂ^1)
     logv = F.log_scale
     for (i, p) in enumerate(word)
-        v = v * convert(Array, F[i, p])
-        scale = maximum(abs, v)
-        scale == 0 && return -Inf
-        v ./= scale
-        logv += log(scale)
+        v = v * F[i, p]
+        m = LinearAlgebra.norm(v, Inf)
+        m == 0 && return -Inf
+        v = v / m
+        logv += log(m)
     end
-    return log(abs(v[1])) + logv
+    return log(abs(tr(v))) + logv
+end
+
+#==========================================================================================
+ Conditional norms: log Z(w) of a FiniteDisorderMPS, word by word
+==========================================================================================#
+
+# Scaled norm environment (E, log) of one word: the true environment is exp(log) E.
+# Left environments E[bra; ket] contain the sites left of a bond, right environments E[ket; bra] the sites right of it.
+_boundary_environment(V) = (id(ComplexF64, V), 0.0)
+
+# Grow an environment by one site with MPS tensor A[a s; b], rescaled to max |entry| 1. A zero environment stays zero
+function _advance(env::Tuple{AbstractTensorMap, Float64}, A::AbstractTensorMap; right::Bool = false)
+    E, logE = env
+    if right
+        @tensor E′[-1; -2] := A[-1 3; 1] * conj(A[-2 3; 2]) * E[1; 2]
+    else
+        @tensor E′[-2; -1] := A[1 3; -1] * conj(A[2 3; -2]) * E[2; 1]
+    end
+    m = LinearAlgebra.norm(E′, Inf)
+    (m == 0 || logE == -Inf) && return E′, -Inf
+    return E′ / m, logE + log(m)
+end
+
+# log|Z(w)| of the conditional state of word w
+function conditional_log_norm(ψ::FiniteDisorderMPS, word::AbstractVector{Int})
+    env = _boundary_environment(space(ψ[1, 1], 1))
+    for (i, p) in enumerate(word)
+        env = _advance(env, ψ[i, p])
+    end
+    E, logE = env
+    return log(abs(tr(E))) + logE
 end
 
 # Normalization residuals log|Z(w)| (+ 2 log|f(w)| if a filter is given) for a list of words; zero when normalized.
 # The words are independent and evaluated on all Julia threads
 function normalization_residuals(ψ::FiniteDisorderMPS, words; F::Union{Nothing, FiniteDisorderFilter} = nothing)
-    A = _dense(ψ)
     words = collect(words)
     residuals = Vector{Float64}(undef, length(words))
     Threads.@threads for n in eachindex(words)
-        r = conditional_log_norm(A, words[n])
+        r = conditional_log_norm(ψ, words[n])
         residuals[n] = isnothing(F) ? r : r + 2*filter_log_amplitude(F, words[n])
     end
     return residuals
 end
 
-# Compressed partition function: exp(log_scale) * cores[1][:, w₁, :] ⋯ cores[L][:, w_L, :] = √P(w) Z(w)
-struct ScalarPartition
-    cores::Vector{Array{ComplexF64, 3}}
+#==========================================================================================
+ Step 0: the input, the compressed partition
+==========================================================================================#
+
+# Compressed partition function: exp(log_scale) * cores[1][:, w₁, :] ⋯ cores[L][:, w_L, :] = √P(w) Z(w),
+# with MPS cores c: ℂ^{D_{Z,i-1}} ⊗ (ℂ^q)' ← ℂ^{D_{Z,i}} (sector u in the middle)
+struct ScalarPartition{T<:AbstractTensorMap}
+    cores::Vector{T}
     log_scale::Float64
     ps::Vector{Float64}
 end
 
 Base.length(Z::ScalarPartition) = length(Z.cores)
-bond_dimensions(Z::ScalarPartition) = [size(c, 3) for c in Z.cores[1:end-1]]
+bond_dimensions(Z::ScalarPartition) = [dim(space(c, 3)) for c in Z.cores[1:end-1]]
+
+# Sector matrices G[i][p]: ℂ^{D_{Z,i-1}} ← ℂ^{D_{Z,i}} of the partition, every site divided by its largest entry.
+# Returns (G, λ) with √P(w) Z(w) = exp(λ) G[1][w₁] ⋯ G[L][w_L]
+function sector_matrices(Z::ScalarPartition)
+    q = length(Z.ps)
+    λ = Z.log_scale
+    G = map(Z.cores) do c
+        map(1:q) do p
+            e = Tensor([j == p ? 1.0 : 0.0 for j in 1:q], ℂ^q)   # basis ket of sector p
+            @tensor g[r; q] := c[r x; q] * e[x]
+        end
+    end
+    for (i, Gi) in enumerate(G)
+        m = maximum(g -> LinearAlgebra.norm(g, Inf), Gi)
+        (isfinite(m) && m > 0) || throw(DomainError(m, "unusable partition core at site $i"))
+        G[i] = Gi ./ m
+        λ += log(m)
+    end
+    return G, λ
+end
+
+#==========================================================================================
+ Step 1: families of partial words and the cross targets
+==========================================================================================#
+
+# A family of partial words as one matrix M: rows ℂ^{|I|} ← ℂ^{D_{Z,i}} (prefixes, sites 1..i) or columns ℂ^{D_{Z,i}} ← ℂ^{|J|}
+# (suffixes, sites i+1..L), with per word the log scale of its row/column and ½ Σ log p of its labels
+struct WordFamily{T<:AbstractTensorMap}
+    M::T
+    logs::Vector{Float64}
+    halflogp::Vector{Float64}
+end
+
+family_size(fam::WordFamily) = length(fam.logs)
+
+# The empty word, on both boundaries
+empty_family() = WordFamily(ones(ComplexF64, ℂ^1 ← ℂ^1), [0.0], [0.0])
+
+# Rescale factors of rows with largest entry s: only finite nonzero rows are rescaled (zero rows stay zero and fail
+# only when queried)
+_safe_scales(s) = [(x > 0 && isfinite(x)) ? x : 1.0 for x in s]
+
+# All one-site extensions (prefix, p) of the prefixes on site i, sectors outermost: rows of C G_i[p], stacked
+function extend_prefix_family(fam::WordFamily, Gi::Vector, halflogp::Vector{Float64})
+    M = reduce(catcodomain, [fam.M * g for g in Gi])
+    s = _safe_scales(row_scales(M))
+    M = DiagonalTensorMap(1 ./ s, ℂ^length(s)) * M
+    return WordFamily(M, repeat(fam.logs, length(Gi)) .+ log.(s), reduce(vcat, [fam.halflogp .+ h for h in halflogp]))
+end
+
+# All one-site extensions (p, suffix) of the suffixes on site i, sectors outermost: columns of G_i[p] R, side by side
+function extend_suffix_family(fam::WordFamily, Gi::Vector, halflogp::Vector{Float64})
+    M = reduce(catdomain, [g * fam.M for g in Gi])
+    s = _safe_scales(vec(maximum(abs, convert(Array, M); dims = 1)))   # largest |entry| of every column
+    M = M * DiagonalTensorMap(1 ./ s, ℂ^length(s))
+    return WordFamily(M, repeat(fam.logs, length(Gi)) .+ log.(s), reduce(vcat, [fam.halflogp .+ h for h in halflogp]))
+end
+
+# Keep the words idx of a prefix (rows) or suffix (columns) family
+select_prefixes(fam::WordFamily, idx) = WordFamily(select_rows(idx, family_size(fam)) * fam.M, fam.logs[idx], fam.halflogp[idx])
+select_suffixes(fam::WordFamily, idx) = WordFamily(fam.M * select_rows(idx, family_size(fam))', fam.logs[idx], fam.halflogp[idx])
 
 # Phase diagnostics of all queried partition entries
 mutable struct CrossDiagnostics
@@ -125,51 +196,11 @@ mutable struct CrossDiagnostics
 end
 CrossDiagnostics() = CrossDiagnostics(0, 0.0, 0, 0)
 
-# Scalar partition queries with scaled cores. Environments are (v, log scale, ½ Σ log p of their labels),
-# left environments are row vectors v cores[i][:, p, :], right environments column vectors cores[i][:, p, :] v
-struct _PartitionEvaluator
-    cores::Vector{Array{ComplexF64, 3}}
-    scale::Float64
-    halflogp::Vector{Float64}
-end
-
-function _PartitionEvaluator(Z::ScalarPartition)
-    scale = Z.log_scale
-    cores = similar(Z.cores)
-    for (i, c) in enumerate(Z.cores)
-        m = maximum(abs, c)
-        (all(isfinite, c) && m > 0) || throw(DomainError(m, "unusable partition core at site $i"))
-        cores[i] = c ./ m
-        scale += log(m)
-    end
-    return _PartitionEvaluator(cores, scale, 0.5 .* log.(Z.ps))
-end
-
-const _partition_boundary = (ones(ComplexF64, 1), 0.0, 0.0)
-
-# Extend an environment by site i in sector p. Zero environments stay zero and only fail when queried
-function _update(ev::_PartitionEvaluator, env::Tuple{Vector{ComplexF64}, Float64, Float64}, i::Int, p::Int; right::Bool = false)
-    v, s, h = env
-    c = view(ev.cores[i], :, p, :)
-    w = right ? c * v : transpose(c) * v
-    m = maximum(abs, w)
-    if m > 0 && isfinite(m)
-        w ./= m
-        s += log(m)
-    end
-    return (w, s, h + ev.halflogp[p])
-end
-
-# Candidate extensions (parent, sector) of a family of environments by site i, sectors outermost
-function _extend(ev::_PartitionEvaluator, family::AbstractVector, i::Int; right::Bool = false)
-    pairs = [(a, p) for p in eachindex(ev.halflogp) for a in eachindex(family)]
-    return pairs, [_update(ev, family[a], i, p; right = right) for (a, p) in pairs]
-end
-
-# Log targets -½ log|Z(w)| for every pair (left environment, right environment)
-function _join_logs(ev::_PartitionEvaluator, diag::CrossDiagnostics, left::AbstractVector, right::AbstractVector)
-    overlap = transpose(reduce(hcat, first.(left))) * reduce(hcat, first.(right))
-    offsets = ev.scale .+ [s - h for (_, s, h) in left] .+ transpose([s - h for (_, s, h) in right])
+# Cross targets -½ log|Z(w)| for every pair (prefix a, suffix b), w = C[a] ⊕ R[b], from one matrix product.
+# The prior √P(w) is removed once per label through halflogp
+function log_targets(λ::Float64, C::WordFamily, R::WordFamily, diag::CrossDiagnostics)
+    overlap = convert(Array, C.M * R.M)
+    offsets = λ .+ (C.logs .- C.halflogp) .+ transpose(R.logs .- R.halflogp)
     phase = angle.(overlap)
     diag.examined += length(overlap)
     diag.max_phase = max(diag.max_phase, maximum(abs, phase))
@@ -179,115 +210,111 @@ function _join_logs(ev::_PartitionEvaluator, diag::CrossDiagnostics, left::Abstr
     return -0.5 .* (offsets .+ log.(abs.(overlap)))
 end
 
-# Select up to width rows of the target exp(logs) by a column-pivoted QR of its transpose
-function _pivot_rows(logs::AbstractMatrix, width::Int)
+#==========================================================================================
+ Step 2: pivot selection
+==========================================================================================#
+
+# Select up to width rows of the target exp(logs) by a column-pivoted QR of its transpose (greedy volume maximization;
+# MatrixAlgebraKit has no pivoted QR, so LinearAlgebra is used on the small target matrix)
+function pivot_rows(logs::AbstractMatrix, width::Int)
     target = exp.(logs .- maximum(logs))
     all(isfinite, target) && !any(iszero, target) || throw(DomainError(logs, "pivot target exceeds exponential range"))
     pivots = qr(transpose(target), ColumnNorm()).p
     return pivots[1:min(width, length(pivots))]
 end
 
+#==========================================================================================
+ Step 3: the nested cross
+==========================================================================================#
+
 # Nested QR-pivoted cross of the targets -½ log|Z(w)| of a compressed partition function.
-# Prefix family P[i+1] holds words on sites 1..i, suffix family Q[i+1] words on sites i+1..L, as (parent, sector) tables.
-# Returns the cut blocks H[i][a, b] = -½ log|Z(P_i[a] ⊕ Q_i[b])| for i = 1..L-1,
-# the site blocks K[i][p][a, c] = -½ log|Z(P_{i-1}[a] ⊕ p ⊕ Q_i[c])| for i = 1..L and the phase diagnostics
-function collect_nested_cross(Z::ScalarPartition; width::Int = 32, cycles::Int = 2, rng::AbstractRNG = Random.default_rng(), to::TimerOutput = TimerOutput())
-    ev = _PartitionEvaluator(Z)
+# left[i+1] holds the prefixes on sites 1..i, right[i+1] the suffixes on sites i+1..L. Every family is built by
+# extending its neighbour, so the families are nested. Returns the cut blocks H[i][a, b] = -½ log|Z(left_i[a] ⊕ right_i[b])|
+# for i = 1..L-1, the site blocks K[i][p][a, c] = -½ log|Z(left_{i-1}[a] ⊕ p ⊕ right_i[c])| for i = 1..L and the phase
+# diagnostics
+function collect_nested_cross(Z::ScalarPartition; width::Int = 32, cycles::Int = 2, rng::AbstractRNG = Random.default_rng(),
+                              to::TimerOutput = TimerOutput())
+    G, λ = sector_matrices(Z)
+    h = 0.5 .* log.(Z.ps)
+    L, q = length(Z), length(Z.ps)
     diag = CrossDiagnostics()
-    L = length(Z)
-    d = length(Z.ps)
-    boundary = [_partition_boundary]
-    join(l, r) = _join_logs(ev, diag, l, r)
+    targets(C, R) = log_targets(λ, C, R, diag)
 
     # Random initial suffixes, from right to left
-    right = Vector{Any}(undef, L+1)
-    right[L+1] = boundary
+    left = Vector{WordFamily}(undef, L)
+    right = Vector{WordFamily}(undef, L+1)
+    left[1], right[L+1] = empty_family(), empty_family()
     @timeit to "initial_suffixes" for i in L-1:-1:1
-        _, envs = _extend(ev, right[i+2], i+1; right = true)
-        right[i+1] = envs[randperm(rng, length(envs))[1:min(width, length(envs))]]
+        candidates = extend_suffix_family(right[i+2], G[i+1], h)
+        n = family_size(candidates)
+        right[i+1] = select_suffixes(candidates, randperm(rng, n)[1:min(width, n)])
     end
 
-    left = Vector{Any}(undef, L+1)
-    P = Vector{Vector{Tuple{Int,Int}}}(undef, L+1)
-    Q = Vector{Vector{Tuple{Int,Int}}}(undef, L+1)
     for _ in 1:cycles
         # Prefix sweep against the current suffixes
-        left[1] = boundary
         @timeit to "prefix_sweep" for i in 1:L-1
-            pairs, envs = _extend(ev, left[i], i)
-            selection = _pivot_rows(join(envs, right[i+1]), width)
-            P[i+1], left[i+1] = pairs[selection], envs[selection]
+            candidates = extend_prefix_family(left[i], G[i], h)
+            left[i+1] = select_prefixes(candidates, pivot_rows(targets(candidates, right[i+1]), width))
         end
         # Suffix sweep against the new prefixes
-        right[L+1] = boundary
         @timeit to "suffix_sweep" for i in L-1:-1:1
-            pairs, envs = _extend(ev, right[i+2], i+1; right = true)
-            selection = _pivot_rows(transpose(join(left[i+1], envs)), width)
-            Q[i+1], right[i+1] = pairs[selection], envs[selection]
+            candidates = extend_suffix_family(right[i+2], G[i+1], h)
+            right[i+1] = select_suffixes(candidates, pivot_rows(transpose(targets(left[i+1], candidates)), width))
         end
     end
 
-    # Rebuild exact environments from the frozen index tables and collect the blocks once
-    @timeit to "rebuild_environments" begin
-        left[1] = boundary
-        for i in 1:L-1
-            left[i+1] = [_update(ev, left[i][a], i, p) for (a, p) in P[i+1]]
-        end
-        right[L+1] = boundary
-        for i in L-1:-1:1
-            right[i+1] = [_update(ev, right[i+2][a], i+1, p; right = true) for (a, p) in Q[i+1]]
-        end
-    end
-    @timeit to "cut_blocks" H = [join(left[i+1], right[i+1]) for i in 1:L-1]
+    @timeit to "cut_blocks" H = [targets(left[i+1], right[i+1]) for i in 1:L-1]
     @timeit to "site_blocks" K = map(1:L) do i
-        nl = length(left[i])
-        _, envs = _extend(ev, left[i], i)
-        logs = join(envs, right[i+1])
-        [logs[(p-1)*nl .+ (1:nl), :] for p in 1:d]
+        n = family_size(left[i])
+        logs = targets(extend_prefix_family(left[i], G[i], h), right[i+1])
+        [logs[(p-1)*n .+ (1:n), :] for p in 1:q]
     end
     return H, K, diag
 end
 
-# Smallest rank whose relative discarded Frobenius tail is at most tail_tol, capped by max_rank and the
-# numerical support s > 1e-12 s₁. Tails are reverse cumulative sums. Returns the rank and whether the target is met.
-function select_tail_rank(S::AbstractVector{<:Real}, max_rank::Int, tail_tol::Real)
-    squares = (S ./ S[1]).^2
-    remaining = [reverse(cumsum(reverse(squares))); 0.0]
-    tails = sqrt.(remaining ./ remaining[1])
-    support = count(>(1e-12*S[1]), S)
-    available = min(max_rank, length(S), support)
-    r = findfirst(<=(tail_tol), tails[2:available+1])
-    rank = isnothing(r) ? available : r
-    return rank, tails[rank+1] <= tail_tol
-end
+#==========================================================================================
+ Step 4: reconstruction of the filter cores (CUR)
+==========================================================================================#
 
-# Filter f ≈ K₁ H₁⁺ K₂ ⋯ H_{L-1}⁺ K_L from the cross blocks (CUR form). All blocks are exponentiated with one
-# common shift, which is restored in log_scale. Cuts are truncated with select_tail_rank, discarded singular
-# values are never inverted. Returns the filter, its ranks and whether every cut met the tail tolerance.
-function reconstruct_filter(H::Vector{<:AbstractMatrix}, K::Vector{<:Vector{<:AbstractMatrix}}; max_rank::Int = 32, tail_tol::Real = 1e-8, to::TimerOutput = TimerOutput())
+# Filter f ≈ K₁ H₁⁺ K₂ ⋯ H_{L-1}⁺ K_L from the cross blocks. All blocks are exponentiated with one common shift σ,
+# which is restored in log_scale. Each cut block is truncated to the smallest rank whose relative discarded tail is at
+# most tail_tol (capped by max_rank and the numerical support s > 1e-12 s₁); discarded singular values are never
+# inverted. Returns the filter, its ranks and whether every cut met the tail tolerance
+function reconstruct_filter(H::Vector{<:AbstractMatrix}, K::Vector{<:Vector{<:AbstractMatrix}}; max_rank::Int = 32,
+                            tail_tol::Real = 1e-8, to::TimerOutput = TimerOutput())
     L = length(K)
     σ = maximum(maximum(maximum, Ki) for Ki in K)
     (L > 1) && (σ = max(σ, maximum(maximum, H)))
-    expshift(b) = (v = exp.(b .- σ); all(isfinite, v) && !any(iszero, v) || throw(DomainError(b, "cross targets exceed exponential range")); v)
-
-    @timeit to "svd_cuts" gauges = map(H) do h
-        F = svd(expshift(h))
-        r, met = select_tail_rank(F.S, max_rank, tail_tol)
-        (F.U[:, 1:r], F.S[1:r], F.V[:, 1:r], met)
+    function shifted(b)
+        v = exp.(b .- σ)
+        all(isfinite, v) && !any(iszero, v) || throw(DomainError(b, "cross targets exceed exponential range"))
+        return TensorMap(v, ℂ^size(b, 1) ← ℂ^size(b, 2))
     end
 
+    trunc = truncrank(max_rank) & truncerror(; rtol = tail_tol) & trunctol(; rtol = 1e-12, p = Inf)
+    @timeit to "svd_cuts" cuts = map(H) do b
+        Hb = shifted(b)
+        U, S, Vh, ϵ = svd_trunc(Hb; trunc = trunc)
+        (left = inv(S) * U', right = Vh', met = ϵ <= tail_tol * LinearAlgebra.norm(Hb))   # H⁺ = Vh' S⁻¹ U'
+    end
+
+    # F_i[p] = S_{i-1}⁻¹ U_{i-1}' K̃_i[p] V_i
     @timeit to "cores" opp = map(1:L) do i
-        l = (i == 1) ? ones(1, 1) : transpose(gauges[i-1][1]) ./ gauges[i-1][2]
-        r = (i == L) ? ones(1, 1) : gauges[i][3]
         map(K[i]) do k
-            core = l * expshift(k) * r
-            all(isfinite, core) || throw(DomainError(core, "filter core exceeds floating point range"))
-            TensorMap(complex(core), ℂ^size(core, 1), ℂ^size(core, 2))
+            core = shifted(k)
+            (i > 1) && (core = cuts[i-1].left * core)
+            (i < L) && (core = core * cuts[i].right)
+            isfinite(LinearAlgebra.norm(core)) || throw(DomainError(core, "filter core exceeds floating point range"))
+            complex(core)
         end
     end
-    ranks = [length(g[2]) for g in gauges]
-    return FiniteDisorderFilter(opp, σ), ranks, all(g[4] for g in gauges)
+    ranks = [dim(domain(c.right)) for c in cuts]
+    return FiniteDisorderFilter(opp, σ), ranks, all(c.met for c in cuts)
 end
+
+#==========================================================================================
+ Step 5: entry points
+==========================================================================================#
 
 # Normalization filter f(w) ≈ |Z(w)|^(-1/2) from a compressed partition function. Returns the filter and a NamedTuple
 # with its bond dimensions, whether every cut met tail_tol and the phase diagnostics of the cross
