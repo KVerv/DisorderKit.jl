@@ -1,41 +1,80 @@
-# Successive randomized compression (SRC, Camaño-Epperly-Tropp, Algorithm 1 with the adaptive rank of Appendix C)
-# of disorder MPS that are only given implicitly by their separate layers: state A, evolution MPO W and filter f
-# are never fused. Two sources are compressed:
-#   partition  √P(w) Z(w), Z(w) = ‖W_w A_w‖², a scalar disorder MPS with physical index the sector u, built from
-#              the four layers (A, W, W̄, Ā)
-#   physical   Σ_w √P(w) |w⟩ ⊗ f(w) W_w|A_w⟩, an MPS with joint physical index x = (s, u) (s fastest), built from
-#              the three layers (A, W, f)
-# The √p are divided out of the physical result again and the absolute scale is restored, such that the result is
-# an (unweighted, non-isometric) FiniteDisorderMPS.
+# Successive randomized compression (SRC) of the implicit products √P(w) Z(w) of W ψ and f ⊙ (W ψ), without forming them.
+# The step numbers refer to the SRC chapter of docs/FiniteNormalizedITE (Steps 0-7 and the section on the first cut i = L).
+#
+# Design: the SRC algorithm (Steps 1-7) is written as if the input were an explicit MPS with site tensors
+#   M_i : V_i ← X_i ⊗ R_i
+# and only touches site i of the source P through the two primitives apply_suffix(P, i, S) and
+# apply_prefix(P, i, C, Ω) (section "Site tensors"), which act as the explicit M_i would without forming it.
+# The composite bonds V_i are kept as multi-leg ProductSpaces: TensorKit's *, ' and qr work on them directly, so
+# no fusing isomorphism is needed.
+#
+# Dimensions (docs, table "Dimensions and symbols"): d spin dimension, q number of disorder sectors, D_i the bond at cut i
+# of the MPS that SRC builds (capped by D_max = max_rank or maxD), n_i = dim X_i the local dimension of the compressed
+# tensor (q for the partition, d q for the state), K the number of test vectors (sketch columns), m the number of basis
+# vectors, rows = n_i D_i.
+#
+# Conventions (as in the docs, "Spaces and objects"):
+#   V_i = left_space(P, i)        composite left bond of site i (product of the layer bonds)
+#   R_i = right_space(P, i)       composite right bond of site i (= V_{i+1})
+#   X_i = physical_space(P, i)    physical legs: ℂ^q (partition) or (ℂ^d)' ⊗ ℂ^q (physical, spin s fastest)
+#   site tensor  M_i : V_i ← X_i ⊗ R_i
+#   suffix       S_i : R_i ← ℂ^{D_i}
+#   cut-local    J_i : V_i ← X_i ⊗ ℂ^{D_i}      (J_i = M_i S_i)
+#   prefix       C_{i-1} : ℂ^K ← V_i            (one row per Khatri-Rao test vector)
+#   sketch       Z : X_i ⊗ ℂ^{D_i} ← ℂ^K        (Z = (C_{i-1} J_i)')
+#   basis        Q : X_i ⊗ ℂ^{D_i} ← ℂ^m
+#   core         G_i : ℂ^{D_{i-1}} ⊗ X_i' ← ℂ^{D_i}   (MPS tensor: virtual ⊗ physical ← virtual, D_{i-1} = m)
+# Layer conventions (MPSKit): A[a s; b], W[h s; t j] (s output, t input), f[x; y].
+#
+# Note: DisorderKit defines its own `norm`, so this file always writes LinearAlgebra.norm.
 
-# Products implement the source for the generic engine _src_run:
-#   _left_shape(P, i)          the pair of left bond dimensions of the prefix sketches C[l1, l2, k] at site i
-#   _physical_dim(P, i)        physical dimension of site i
-#   _prefix(P, i, C, Ω)        prefixes of site i+1 from the prefixes C of site i and Gaussian vectors Ω[x, k]
-#   _contract_suffix(P, i, S)  site i contracted with the compressed suffix S[r1, r2, q]: J[l1, l2, x, q]
-# Sketch, projection and the first core are generic matrix products of the cut-local J, which is reused for both.
-# Dense layer conventions (sector u last): A[a, t, b, u], W[h, s, t, j, u] (s output, t input), f[x, y, u].
+#==========================================================================================
+ Step 0: the sources (implicit products) and the scales
+==========================================================================================#
 
-# Dense layers of the state, the evolution MPO and the filter with the sector as last index
-_stack(Ts) = cat([ComplexF64.(convert(Array, T)) for T in Ts]...; dims = numind(first(Ts))+1)
-_dense_layers(ψ::FiniteDisorderMPS) = [_stack(ψ[i]) for i in 1:length(ψ)]
-_dense_layers(O::FiniteDisorderMPO) = [_stack(O[i]) for i in 1:length(O)]
-_dense_layers(F::FiniteDisorderFilter) = [_stack(F[i]) for i in 1:length(F)]
-
-# Identity MPO layers W[1, s, t, 1, u] = δ_st, for the partition function of an unevolved state
-function _identity_layers(ψ::FiniteDisorderMPS)
-    ns, n = dim(space(ψ[1, 1], 2)), length(ψ.ps)
-    W = repeat(reshape(Matrix{ComplexF64}(I, ns, ns), 1, ns, ns, 1), 1, 1, 1, 1, n)
-    return [W for _ in 1:length(ψ)]
+# √P(w) Z(w) of W A from the four layers A, W, W̄, Ā; physical index the sector u (n_i = q).
+# A[i][u], W[i][u]: layers of site i in sector u; g[u] = √p_u
+struct PartitionSource
+    A::Vector{<:Vector{<:AbstractMPSTensor}}
+    W::Vector{<:Vector{<:AbstractMPOTensor}}
+    g::Vector{Float64}
 end
 
-# Rescale every site by its maximal entry, the logarithms are accumulated
-function _scaled(Xs::Vector{<:Array{ComplexF64}})
+# Σ_w √P(w) |w⟩ ⊗ f(w) W_w|A_w⟩ from the three layers A, W, f; physical index (s, u), s fastest (n_i = d q)
+struct PhysicalSource
+    A::Vector{<:Vector{<:AbstractMPSTensor}}
+    W::Vector{<:Vector{<:AbstractMPOTensor}}
+    f::Vector{<:Vector{<:AbstractBondTensor}}
+    g::Vector{Float64}
+end
+
+const Source = Union{PartitionSource, PhysicalSource}
+
+Base.length(P::Source) = length(P.A)
+
+# Composite left bond V_i of site i: a ⊗ h ⊗ h' ⊗ a' (partition), a ⊗ h ⊗ x (physical)
+left_space(P::PartitionSource, i::Int) = space(P.A[i][1], 1) ⊗ space(P.W[i][1], 1) ⊗ space(P.W[i][1], 1)' ⊗ space(P.A[i][1], 1)'
+left_space(P::PhysicalSource, i::Int) = space(P.A[i][1], 1) ⊗ space(P.W[i][1], 1) ⊗ space(P.f[i][1], 1)
+
+# Composite right bond R_i of site i (= V_{i+1}); built from the domains so that R_L (one-dimensional) works too
+right_space(P::PartitionSource, i::Int) = domain(P.A[i][1])[1] ⊗ domain(P.W[i][1])[2] ⊗ domain(P.W[i][1])[2]' ⊗ domain(P.A[i][1])[1]'
+right_space(P::PhysicalSource, i::Int) = domain(P.A[i][1])[1] ⊗ domain(P.W[i][1])[2] ⊗ domain(P.f[i][1])[1]
+
+# Physical legs X_i of site i: ℂ^q (partition) or (ℂ^d)' ⊗ ℂ^q (physical)
+physical_space(P::PartitionSource, i::Int) = ProductSpace(ℂ^length(P.g))
+physical_space(P::PhysicalSource, i::Int) = space(P.W[i][1], 2)' ⊗ ℂ^length(P.g)
+
+# Dimension n_i of the physical legs X_i
+physical_dim(P::Source, i::Int) = dim(physical_space(P, i))
+
+# Divide every site of a layer by its largest entry (over all sectors).
+# Returns (scaled layers, Σ log(max entry)); the scale is put back in the entry points (Step 7)
+function rescale_layers(layers::Vector{<:Vector{<:AbstractTensorMap}})
     log_scale = 0.0
-    scaled = similar(Xs)
-    for (i, X) in enumerate(Xs)
-        m = maximum(abs, X)
-        all(isfinite, X) || throw(DomainError(m, "nonfinite layer"))
+    scaled = similar(layers)
+    for (i, X) in enumerate(layers)                             # X[u]: layer of site i in sector u
+        m = maximum(T -> LinearAlgebra.norm(T, Inf), X)          # largest |entry| over all sectors of site i
+        all(T -> all(isfinite, convert(Array, T)), X) || throw(DomainError(m, "nonfinite layer at site $i"))
         if m > 0
             X = X ./ m
             log_scale += log(m)
@@ -45,408 +84,418 @@ function _scaled(Xs::Vector{<:Array{ComplexF64}})
     return scaled, log_scale
 end
 
-# √P Z of W A from the four layers A, W, W̄, Ā. Left bond (a, h | c, l): ket A and W, bra Ā and W̄
-struct _EvolvedPartitionProduct
-    A::Vector{Array{ComplexF64, 4}}
-    W::Vector{Array{ComplexF64, 5}}
-    g::Vector{Float64}
-end
-
-Base.length(P::_EvolvedPartitionProduct) = length(P.A)
-_left_shape(P::_EvolvedPartitionProduct, i::Int) = (n = size(P.A[i], 1)*size(P.W[i], 1); (n, n))
-_physical_dim(P::_EvolvedPartitionProduct, i::Int) = length(P.g)
-
-function _prefix(P::_EvolvedPartitionProduct, i::Int, C::Array{ComplexF64, 3}, Ω::Matrix{ComplexF64})
-    na, nb, nh, nj, K = size(P.A[i], 1), size(P.A[i], 3), size(P.W[i], 1), size(P.W[i], 4), size(C, 3)
-    e = reshape(C, na, nh, na, nh, K)
-    out = zeros(ComplexF64, nb, nj, nb, nj, K)
-    for (u, g) in enumerate(P.g)
-        Au, Wu = P.A[i][:, :, :, u], P.W[i][:, :, :, :, u]
-        @tensor X[b, j, d, m, k] := (((e[a, h, c, l, k] * Au[a, t, b]) * Wu[h, s, t, j]) * conj(Au[c, v, d])) * conj(Wu[l, s, v, m])
-        out .+= X .* reshape(g .* Ω[u, :], 1, 1, 1, 1, K)
+# Identity MPO layers W[1 s; t 1] = δ_st for every site and sector, for the partition of an unevolved ψ
+function identity_layers(ψ::FiniteDisorderMPS)
+    q = length(ψ.ps)
+    return map(1:length(ψ)) do i
+        s = space(ψ[i, 1], 2)                                    # physical space of site i
+        W = permute(id(ComplexF64, ℂ^1 ⊗ s), ((1, 2), (4, 3)))  # (ℂ^1 ⊗ s ← ℂ^1 ⊗ s) to W[1 s; t 1]
+        fill(W, q)
     end
-    return reshape(out, nb*nj, nb*nj, K)
 end
 
-function _contract_suffix(P::_EvolvedPartitionProduct, i::Int, S::Array{ComplexF64, 3})
-    na, nb, nh, nj, q = size(P.A[i], 1), size(P.A[i], 3), size(P.W[i], 1), size(P.W[i], 4), size(S, 3)
-    r = reshape(S, nb, nj, nb, nj, q)
-    J = zeros(ComplexF64, na, nh, na, nh, length(P.g), q)
+#==========================================================================================
+ Site tensors: the interface between the SRC algorithm and the source
+==========================================================================================#
+
+# Step 1 primitive: J = M_i S, i.e. J[v; x r] = Σ_w M_i[v; x w] S[w; r].  S: R_i ← ℂ^{D_i}, J: V_i ← X_i ⊗ ℂ^{D_i}.
+# Partition: Σ_u e_u ⊗ g_u (A_u W_u W̄_u Ā_u S), e_u the sector-u basis covector on X_i.
+# Contract S with the four layers of sector u (bond legs unfused), weight g_u, place it at physical index u.
+function apply_suffix(P::PartitionSource, i::Int, S::AbstractTensorMap)
+    q = length(P.g)
+    T = promote_type(scalartype(S), scalartype(P.A[i][1]), scalartype(P.W[i][1]))
+    J = zeros(T, left_space(P, i) ← physical_space(P, i) ⊗ domain(S))
     for (u, g) in enumerate(P.g)
-        Au, Wu = P.A[i][:, :, :, u], P.W[i][:, :, :, :, u]
-        @tensor X[a, h, c, l, q] := (((r[b, j, d, m, q] * Au[a, t, b]) * Wu[h, s, t, j]) * conj(Au[c, v, d])) * conj(Wu[l, s, v, m])
-        J[:, :, :, :, u, :] .= g .* X
+        A, W = P.A[i][u], P.W[i][u]
+        e = Tensor([j == u ? g : zero(g) for j in 1:q], (ℂ^q)')   # g e_u, enters J as the domain leg ℂ^q
+        @tensor opt=true X[-1 -2 -3 -4; -5] := S[1 3 5 7; -5] * A[-1 2; 1] * W[-2 4; 2 3] * conj(W[-3 4; 6 5]) * conj(A[-4 6; 7])
+        @tensor J[-1 -2 -3 -4; -5 -6] += e[-5] * X[-1 -2 -3 -4; -6]
     end
-    return reshape(J, na*nh, na*nh, length(P.g), q)
+    return J
 end
 
-# √P f W A from the three layers A, W, f. Left bond (a | h, x), physical index (s, u) with s fastest
-struct _EvolvedFilterProduct
-    A::Vector{Array{ComplexF64, 4}}
-    W::Vector{Array{ComplexF64, 5}}
-    f::Vector{Array{ComplexF64, 3}}
-    g::Vector{Float64}
-end
-
-Base.length(P::_EvolvedFilterProduct) = length(P.A)
-_left_shape(P::_EvolvedFilterProduct, i::Int) = (size(P.A[i], 1), size(P.W[i], 1)*size(P.f[i], 1))
-_physical_dim(P::_EvolvedFilterProduct, i::Int) = size(P.W[i], 2)*length(P.g)
-
-function _prefix(P::_EvolvedFilterProduct, i::Int, C::Array{ComplexF64, 3}, Ω::Matrix{ComplexF64})
-    na, nb, nh, ns, nj = size(P.A[i], 1), size(P.A[i], 3), size(P.W[i], 1), size(P.W[i], 2), size(P.W[i], 4)
-    nx, ny, K = size(P.f[i], 1), size(P.f[i], 2), size(C, 3)
-    e = reshape(C, na, nh, nx, K)
-    Ωs = reshape(Ω, ns, length(P.g), K)
-    out = zeros(ComplexF64, nb, nj, ny, K)
+# Physical source: per sector u contract S with A_u, W_u, f_u, keep the spin leg s open,
+# weight g_u, place it at physical index (s, u)
+function apply_suffix(P::PhysicalSource, i::Int, S::AbstractTensorMap)
+    q = length(P.g)
+    T = promote_type(scalartype(S), scalartype(P.A[i][1]), scalartype(P.W[i][1]), scalartype(P.f[i][1]))
+    J = zeros(T, left_space(P, i) ← physical_space(P, i) ⊗ domain(S))   # V_i ← (ℂ^d)' ⊗ ℂ^q ⊗ ℂ^{D_i}
     for (u, g) in enumerate(P.g)
-        Au, Wu, fu = P.A[i][:, :, :, u], P.W[i][:, :, :, :, u], P.f[i][:, :, u]
-        @tensor G[b, j, x, s, k] := (e[a, h, x, k] * Au[a, t, b]) * Wu[h, s, t, j]
-        Gω = dropdims(sum(G .* reshape(g .* Ωs[:, u, :], 1, 1, 1, ns, K); dims = 4); dims = 4)
-        @tensor out[b, j, y, k] += Gω[b, j, x, k] * fu[x, y]
+        A, W, f = P.A[i][u], P.W[i][u], P.f[i][u]
+        e = Tensor([j == u ? g : zero(g) for j in 1:q], (ℂ^q)')   # g e_u, enters J as the domain leg ℂ^q
+        # X[a h x; s r]: S[b j y; r] with A[a t; b], W[h s; t j], f[x; y]; the output spin s of W stays open
+        @tensor opt=true X[-1 -2 -3; -4 -5] := S[1 3 5; -5] * A[-1 2; 1] * W[-2 -4; 2 3] * f[-3; 5]
+        @tensor J[-1 -2 -3; -4 -5 -6] += X[-1 -2 -3; -4 -6] * e[-5]
     end
-    return reshape(out, nb, nj*ny, K)
+    return J
 end
 
-function _contract_suffix(P::_EvolvedFilterProduct, i::Int, S::Array{ComplexF64, 3})
-    na, nb, nh, ns, nj = size(P.A[i], 1), size(P.A[i], 3), size(P.W[i], 1), size(P.W[i], 2), size(P.W[i], 4)
-    nx, ny, q = size(P.f[i], 1), size(P.f[i], 2), size(S, 3)
-    r = reshape(S, nb, nj, ny, q)
-    J = zeros(ComplexF64, na, nh, nx, ns, length(P.g), q)
+# Step 3 primitive (Khatri-Rao): C′[k; w] = Σ_{v,x} C[k; v] M_i[v; x w] Ω[x, k]; row k uses column k of Ω.
+# C: ℂ^K ← V_i, Ω: n_i × K (x linear, s fastest), C′: ℂ^K ← R_i.
+# Partition: Σ_u Diag(g_u Ω[u, :]) * (C contracted with the four layers of u).
+# The sector δ of M_i becomes the loop over u; no copy tensor needed
+function apply_prefix(P::PartitionSource, i::Int, C::AbstractTensorMap, Ω::AbstractMatrix)
+    K = codomain(C)[1]
+    T = promote_type(scalartype(C), eltype(Ω), scalartype(P.A[i][1]), scalartype(P.W[i][1]))
+    out = zeros(T, K ← right_space(P, i))
     for (u, g) in enumerate(P.g)
-        Au, Wu, fu = P.A[i][:, :, :, u], P.W[i][:, :, :, :, u], P.f[i][:, :, u]
-        @tensor X[a, h, x, s, q] := ((r[b, j, y, q] * Au[a, t, b]) * Wu[h, s, t, j]) * fu[x, y]
-        J[:, :, :, :, u, :] .= g .* X
+        A, W = P.A[i][u], P.W[i][u]
+        @tensor opt=true X[-1; -2 -3 -4 -5] := C[-1; 1 3 5 7] * A[1 2; -2] * W[3 4; 2 -3] * conj(W[5 4; 6 -4]) * conj(A[7 6; -5])
+        weights = g .* Ω[u, :]                        # weight of row k: g_u Ω[u, k]
+        Dw = DiagonalTensorMap(weights, K)            # ℂ^K ← ℂ^K, diag(weights)
+        out += Dw * X                                 # scales row k of X by weights[k]
     end
-    return reshape(J, na, nh*nx, ns*length(P.g), q)
+    return out
 end
 
+# Physical source: per u contract C with A_u, W_u with s open, then
+# Σ_s Diag(g_u Ω[(u-1) d + s, :]) on the result, then f_u
+function apply_prefix(P::PhysicalSource, i::Int, C::AbstractTensorMap, Ω::AbstractMatrix)
+    K = codomain(C)[1]
+    d = dim(space(P.W[i][1], 2))
+    T = promote_type(scalartype(C), eltype(Ω), scalartype(P.A[i][1]), scalartype(P.W[i][1]), scalartype(P.f[i][1]))
+    out = zeros(T, K ← right_space(P, i))
+    for (u, g) in enumerate(P.g)
+        A, W, f = P.A[i][u], P.W[i][u], P.f[i][u]
+        # X[k; b j y s]: C[k; a h x] with A[a t; b], W[h s; t j], f[x; y]; the output spin s of W stays open
+        @tensor opt=true X[-1; -2 -3 -4 -5] := C[-1; 1 3 4] * A[1 2; -2] * W[3 -5; 2 -3] * f[4; -4]
+        for s in 1:d
+            e = Tensor([j == s ? 1.0 : 0.0 for j in 1:d], (ℂ^d)')   # picks spin s
+            @tensor Xs[-1; -2 -3 -4] := X[-1; -2 -3 -4 1] * e[1]
+            weights = g .* Ω[(u - 1) * d + s, :]     # weight of row k: g_u Ω[(s, u), k], s fastest
+            Dw = DiagonalTensorMap(weights, K)        # ℂ^K ← ℂ^K, diag(weights)
+            out += Dw * Xs                            # scales row k of Xs by weights[k]
+        end
+    end
+    return out
+end
 
-# Incremental sketch of one cut (C.3 with Householder QR updates, as in Finite010/011 of disorder_itebd).
-# The sketch columns arrive in blocks with column log scales and are kept in the common log scale of the largest column.
-# Only R and the Householder blocks (row offset, compact WY factorization of the remaining rows) are stored, Q is
-# formed on demand. The inverse adjoint G = R^{-H} is updated per block while R is safely invertible.
-mutable struct _IncrementalSketch
+# The explicit site tensor M_i : V_i ← X_i ⊗ R_i, for tests on small systems only
+function dense(P::Source, i::Int)
+    R, X = right_space(P, i), physical_space(P, i)
+    iso = isomorphism(fuse(R), R)                      # apply_suffix takes S with a single domain leg
+    return apply_suffix(P, i, iso') * (id(X) ⊗ iso)
+end
+
+#==========================================================================================
+ Step 3: Khatri-Rao prefix sketches
+==========================================================================================#
+
+# Prefix sketches shared by all cuts: C[j] holds C_{j-1}: ℂ^width ← V_j (C_0 = 1), logs[j] the log scale of every row.
+# The prefixes are built with apply_prefix only
+mutable struct PrefixStore{TP<:Source, R<:AbstractRNG}
+    P::TP
+    rng::R
+    C::Vector{Any}
+    logs::Vector{Vector{Float64}}
+    width::Int
+end
+
+PrefixStore(P::Source, rng::AbstractRNG) = PrefixStore(P, rng, Any[nothing for _ in 1:length(P)], [Float64[] for _ in 1:length(P)], 0)
+
+# Append ncols fresh Gaussian rows to the prefixes of the sites 1..top (the first call builds all sites 1..L):
+# C_i = apply_prefix(P, i, C_{i-1}, randn(physical_dim(P, i), ncols)), rescaled per row
+function extend_prefixes!(store::PrefixStore, ncols::Int, top::Int)
+    P, rng = store.P, store.rng
+    C = ones(ComplexF64, ℂ^ncols ← left_space(P, 1))            # C_0 = 1 for every new row (V_1 is one-dimensional)
+    logs = zeros(ncols)                                           # log scale of every new row
+    for i in 1:top
+        if i > 1
+            n = physical_dim(P, i - 1)                            # n_{i-1}
+            Ω = (randn(rng, n, ncols) + im * randn(rng, n, ncols)) / sqrt(2)   # complex Gaussian test vectors
+            C = apply_prefix(P, i - 1, C, Ω)                      # C_{i-1} from C_{i-2}
+            s = row_scales(C)
+            all(isfinite, s) || throw(DomainError(s, "nonfinite prefix sketch at site $i"))
+            s[s .== 0] .= 1.0
+            C = DiagonalTensorMap(1 ./ s, ℂ^ncols) * C           # every row rescaled to max |entry| 1
+            logs = logs .+ log.(s)
+        end
+        store.C[i] = store.width == 0 ? C : catcodomain(store.C[i], C)   # new rows below the old ones
+        append!(store.logs[i], logs)
+    end
+    store.width += ncols
+    return store
+end
+
+# Largest |entry| of every row of C: ℂ^K ← V (trivial symmetry)
+row_scales(C::AbstractTensorMap) = vec(maximum(abs, reshape(convert(Array, C), dim(codomain(C)), :); dims = 2))
+
+# Row selection Π: ℂ^|rows| ← ℂ^w that picks the rows `rows` out of w
+function select_rows(rows, w::Int)
+    Π = zeros(ComplexF64, length(rows), w)
+    for (k, r) in enumerate(rows)
+        Π[k, r] = 1
+    end
+    return TensorMap(Π, ℂ^length(rows) ← ℂ^w)
+end
+
+# Sketch columns of cut i for the prefix rows cols: Z = (C_{i-1}[cols, :] J)': X_i ⊗ ℂ^{D_i} ← ℂ^|cols|
+function sketch_columns(store::PrefixStore, J::AbstractTensorMap, i::Int, cols)
+    Ci = select_rows(cols, store.width) * store.C[i]              # C_{i-1}[cols, :]: ℂ^|cols| ← V_i
+    return copy((Ci * J)')
+end
+
+#==========================================================================================
+ Step 4: orthonormal basis of the sketch
+==========================================================================================#
+
+const SketchMatrix = tensormaptype(ComplexSpace, 1, 1, ComplexF64)
+
+# State of one cut: all sketch columns Z: X_i ⊗ ℂ^{D_i} ← ℂ^K, stored relative to the common log scale `shift`
+# (true column j = exp(shift) Z[:, j]), and their QR factorization Z = Q R, recomputed after every block of columns.
+#   rows       dim(X_i ⊗ ℂ^{D_i}), the maximal number of basis vectors
+#   threshold  relative singular value cutoff for the numerical rank of R
+#   Q          orthonormal X_i ⊗ ℂ^{D_i} ← ℂ^m, m = min(rows, K)
+#   R          upper triangular ℂ^m ← ℂ^K
+#   rank       numerical rank of R
+# m can exceed the rank: for a deficient sketch the Householder QR still returns m orthonormal columns
+mutable struct SketchBasis{TZ<:AbstractTensorMap, TQ<:AbstractTensorMap}
     rows::Int
     threshold::Float64
-    r::Matrix{ComplexF64}
-    blocks::Vector{Tuple{Int, LinearAlgebra.QRCompactWY{ComplexF64, Matrix{ComplexF64}, Matrix{ComplexF64}}}}
-    nrefl::Int
+    Z::TZ
+    Q::TQ
+    R::SketchMatrix
     shift::Float64
-    G::Union{Nothing, Matrix{ComplexF64}}
     rank::Int
-    basis::Union{Nothing, Matrix{ComplexF64}}
 end
 
-_IncrementalSketch(rows::Int, threshold::Real) =
-    _IncrementalSketch(rows, threshold, zeros(ComplexF64, 0, 0), [], 0, -Inf, nothing, 0, nothing)
+# Empty basis on the space V = X_i ⊗ ℂ^{D_i}
+SketchBasis(V; threshold::Real = 1e-13) =
+    SketchBasis(dim(V), Float64(threshold), zeros(ComplexF64, V ← ℂ^0), zeros(ComplexF64, V ← ℂ^0),
+                zeros(ComplexF64, ℂ^0 ← ℂ^0), -Inf, 0)
 
-_width(sk::_IncrementalSketch) = size(sk.r, 2)
+sketch_width(basis::SketchBasis) = dim(domain(basis.R))       # K, number of stored sketch columns
+basis_size(basis::SketchBasis) = dim(codomain(basis.R))       # m, number of basis vectors
 
-# Append the sketch columns Y with column log scales logs
-function _append!(sk::_IncrementalSketch, Y::AbstractMatrix{ComplexF64}, logs::AbstractVector{Float64})
-    old, nnew = _width(sk), size(Y, 2)
-    shift = max(sk.shift, maximum(logs))
-    scale = old > 0 ? exp(sk.shift - shift) : 1.0
-    factors = exp.(logs .- shift)
-    (any(iszero, factors) || scale == 0) && throw(DomainError(shift, "Gaussian column scale exceeds numerical range"))
-    sk.r .*= scale
-    isnothing(sk.G) || (sk.G ./= scale)
-    sk.shift = shift
+# Singular values of a matrix between trivially graded spaces (trivial symmetry)
+matrix_svdvals(t::AbstractTensorMap) = dim(t) == 0 ? Float64[] : svdvals(convert(Array, t))
 
-    block = Y .* transpose(factors)
-    for (offset, F) in sk.blocks
-        lmul!(F.Q', view(block, offset+1:sk.rows, :))
-    end
-    k = sk.nrefl
-    if k < sk.rows
-        F = qr(block[k+1:end, :])
-        added = min(sk.rows - k, nnew)
-        push!(sk.blocks, (k, F))
-        rr = F.R
-    else
-        added = 0
-        rr = zeros(ComplexF64, 0, nnew)
-    end
-    R = zeros(ComplexF64, k + added, old + nnew)
-    R[1:k, 1:old] .= sk.r
-    R[1:k, old+1:end] .= view(block, 1:k, :)
-    R[k+1:k+added, old+1:end] .= rr
-    sk.r, sk.nrefl, sk.basis = R, k + added, nothing
+# Append the sketch columns Znew: X_i ⊗ ℂ^{D_i} ← ℂ^nnew with column log scales logs; update Z, Q, R and rank
+function append_columns!(basis::SketchBasis, Znew::AbstractTensorMap, logs::AbstractVector{Float64})
+    old, nnew = sketch_width(basis), dim(domain(Znew))
 
-    s = svdvals(R)
-    sk.rank = (isempty(s) || s[1] == 0) ? 0 : count(>(sk.threshold*s[1]), s)
-    width = old + nnew
-    if sk.rank == width && width <= sk.rows
-        if isnothing(sk.G) || old == 0
-            sk.G = UpperTriangular(R)' \ Matrix{ComplexF64}(I, width, width)
-        else
-            inv = UpperTriangular(rr)' \ Matrix{ComplexF64}(I, nnew, nnew)
-            lower = -inv * (view(block, 1:k, :)' * sk.G)
-            sk.G = [sk.G zeros(ComplexF64, old, nnew); lower inv]
+    # 1. Common scale: all columns relative to exp(shift), shift the largest log scale so far
+    shift = max(basis.shift, maximum(logs))
+    scale = old > 0 ? exp(basis.shift - shift) : 1.0           # old columns to the new reference (≤ 1)
+    factors = exp.(logs .- shift)                                # new columns relative to the new reference (≤ 1)
+    (any(iszero, factors) || scale == 0) && throw(DomainError(shift, "sketch column scale exceeds numerical range"))
+    basis.shift = shift
+    Zs = Znew * DiagonalTensorMap(factors, ℂ^nnew)
+    basis.Z = catdomain(basis.Z * scale, Zs)
+
+    # 2. Householder QR of all columns: Q orthonormal even for a deficient sketch, m = min(rows, K).
+    # Rank and leave-one-out residuals only depend on R'R = Z'Z, so recomputing gives the same results
+    basis.Q, basis.R = qr_compact(basis.Z)
+
+    # 3. Numerical rank
+    s = matrix_svdvals(basis.R)
+    basis.rank = (isempty(s) || s[1] == 0) ? 0 : count(>(basis.threshold * s[1]), s)
+    return basis
+end
+
+#==========================================================================================
+ Step 5: error estimate and stopping
+==========================================================================================#
+
+# Leave-one-out residuals of all columns of R (rank r): residual of column j against the span of the other columns,
+# i.e. the fresh-column test ‖v - QQ'v‖ of column j against the basis of the others. Q is an isometry, so these are the
+# residuals of the sketch columns. With R = U Σ V' truncated to rank r (V: K × r) the leverage h_j = ‖V[j, :]‖² is the
+# diagonal of the projector V V' onto the row space of R (0 ≤ h_j ≤ 1, Σ h_j = r). For independent columns
+# ρ_j = |R_KK| after moving column j to the end = 1/‖row j of R⁺‖ (docs, Step 5); with R⁺ = V Σ⁻¹ U':
+#   - leverage ‖V[j, :]‖² < 1: e_j is not in the row space, column j is a combination of the others, residual 0
+#   - leverage ‖V[j, :]‖² = 1: column j is needed for the span, residual 1/‖Σ⁻¹ V[j, :]'‖ (= 1/‖R^{-†}[:, j]‖ at full rank)
+function loo_residuals(R::AbstractTensorMap, rank::Int; leverage_tol::Real = 1e-8)
+    _, Σ, Vh = svd_trunc(R; trunc = truncrank(max(rank, 1)))
+    V = copy(convert(Array, Vh)')                                 # K × r
+    σ = diag(convert(Array, Σ))
+    return [sum(abs2, v) > 1 - leverage_tol ? 1 / LinearAlgebra.norm(v ./ σ) : 0.0 for v in eachrow(V)]
+end
+
+# Returns (rank, err, nrm, saturated): numerical rank of the sketch, leave-one-out error estimate, norm estimate,
+# and whether Q spans all rows (then err = 0). The cut is accepted when saturated || err <= rtol*nrm
+function estimate_error(basis::SketchBasis)
+    K = sketch_width(basis)
+    nrm = LinearAlgebra.norm(basis.R) / sqrt(K)
+    K >= basis.rows && return basis.rank, 0.0, nrm, true
+    err = LinearAlgebra.norm(loo_residuals(basis.R, basis.rank)) / sqrt(K)
+    return basis.rank, err, nrm, false
+end
+
+# Double check of a rank-deficient sketch with fresh columns: ‖V - QQ'V‖ <= rtol ‖V‖. Returns a Bool.
+# The fresh columns are the prefix rows right after the current sketch; they are appended to the basis afterwards,
+# so the prefix rows and the sketch columns stay aligned
+function fresh_check(store::PrefixStore, basis::SketchBasis, J::AbstractTensorMap, i::Int; rtol::Real, nfresh::Int = 3)
+    K = sketch_width(basis)
+    cols = K+1:K+nfresh
+    store.width < last(cols) && extend_prefixes!(store, last(cols) - store.width, i)
+    V, logs = sketch_columns(store, J, i, cols), store.logs[i][cols]
+    Vs = V * DiagonalTensorMap(exp.(logs .- maximum(logs)), ℂ^nfresh)     # relative scales of the fresh columns
+    Q = basis.Q
+    passed = LinearAlgebra.norm(Vs - Q * (Q' * Vs)) <= rtol * LinearAlgebra.norm(Vs)
+    append_columns!(basis, V, logs)
+    return passed
+end
+
+#==========================================================================================
+ Step 6: core and next suffix
+==========================================================================================#
+
+# Basis Q: X_i ⊗ ℂ^{D_i} ← ℂ^m to the right-orthonormal MPS core G_i: ℂ^m ⊗ X_i' ← ℂ^{D_i} (m becomes D_{i-1})
+function core_from_basis(Q::AbstractTensorMap)
+    t = copy(Q')                                                  # ℂ^m ← X_i ⊗ ℂ^{D_i}
+    N = numind(t)
+    return permute(t, (Tuple(1:N-1), (N,)))
+end
+
+# Orthonormal basis of the numerical range of the sketch: Q itself when R has full row rank, else Q U with U the
+# leading rank left singular vectors of R (drops the completion directions of a deficient sketch). At least 1 vector
+function trimmed_basis(basis::SketchBasis)
+    r = max(basis.rank, 1)
+    r == basis_size(basis) && return basis.Q
+    U, = svd_trunc(basis.R; trunc = truncrank(r))
+    return basis.Q * U
+end
+
+# Next suffix S_{i-1} = J Q: V_i ← ℂ^m
+next_suffix(J::AbstractTensorMap, Q::AbstractTensorMap) = J * Q
+
+#==========================================================================================
+ Steps 1-6 for one cut, and the sweep
+==========================================================================================#
+
+# One cut i (also the first cut i = L, where S = 1: R_L ← ℂ^1): J = apply_suffix(P, i, S), sketch adaptively
+# up to cap until the error target rtol is met, and return (G_i, S_{i-1}, final sketch width, target met).
+# The sketch starts at 2 columns, or at 4/5 of the final width κ of this cut in the previous time step (warm start)
+function compress_cut!(P::Source, store::PrefixStore, S::AbstractTensorMap, i::Int; rtol::Real, cap::Int,
+                       rank_threshold::Real = 1e-13, previous_width = nothing, to::TimerOutput = TimerOutput())
+    @timeit to "contract_suffix" J = apply_suffix(P, i, S)
+    basis = SketchBasis(domain(J); threshold = rank_threshold)
+    k0 = isnothing(previous_width) ? 2 : min(basis.rows, max(2, (4 * previous_width) ÷ 5))
+    k = min(k0, cap)
+    while true
+        store.width < k && @timeit to "extend_prefixes" extend_prefixes!(store, k - store.width, i)
+        K = sketch_width(basis)
+        if K < k
+            @timeit to "sketch" Z = sketch_columns(store, J, i, K+1:k)
+            @timeit to "qr_update" append_columns!(basis, Z, store.logs[i][K+1:k])
         end
-        all(isfinite, sk.G) || throw(DomainError(sk.G, "nonfinite SRC inverse adjoint"))
-    else
-        sk.G = nothing
-    end
-    return sk
-end
-
-# Thin orthonormal basis Q (rows × nrefl) of the sketch, including the completion of deficient sketches
-function _basis(sk::_IncrementalSketch)
-    if isnothing(sk.basis)
-        Q = Matrix{ComplexF64}(I, sk.rows, sk.nrefl)
-        for (offset, F) in Iterators.reverse(sk.blocks)
-            lmul!(F.Q, view(Q, offset+1:sk.rows, :))
+        @timeit to "estimates" rank, err, nrm, saturated = estimate_error(basis)
+        met = saturated || err <= rtol * nrm
+        if met && !saturated && rank < sketch_width(basis)       # deficient sketch: double check with fresh columns
+            met = @timeit to "fresh_check" fresh_check(store, basis, J, i; rtol = rtol)
+            k = sketch_width(basis)
         end
-        sk.basis = Q
-    end
-    return sk.basis
-end
-
-_row_saturated(Q::Matrix) = size(Q, 1) == size(Q, 2) && LinearAlgebra.norm(Q'*Q - I) <= 1e-12*max(1, size(Q, 2))
-
-# Numerical rank, error and norm estimates (C.2/C.3) in the common log scale of the sketch, and whether the sketch
-# saturates all rows
-function _estimates(sk::_IncrementalSketch; to::TimerOutput = TimerOutput())
-    width = _width(sk)
-    nrm = LinearAlgebra.norm(sk.r)/sqrt(width)
-    if width >= sk.rows && sk.nrefl == sk.rows && _row_saturated(_basis(sk))
-        return sk.rank, 0.0, nrm, true
-    elseif !isnothing(sk.G)
-        # Scaled column norms avoid overflow of |G|² near the inversion limit
-        scales = vec(maximum(abs, sk.G; dims = 1))
-        inverse_norms = (1 ./ scales) ./ sqrt.(vec(sum(abs2, sk.G ./ transpose(scales); dims = 1)))
-        return sk.rank, LinearAlgebra.norm(inverse_norms)/sqrt(width), nrm, false
-    end
-    @timeit to "loo" err = LinearAlgebra.norm(_loo_residuals(sk.r, sk.threshold))/sqrt(width)
-    return sk.rank, err, nrm, false
-end
-
-# Leave-one-out residuals of every sketch column z_j = Q r_j against the span of the others, computed from the
-# triangular factor R (Q is an isometry, so ‖z_j - P_{Z₋ⱼ} z_j‖ = ‖r_j - P_{R₋ⱼ} r_j‖). Prefix reduction (Finite011):
-# the columns before j live in rows 1:j-1, which are projected out completely, so only R[j:, j] against the numerical
-# span of R[j:, j+1:] remains. The numerical span keeps pivoted QR diagonals > rank_threshold times the largest
-# column norm of R. Falls back to the direct residuals on a nonfinite factorization.
-function _loo_residuals(R::AbstractMatrix{ComplexF64}, rank_threshold::Real)
-    m, k = size(R)
-    reference = maximum(j -> LinearAlgebra.norm(view(R, :, j)), 1:k)
-    residuals = map(1:k) do j
-        j > m && return 0.0
-        v = R[j:m, j]
-        j == k && return LinearAlgebra.norm(v)
-        F = qr(R[j:m, j+1:k], ColumnNorm())
-        d = abs.(diag(F.R))
-        r = count(>(rank_threshold*reference), d)
-        w = F.Q' * v
-        LinearAlgebra.norm(view(w, r+1:length(w)))
-    end
-    all(isfinite, residuals) && return residuals
-    return _loo_residuals_direct(R, rank_threshold)
-end
-
-# Direct leave-one-out residuals against the numerical span of all other columns (reference implementation)
-function _loo_residuals_direct(R::AbstractMatrix{ComplexF64}, rank_threshold::Real)
-    k = size(R, 2)
-    buffer = Matrix{ComplexF64}(undef, size(R, 1), k-1)
-    map(1:k) do j
-        buffer[:, 1:j-1] .= view(R, :, 1:j-1)
-        buffer[:, j:k-1] .= view(R, :, j+1:k)
-        F = qr!(buffer, ColumnNorm())
-        d = abs.(diag(F.R))
-        r = (isempty(d) || d[1] == 0) ? 0 : count(>(rank_threshold*d[1]), d)
-        v = F.Q' * R[:, j]
-        LinearAlgebra.norm(view(v, r+1:length(v)))
+        if met || k >= cap
+            Q = trimmed_basis(basis)
+            @timeit to "project" S = next_suffix(J, Q)
+            return core_from_basis(Q), S, sketch_width(basis), met
+        end
+        k = min(k + max(3, k ÷ 4), cap)                          # geometric growth: few, wide blocks
     end
 end
 
-# Left to right SVD rounding of right canonical cores (core 1 carries the norm): per-cut budget tol‖Ψ‖/√(L-1).
-# Returns the relative rounding error and whether it meets tol
-function _round_cores!(cores::Vector{Array{ComplexF64, 3}}, max_rank::Int, tol::Real)
-    total = LinearAlgebra.norm(cores[1])
-    budget = tol*total/sqrt(max(1, length(cores)-1))
-    errors = Float64[]
-    for i in 1:length(cores)-1
-        a = cores[i]
-        F = svd(reshape(a, :, size(a, 3)))
-        tail = [sqrt.(reverse(cumsum(reverse(F.S.^2)))); 0.0]
-        good = findfirst(<=(budget), tail[2:end])
-        rank = min(max_rank, isnothing(good) ? length(F.S) : good)
-        push!(errors, tail[rank+1])
-        cores[i] = reshape(F.U[:, 1:rank], size(a, 1), size(a, 2), rank)
-        SV = Diagonal(F.S[1:rank]) * F.Vt[1:rank, :]
-        b = cores[i+1]
-        cores[i+1] = reshape(SV * reshape(b, size(b, 1), :), rank, size(b, 2), size(b, 3))
-    end
-    error = LinearAlgebra.norm(errors)/total
-    return error, error <= tol
-end
-
-# Generic adaptive SRC of the source P.
-# rtol: relative error target per cut, sketch_cap: maximal sketch width (and rank) per cut,
-# previous_widths: final sketch widths of the previous step (warm start ⌊4k/5⌋), or nothing for a cold start of 2,
-# round_rank: maximal rank of the final SVD rounding, or nothing for no rounding.
-# Returns the cores [r, x, q] (right canonical up to rounding, core 1 carries the norm) and a NamedTuple of diagnostics.
-function _src_run(P, rng::AbstractRNG; rtol::Real, sketch_cap::Int, rank_threshold::Real = 1e-13, round_rank = nothing,
-                  round_tol::Real = 0.0, previous_widths = nothing, to::TimerOutput = TimerOutput())
+# Right-to-left sweep over the cuts i = L..2, first core G_1 = J_1, optional rounding (Step 7).
+# previous_widths[i-1] is the final sketch width of cut i in the previous call (warm start), or nothing.
+# Returns (cores, info) with info (pre_round_ranks, sketch_widths, target_met, cap_unmet, rounding_error, rounding_met)
+function run_src(P::Source, rng::AbstractRNG; rtol::Real, sketch_cap::Int, rank_threshold::Real = 1e-13,
+                 round_rank = nothing, round_tol::Real = 0.0, previous_widths = nothing, to::TimerOutput = TimerOutput())
     L = length(P)
     cap = max(sketch_cap, 2)
-
-    # Gaussian Khatri-Rao prefixes C[i][l1, l2, k] with column log scales, shared between all cuts, in capacity
-    # buffers of cap+3 columns with a common active width. Cuts run from right to left, so cut i only ever needs
-    # the prefixes of sites 1..i: extensions stop at the current cut and the buffers of later sites are released.
-    prefixes = [zeros(ComplexF64, _left_shape(P, i)..., cap + 3) for i in 1:L]
-    logs = [zeros(cap + 3) for _ in 1:L]
-    width = 0
-    extend!(ncols, top) = @timeit to "extend_prefixes" _extend!(ncols, top)
-    function _extend!(ncols, top)
-        cols = width+1:width+ncols
-        C = ones(ComplexF64, 1, 1, ncols)
-        ls = zeros(ncols)
-        prefixes[1][:, :, cols] .= C
-        logs[1][cols] .= ls
-        for i in 1:top-1
-            Ω = (randn(rng, _physical_dim(P, i), ncols) + im*randn(rng, _physical_dim(P, i), ncols))/sqrt(2)
-            C = _prefix(P, i, C, Ω)
-            all(isfinite, C) || throw(DomainError(C, "nonfinite prefix sketch"))
-            scales = [maximum(abs, view(C, :, :, k)) for k in 1:ncols]
-            scales[scales .== 0] .= 1.0
-            C ./= reshape(scales, 1, 1, :)
-            ls = ls .+ log.(scales)
-            prefixes[i+1][:, :, cols] .= C
-            logs[i+1][cols] .= ls
-        end
-        width += ncols
-    end
-    # Reorder (and truncate) the active columns of sites 1..top in place
-    function reorder!(order, top)
-        for j in 1:top
-            prefixes[j][:, :, 1:length(order)] = prefixes[j][:, :, order]
-            logs[j][1:length(order)] = logs[j][order]
-        end
-        width = length(order)
-    end
-    # Right sketch Y[(x, q), k] = Σ J[l, (x, q)] C[l, k] of the reshaped cut-local J
-    sketch(Jm, i, cols) = transpose(Jm) * reshape(view(prefixes[i], :, :, cols), size(Jm, 1), :)
-
-    cores = Vector{Array{ComplexF64, 3}}(undef, L)
-    widths = zeros(Int, L-1)
-    unmet = falses(L-1)
-    S = ones(ComplexF64, 1, 1, 1)
+    store = PrefixStore(P, rng)
+    cores = Vector{AbstractTensorMap}(undef, L)
+    widths, met = zeros(Int, L-1), trues(L-1)
+    S = ones(ComplexF64, right_space(P, L) ← ℂ^1)                # R_L is one-dimensional
     for i in L:-1:2
-        @timeit to "contract_suffix" J = _contract_suffix(P, i, S)
-        Jm = reshape(J, size(J, 1)*size(J, 2), :)
-        rows = size(Jm, 2)
-        k = isnothing(previous_widths) ? 2 : min(rows, max(2, (4*previous_widths[i-1]) ÷ 5))
-        k = min(k, cap)
-        sk = _IncrementalSketch(rows, rank_threshold)
-        pending = nothing
-        local met
-        while true
-            (width < k) && extend!(k - width, i)
-            # Only new columns are sketched; failed fresh-check columns are reused as the next columns
-            old = _width(sk)
-            if !isnothing(pending)
-                V, vlogs = pending
-                take = min(k - old, size(V, 2))
-                @timeit to "qr_update" _append!(sk, V[:, 1:take], vlogs[1:take])
-                old += take
-                pending = nothing
-            end
-            if old < k
-                @timeit to "sketch" Y = sketch(Jm, i, old+1:k)
-                all(isfinite, Y) || throw(DomainError(Y, "nonfinite right sketch"))
-                @timeit to "qr_update" _append!(sk, Y, logs[i][old+1:k])
-            end
-            @timeit to "estimates" rank, err, nrm, saturated = _estimates(sk; to = to)
-            met = saturated || err <= rtol*nrm
-            if met && !saturated && rank < k
-                # Deficient sketch: check with three fresh columns, which become the next columns if the check fails
-                met = @timeit to "fresh_check" begin
-                    old_width = width
-                    extend!(3, i)
-                    V = sketch(Jm, i, old_width+1:old_width+3)
-                    all(isfinite, V) || throw(DomainError(V, "nonfinite validation sketch"))
-                    vlogs = logs[i][old_width+1:old_width+3]
-                    pending = (V, vlogs)
-                    order = [1:k; old_width+1:old_width+3; k+1:old_width]
-                    reorder!(order[1:min(length(order), cap)], i)
-                    Vs = V .* transpose(exp.(vlogs .- maximum(vlogs)))
-                    Q = _basis(sk)
-                    LinearAlgebra.norm(Vs - Q*(Q'*Vs)) <= rtol*LinearAlgebra.norm(Vs)
-                end
-            end
-            (met || k >= cap) && break
-            k = min(k + 3, cap)
-        end
-        widths[i-1] = k
-        unmet[i-1] = !met
-        Q = _basis(sk)
-        cores[i] = reshape(transpose(Q), size(Q, 2), _physical_dim(P, i), size(S, 3))
-        @timeit to "project" S = reshape(Jm * conj(Q), size(J, 1), size(J, 2), size(Q, 2))
-        # Release the prefixes of site i, later cuts never use them
-        prefixes[i] = zeros(ComplexF64, 0, 0, 0)
+        previous_width = isnothing(previous_widths) ? nothing : previous_widths[i-1]
+        cores[i], S, widths[i-1], met[i-1] = compress_cut!(P, store, S, i; rtol = rtol, cap = cap, rank_threshold = rank_threshold,
+                                                           previous_width = previous_width, to = to)
+        store.C[i] = nothing                                      # later cuts never use the prefixes of site i
     end
-    @timeit to "first_core" cores[1] = reshape(_contract_suffix(P, 1, S), 1, _physical_dim(P, 1), size(S, 3))
-    pre_round_ranks = [size(c, 3) for c in cores[1:L-1]]
+    J1 = isomorphism(ComplexF64, ℂ^1, left_space(P, 1)) * apply_suffix(P, 1, S)   # ℂ^1 ← X_1 ⊗ ℂ^{D_1}, V_1 is one-dimensional
+    cores[1] = core_from_basis(copy(J1'))
+    cores = [c for c in cores]                                    # concrete element type
+    pre_round_ranks = [dim(domain(c)) for c in cores[1:L-1]]
 
     rounding_error, rounding_met = 0.0, true
-    if !isnothing(round_rank)
-        @timeit to "rounding" rounding_error, rounding_met = _round_cores!(cores, round_rank, round_tol)
-    end
-    all(c -> all(isfinite, c), cores) || throw(DomainError(cores, "nonfinite SRC output"))
-    info = (pre_round_ranks = pre_round_ranks, sketch_widths = widths, cap_unmet = count(unmet), target_met = !any(unmet),
+    isnothing(round_rank) || (@timeit to "round" (rounding_error, rounding_met) = round_cores!(cores, round_rank, round_tol))
+    info = (pre_round_ranks = pre_round_ranks, sketch_widths = widths, target_met = all(met), cap_unmet = count(!, met),
             rounding_error = rounding_error, rounding_met = rounding_met)
     return cores, info
 end
 
-function _src_partition(ψ::FiniteDisorderMPS, Ws::Vector{Array{ComplexF64, 5}}; max_rank::Int, rtol::Real = 1e-10,
-                        rank_threshold::Real = 1e-13, rng::AbstractRNG = Random.default_rng(), to::TimerOutput = TimerOutput())
-    any(<=(0), ψ.ps) && throw(ArgumentError("SRC requires strictly positive disorder probabilities"))
-    @timeit to "product_setup" begin
-        A, la = _scaled(_dense_layers(ψ))
-        W, lw = _scaled(Ws)
-        P = _EvolvedPartitionProduct(A, W, sqrt.(ψ.ps))
-    end
-    cores, info = _src_run(P, rng; rtol = rtol, sketch_cap = max_rank, rank_threshold = rank_threshold, to = to)
-    # Both the ket and the bra layer carry the scales
-    return ScalarPartition(cores, 2*(la + lw), collect(Float64, ψ.ps)), info
+#==========================================================================================
+ Step 7: rounding and entry points
+==========================================================================================#
+
+# Contract M: ℂ^k ← ℂ^{D_{i-1}} into the left virtual leg of the MPS core c: ℂ^{D_{i-1}} ⊗ X_i' ← ℂ^{D_i}
+function absorb_left(M::AbstractTensorMap, c::AbstractTensorMap)
+    N = numind(c)
+    return permute(M * permute(c, ((1,), Tuple(2:N))), (Tuple(1:N-1), (N,)))
 end
 
-# Adaptive SRC of √P(w) Z(w) of the evolved state Us ψ, without forming Us ψ. max_rank caps the rank of every cut.
-# Returns the ScalarPartition and a NamedTuple of diagnostics
-src_partition(ψ::FiniteDisorderMPS, Us::FiniteDisorderMPO; kwargs...) = _src_partition(ψ, _dense_layers(Us); kwargs...)
+# Left-to-right SVD rounding of right-orthonormal cores (core 1 carries the norm) to at most max_rank = D_max, with total
+# relative error tol (budget tol‖Ψ‖/√(L-1) per cut). Returns (relative rounding error, error <= tol)
+function round_cores!(cores::Vector, max_rank::Int, tol::Real)
+    total = LinearAlgebra.norm(cores[1])
+    budget = tol * total / sqrt(max(1, length(cores) - 1))
+    errors = zeros(length(cores) - 1)
+    for i in 1:length(cores)-1
+        U, Σ, Vh, errors[i] = svd_trunc(cores[i]; trunc = truncrank(max_rank) & truncerror(; atol = budget))
+        cores[i] = U
+        cores[i+1] = absorb_left(Σ * Vh, cores[i+1])
+    end
+    err = LinearAlgebra.norm(errors) / total
+    return err, err <= tol
+end
 
-# Adaptive SRC of √P(w) Z(w) of ψ itself
-src_partition(ψ::FiniteDisorderMPS; kwargs...) = _src_partition(ψ, _identity_layers(ψ); kwargs...)
+# √P(w) Z(w) of W ψ for the MPO layers Ws[i][u], without forming W ψ
+function src_partition(ψ::FiniteDisorderMPS, Ws::Vector{<:Vector{<:AbstractMPOTensor}}; max_rank::Int, rtol::Real = 1e-10,
+                       rank_threshold::Real = 1e-13, rng::AbstractRNG = Random.default_rng(), to::TimerOutput = TimerOutput())
+    any(<=(0), ψ.ps) && throw(ArgumentError("SRC requires strictly positive disorder probabilities"))
+    @timeit to "product_setup" begin
+        A, la = rescale_layers(ψ.opp)
+        W, lw = rescale_layers(Ws)
+        P = PartitionSource(A, W, sqrt.(ψ.ps))
+    end
+    cores, info = run_src(P, rng; rtol = rtol, sketch_cap = max_rank, rank_threshold = rank_threshold, to = to)
+    return ScalarPartition(cores, 2 * (la + lw), collect(Float64, ψ.ps)), info   # ket and bra both carry the scales
+end
 
-# Compress f ⊙ (Us ψ) with adaptive SRC followed by SVD rounding to at most maxD, without forming Us ψ or f ⊙ (Us ψ).
-# rtol: relative error target per cut, sketch_cap: maximal sketch width per cut,
-# previous_widths: final sketch widths of the previous step (warm start ⌊4k/5⌋), or nothing for a cold start of 2.
-# Returns the compressed FiniteDisorderMPS and a NamedTuple of diagnostics.
+# √P(w) Z(w) of the evolved state Us ψ, without forming Us ψ.
+# Returns (ScalarPartition(cores, log_scale, ps), info); exp(log_scale) cores[1][:, w₁, :] ⋯ cores[L][:, w_L, :] = √P(w) Z(w)
+src_partition(ψ::FiniteDisorderMPS, Us::FiniteDisorderMPO; kwargs...) = src_partition(ψ, Us.opp; kwargs...)
+
+# √P(w) Z(w) of ψ itself
+src_partition(ψ::FiniteDisorderMPS; kwargs...) = src_partition(ψ, identity_layers(ψ); kwargs...)
+
+# Compress f ⊙ (Us ψ) with SRC followed by rounding to at most maxD, without forming Us ψ.
+# Returns (FiniteDisorderMPS, info), unweighted (the √p_u are divided out again) and with the absolute scale restored.
+# previous_widths = info.sketch_widths of the previous call starts every cut near its previous width (warm start)
 function src_compress(ψ::FiniteDisorderMPS, Us::FiniteDisorderMPO, F::FiniteDisorderFilter; maxD::Int, rtol::Real = 1e-11,
                       sketch_cap::Int = 128, rank_threshold::Real = 1e-13, round_tol::Real = 1e-10, previous_widths = nothing,
                       rng::AbstractRNG = Random.default_rng(), to::TimerOutput = TimerOutput())
     any(<=(0), ψ.ps) && throw(ArgumentError("SRC requires strictly positive disorder probabilities"))
     L = length(ψ)
-    (length(Us) == L == length(F)) || throw(ArgumentError("ψ, Us and F should have the same length"))
+    (length(Us.opp) == L == length(F.opp)) || throw(ArgumentError("ψ, Us and F should have the same length"))
     @timeit to "product_setup" begin
-        A, la = _scaled(_dense_layers(ψ))
-        W, lw = _scaled(_dense_layers(Us))
-        f, lf = _scaled(_dense_layers(F))
-        P = _EvolvedFilterProduct(A, W, f, sqrt.(ψ.ps))
-        log_scale = la + lw + lf + F.log_scale
+        A, la = rescale_layers(ψ.opp)
+        W, lw = rescale_layers(Us.opp)
+        f, lf = rescale_layers(F.opp)
+        P = PhysicalSource(A, W, f, sqrt.(ψ.ps))
     end
-    cores, info = _src_run(P, rng; rtol = rtol, sketch_cap = sketch_cap, rank_threshold = rank_threshold, round_rank = maxD,
-                           round_tol = round_tol, previous_widths = previous_widths, to = to)
+    cores, info = run_src(P, rng; rtol = rtol, sketch_cap = sketch_cap, rank_threshold = rank_threshold, round_rank = maxD,
+                          round_tol = round_tol, previous_widths = previous_widths, to = to)
 
-    # Back to an unweighted FiniteDisorderMPS with the absolute scale spread over the sites
-    factor = exp(log_scale/L)
-    (isfinite(factor) && factor > 0) || throw(DomainError(log_scale, "absolute SRC scale cannot be materialized"))
-    ns = size(W[1], 2)
-    @timeit to "materialize" opp = map(1:L) do i
-        c = reshape(cores[i], size(cores[i], 1), ns, length(ψ.ps), size(cores[i], 3))
-        map(enumerate(ψ.ps)) do (p, prob)
-            TensorMap(c[:, :, p, :] * (factor/sqrt(prob)), ℂ^size(c, 1) ⊗ ℂ^ns, ℂ^size(c, 4))
+    # Sector u of the core c: ℂ^{D_{i-1}} ⊗ ℂ^d ⊗ (ℂ^q)' ← ℂ^{D_i} is the MPS tensor ℂ^{D_{i-1}} ⊗ ℂ^d ← ℂ^{D_i}; the absolute scale is
+    # spread evenly over the sites and the weight √p_u is divided out
+    factor = exp((la + lw + lf + F.log_scale) / L)
+    (isfinite(factor) && factor > 0) || throw(DomainError(factor, "absolute SRC scale cannot be materialized"))
+    q = length(ψ.ps)
+    @timeit to "materialize" opp = map(cores) do c
+        map(1:q) do u
+            e = Tensor([j == u ? 1.0 : 0.0 for j in 1:q], ℂ^q)   # basis ket of sector u
+            @tensor cu[r s; q] := c[r s x; q] * e[x]
+            cu * (factor / sqrt(ψ.ps[u]))
         end
     end
     return FiniteDisorderMPS(opp, ψ.ps), info
