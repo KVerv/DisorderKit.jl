@@ -12,17 +12,17 @@ Base.size(O::FiniteDisorderMPO) = size(O.opp)
 Base.length(O::FiniteDisorderMPO) = length(O.opp)
 Base.iterate(O::FiniteDisorderMPO, i=1) = (i > length(O.opp)) ? nothing : (O[i], i + 1)
 
-# Move the disorder dependence of the bond term Cs[p]⊗Bs[p] onto the left site: Bs[p] = α_p B_ref gives
-# Cs[p] → α_p Cs[p] and Bs[p] → B_ref, such that the coupling of bond (i, i+1) is set by the sector of site i
+# Move the disorder dependence of the bond term Ls[p]⊗Rs[p] onto the left site: Rs[p] = α_p R_ref gives
+# Ls[p] → α_p Ls[p] and Rs[p] → R_ref, such that the coupling of bond (i, i+1) is set by the sector of site i
 function outgoing_coupling(Hs::DisorderMPOHam)
-    B_ref = Hs.Bs[1]
-    nB = real(dot(B_ref, B_ref))
-    αs = map(Hs.Bs) do B
-        α = dot(B_ref, B)/nB
-        TensorKit.norm(B - α*B_ref) <= 1e-12*max(TensorKit.norm(B), 1.0) || throw(ArgumentError("Bs[p] should all be proportional to each other"))
+    R_ref = Hs.Rs[1]
+    nR = real(dot(R_ref, R_ref))
+    αs = map(Hs.Rs) do R
+        α = dot(R_ref, R)/nR
+        TensorKit.norm(R - α*R_ref) <= 1e-12*max(TensorKit.norm(R), 1.0) || throw(ArgumentError("Rs[p] should all be proportional to each other"))
         α
     end
-    return DisorderMPOHam(Hs.As, fill(B_ref, length(Hs.Bs)), [α*C for (α, C) in zip(αs, Hs.Cs)], Hs.Ds)
+    return DisorderMPOHam(Hs.As, fill(R_ref, length(Hs.Rs)), [α*L for (α, L) in zip(αs, Hs.Ls)], Hs.Ds)
 end
 
 # Time evolution MPO on a chain of length L with open boundary conditions:

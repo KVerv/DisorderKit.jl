@@ -43,22 +43,6 @@ function approximate(ψ::InfiniteDisorderMPS, ϕ0::InfiniteDisorderMPS; gradtol=
 end
 
 function DisorderMPO(Hs::DisorderMPOHam)
-    Ws = Vector{typeof(Hs.As[1])}(undef, length(Hs.Bs))
-    for (p, B) in enumerate(Hs.Bs)
-        A = Hs.As[p]
-        C = Hs.Cs[p]
-        D = Hs.Ds[p]
-        Wcodomain = BlockTensorKit.boxplus(ℂ^2) ⊗ BlockTensorKit.boxplus(fill(ℂ^1, 3)...)
-        Wdomain = BlockTensorKit.boxplus(fill(ℂ^1, 3)...) ⊗ BlockTensorKit.boxplus(ℂ^2)
-        W = SparseBlockTensorMap{AbstractTensorMap{ComplexF64, ComplexSpace, 2, 2}}(undef, Wdomain, Wcodomain)
-
-        W[1, 1, 1, 1] = BraidingTensor{ComplexF64, ComplexSpace}(ℂ^2, ℂ^1)
-        W[1, 1, 1, 2] = BlockTensorKit.insertrightunit(C, 0)
-        W[1, 1, 1, 3] = MPSKit.add_util_leg(D)
-        W[2, 1, 1, 2] = A
-        W[2, 1, 1, 3] = BlockTensorKit.insertrightunit(B, 3)
-        W[3, 1, 1, 3] = BraidingTensor{ComplexF64, ComplexSpace}(ℂ^2, ℂ^1)
-        Ws[p] = W
-    end
+    Ws = [jordan_mpo_tensor(Hs.As[p], Hs.Rs[p], Hs.Ls[p], Hs.Ds[p]) for p in eachindex(Hs.Rs)]
     return InfiniteDisorderMPO(Ws)
 end

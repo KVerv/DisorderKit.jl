@@ -172,39 +172,39 @@ function filter_normalized_energy_density(ψ::FiniteDisorderMPS, Hs::DisorderMPO
     A = _dense_layers(ψ)
     f = _dense_layers(F)
     D = [ComplexF64.(convert(Array, x)) for x in Hc.Ds]     # D[out, in]
-    C = [ComplexF64.(convert(Array, x)) for x in Hc.Cs]     # C[out, in, v]
-    B = ComplexF64.(convert(Array, Hc.Bs[1]))               # B[v, out, in]
-    nv = size(B, 1)
+    Lop = [ComplexF64.(convert(Array, x)) for x in Hc.Ls]   # L[out, in, v], left site of a bond term
+    Rop = ComplexF64.(convert(Array, Hc.Rs[1]))             # R[v, out, in], right site of a bond term
+    nv = size(Rop, 1)
 
     # Transfer of a layered environment l[a, x, c, z] (ket A, ket f, bra A, bra f), ket A possibly with an operator applied
     transfer(l, Ak, fu, Au) = @tensor out[b, y, d, w] := (((l[a, x, c, z] * Ak[a, s, b]) * fu[x, y]) * conj(Au[c, s, d])) * conj(fu[z, w])
-    transfer_open(l, CA, fu, Au) = @tensor out[b, y, d, w, v] := (((l[a, x, c, z] * CA[a, s, b, v]) * fu[x, y]) * conj(Au[c, s, d])) * conj(fu[z, w])
-    transfer_close(l, BA, fu, Au) = @tensor out[b, y, d, w] := (((l[a, x, c, z, v] * BA[v, a, s, b]) * fu[x, y]) * conj(Au[c, s, d])) * conj(fu[z, w])
+    transfer_open(l, LA, fu, Au) = @tensor out[b, y, d, w, v] := (((l[a, x, c, z] * LA[a, s, b, v]) * fu[x, y]) * conj(Au[c, s, d])) * conj(fu[z, w])
+    transfer_close(l, RA, fu, Au) = @tensor out[b, y, d, w] := (((l[a, x, c, z, v] * RA[v, a, s, b]) * fu[x, y]) * conj(Au[c, s, d])) * conj(fu[z, w])
 
     lN = ones(ComplexF64, 1, 1, 1, 1)
     lE = zeros(ComplexF64, 1, 1, 1, 1)
-    lC = zeros(ComplexF64, 1, 1, 1, 1, nv)
+    lO = zeros(ComplexF64, 1, 1, 1, 1, nv)                  # environment with an open bond term
     log_scale = 2*F.log_scale
     for i in 1:L
         nb, ny = size(A[i], 3), size(f[i], 2)
-        N′, E′, C′ = zeros(ComplexF64, nb, ny, nb, ny), zeros(ComplexF64, nb, ny, nb, ny), zeros(ComplexF64, nb, ny, nb, ny, nv)
+        N′, E′, O′ = zeros(ComplexF64, nb, ny, nb, ny), zeros(ComplexF64, nb, ny, nb, ny), zeros(ComplexF64, nb, ny, nb, ny, nv)
         for (u, p) in enumerate(ψ.ps)
             Au, fu = A[i][:, :, :, u], f[i][:, :, u]
             @tensor DA[a, s, b] := D[u][s, t] * Au[a, t, b]
             N′ .+= p .* transfer(lN, Au, fu, Au)
             E′ .+= p .* (transfer(lE, Au, fu, Au) .+ transfer(lN, DA, fu, Au))
             if i > 1
-                @tensor BA[v, a, s, b] := B[v, s, t] * Au[a, t, b]
-                E′ .+= p .* transfer_close(lC, BA, fu, Au)
+                @tensor RA[v, a, s, b] := Rop[v, s, t] * Au[a, t, b]
+                E′ .+= p .* transfer_close(lO, RA, fu, Au)
             end
             if i < L
-                @tensor CA[a, s, b, v] := C[u][s, t, v] * Au[a, t, b]
-                C′ .+= p .* transfer_open(lN, CA, fu, Au)
+                @tensor LA[a, s, b, v] := Lop[u][s, t, v] * Au[a, t, b]
+                O′ .+= p .* transfer_open(lN, LA, fu, Au)
             end
         end
-        m = max(maximum(abs, N′), maximum(abs, E′), maximum(abs, C′))
+        m = max(maximum(abs, N′), maximum(abs, E′), maximum(abs, O′))
         (isfinite(m) && m > 0) || throw(DomainError(m, "unusable filtered environment at site $i"))
-        lN, lE, lC = N′ ./ m, E′ ./ m, C′ ./ m
+        lN, lE, lO = N′ ./ m, E′ ./ m, O′ ./ m
         log_scale += log(m)
     end
     E, N = only(lE)*exp(log_scale), only(lN)*exp(log_scale)

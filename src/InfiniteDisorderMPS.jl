@@ -105,8 +105,8 @@ function energy_density(ρ::InfiniteDisorderMPS, Hs::DisorderMPOHam)
          @tensor ED = W[4 2; 5] * Hs.Ds[p][3; 2] * conj(W[4 3; 6]) * r[5; 6]
         E += ρ.ps[p] * ED/λ
         for (q, V) in enumerate(ρ.opp)
-            @tensor ECB = W[1 2; 4] * Hs.Cs[p][3; 2 5] * conj(W[1 3; 6]) * V[4 7; 9] * Hs.Bs[p][5 8; 7] * conj(V[6 8; 10]) * r[9;10]
-            E += ρ.ps[p] * ρ.ps[q] * ECB/λ^2
+            @tensor ELR = W[1 2; 4] * Hs.Ls[p][3; 2 5] * conj(W[1 3; 6]) * V[4 7; 9] * Hs.Rs[p][5 8; 7] * conj(V[6 8; 10]) * r[9;10]
+            E += ρ.ps[p] * ρ.ps[q] * ELR/λ^2
         end
         #FIXME : currently only nearest-neighbor interactions
     end

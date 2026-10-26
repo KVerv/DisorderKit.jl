@@ -121,8 +121,8 @@ function energy(ρ::FiniteDisorderMPS, Hs::DisorderMPOHam)
         r = rs[i+2]
         for (p, W) in enumerate(ρ[i])
             for (q, V) in enumerate(ρ[i+1])
-                @tensor ECB = l[11; 1] * W[1 2; 4] * Hs.Cs[p][3; 2 5] * conj(W[11 3; 6]) * V[4 7; 9] * Hs.Bs[p][5 8; 7] * conj(V[6 8; 10]) * r[9; 10]
-                E += ρ.ps[p] * ρ.ps[q] * ECB
+                @tensor ELR = l[11; 1] * W[1 2; 4] * Hs.Ls[p][3; 2 5] * conj(W[11 3; 6]) * V[4 7; 9] * Hs.Rs[p][5 8; 7] * conj(V[6 8; 10]) * r[9; 10]
+                E += ρ.ps[p] * ρ.ps[q] * ELR
             end
         end
         #FIXME : currently only nearest-neighbor interactions
