@@ -90,3 +90,59 @@ Results are written to `<file>.tmp` and moved in place at the end, so a file tha
 | `converged`, `nsteps` | whether `ϵ_conv ≤ convtol` was reached, and the number of steps |
 | `params` | `L, δ, W, hs, Js, ps, Δτ, order, schedule, maxiter, convtol, filter_tail_tol, seed` (rebuild the model with `random_transverse_field_ising(params.Js, params.hs)`) |
 | `meta` | wall time, timings (`TimerOutput` as a Dict), git commit and dirty flag, Julia version, host, threads, date |
+
+# HPC scripts: disordered Bose-Hubbard chain with normalized ITE
+
+The HPC version of `examples/FiniteDisorderBoseHubbard.jl`: ground states of
+
+    H_w = -Σ t_{wᵢ} (b†ᵢbᵢ₊₁ + h.c.) + U/2 Σ nᵢ(nᵢ-1) - μ Σ nᵢ,   t_{wᵢ} ∈ {t, t/3} with probability 1/2 each,
+
+on an open chain of `L` sites, one job per chemical potential μ. Every job starts from the uniform superposition of all
+occupations (H conserves the particle number) and stores the final state and the per-step diagnostics only; the
+observables are computed afterwards by the plot script.
+
+| script | what it does |
+|---|---|
+| `BoseHubbard_NormalizedITE.jl` | one point (L, μ): runs the ITE and stores the final state and the per-step diagnostics |
+| `sweep_BoseHubbard_NormalizedITE.sh` | submits one PBS job per μ for a given L, skipping points that already have a result |
+| `plot_BoseHubbard_NormalizedITE.jl` | computes ρ, κ = dρ/dμ and \|⟨a⟩\|² from the stored states, prints and saves them as a CSV, and plots them against μ/U |
+
+## Usage (from the repo root, on the login node)
+
+    DRYRUN=1 bash hpc/sweep_BoseHubbard_NormalizedITE.sh 6     # show what would be submitted
+    bash hpc/sweep_BoseHubbard_NormalizedITE.sh 6              # submit μ/U = 0, 0.05, ..., 1 for L = 6
+    MUS="0.1 0.2 0.3" bash hpc/sweep_BoseHubbard_NormalizedITE.sh 6
+    T=0.1 MAXD=32 MAXITER=1000 bash hpc/sweep_BoseHubbard_NormalizedITE.sh 6
+
+    # afterwards, with the same run parameters (they set the run tag)
+    julia --project=. hpc/plot_BoseHubbard_NormalizedITE.jl 6
+    T=0.1 MAXD=32 julia --project=. hpc/plot_BoseHubbard_NormalizedITE.jl 6
+
+Run parameters (environment): `T` (0.16, strong hopping; the weak bonds have t/3), `U` (1.0), `NMAX` (4), `DTAU` (0.05),
+`MAXD` (16), `MAXITER` (400), `CONVTOL` (1e-8), `CROSS_WIDTH` (50), `DATA_DIR` ($VSC_DATA/data). Job resources:
+`WALLTIME` (4:00:00), `MEM` (8GB), `PPN` (4), `JULIA_THREADS` and `BLAS_THREADS` (both `PPN`), `CLUSTER` (skiddo),
+`JULIA`. Grid: `MUS`. Plot script: `N_SAMPLES` (1000, disorder words are enumerated exactly if q^L ≤ `N_SAMPLES`).
+
+## Data layout
+
+    $DATA_DIR/BoseHubbard_NormalizedITE/
+      t0.16_U1.0_nmax4_dtau0.05_D16/            run tag: t, U, nmax, Δτ, maxD
+        L6/
+          mu0.0000.jld2
+          mu0.0500.jld2
+          ...
+          observables.csv                       written by the plot script
+    logs/BoseHubbard_NormalizedITE/<run tag>/L<L>/   PBS stdout/stderr of every job
+    plots/BoseHubbard_NormalizedITE_<run tag>_L<L>.png
+
+`MAXITER` and `CONVTOL` are not in the run tag: rerunning with more steps needs `FORCE=1` (or another `DATA_DIR`).
+
+## Contents of a result file (load with `using DisorderKit, JLD2; d = load(file)`)
+
+| key | content |
+|---|---|
+| `ψ` | final `FiniteDisorderMPS` |
+| `info` | per-step diagnostics (NamedTuple of arrays), e.g. `Es`, `ϵsconv`, `bond_dimensions`, `residual_max` |
+| `converged`, `nsteps` | whether `ϵ_conv ≤ convtol` was reached, and the number of steps |
+| `params` | `L, μ, t, U, nmax, ps, Δτ, maxD, maxiter, convtol, cross_width` (rebuild the model with `random_bose_hubbard([t, t/3], [U], [μ]; nmax)`) |
+| `meta` | wall time, timings (`TimerOutput` as a Dict), git commit and dirty flag, Julia version, host, threads, date |
