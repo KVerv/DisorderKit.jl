@@ -44,7 +44,7 @@ end
 
 # ---- Simulation
 using TensorKit, DisorderKit, TimerOutputs, JLD2, Dates, LinearAlgebra
-BLAS.set_num_threads(Threads.nthreads())   # --threads=PPN controls both Julia and BLAS threads
+BLAS.set_num_threads(parse(Int, get(ENV, "BLAS_THREADS", string(Threads.nthreads()))))   # default: as many as Julia threads
 
 Δτ = parse(Float64, dtau_str)
 maxiter = parse(Int, get(ENV, "MAXITER", string(sum(first, schedule))))

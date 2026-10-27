@@ -7,6 +7,7 @@
 #   DELTAS="-0.5 0 0.5" WS="0.5 1" bash hpc/sweep_RTFIM_NormalizedITE.sh 16
 #   DMAX_SCHEDULE="300:8,200:16" DTAU=0.01 bash hpc/sweep_RTFIM_NormalizedITE.sh 16
 #   FORCE=1 bash hpc/sweep_RTFIM_NormalizedITE.sh 16                 # also resubmit points that already have a result
+#   PPN=8 JULIA_THREADS=1 BLAS_THREADS=8 bash hpc/sweep_RTFIM_NormalizedITE.sh 16   # thread split from the benchmark
 #
 # Run parameters (DTAU, ORDER, DMAX_SCHEDULE, MAXITER, CONVTOL, FILTER_TAIL_TOL, SEED, QUICK, DATA_DIR) are passed to the
 # jobs through the environment (qsub -V); see hpc/RTFIM_NormalizedITE.jl for their defaults.
@@ -28,7 +29,9 @@ WS="${WS:-0.1 0.5 1.0 2.0}"
 WALLTIME="${WALLTIME:-24:00:00}"
 MEM="${MEM:-16GB}"
 NODES=1
-PPN="${PPN:-4}"   # CPUs per node, Julia runs with --threads=$PPN
+PPN="${PPN:-4}"   # CPUs per node
+JULIA_THREADS="${JULIA_THREADS:-$PPN}"   # Julia runs with --threads=$JULIA_THREADS
+BLAS_THREADS="${BLAS_THREADS:-$PPN}"     # and BLAS.set_num_threads($BLAS_THREADS)
 CLUSTER="${CLUSTER:-skiddo}"
 JULIA="${JULIA:-$HOME/.juliaup/bin/julia +1.12.6}"
 
@@ -63,8 +66,8 @@ module purge
 echo "PBS: \$PBS_JOBID"
 echo "RTFIM normalized ITE: L = $L, δ = $d, W = $W"
 echo "Job started at : \$(date)"
-$JULIA --project=. --threads=$PPN -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
-$JULIA --project=. --threads=$PPN hpc/RTFIM_NormalizedITE.jl $L $d $W
+$JULIA --project=. --threads=$JULIA_THREADS -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+BLAS_THREADS=$BLAS_THREADS $JULIA --project=. --threads=$JULIA_THREADS hpc/RTFIM_NormalizedITE.jl $L $d $W
 echo "Job ended at : \$(date)"
 EOF
 )

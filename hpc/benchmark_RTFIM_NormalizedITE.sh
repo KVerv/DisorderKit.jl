@@ -1,14 +1,17 @@
 #!/bin/bash
 #
 # Benchmark hpc/RTFIM_NormalizedITE.jl for a given L to choose WALLTIME, MEM and PPN of the phase-diagram sweep.
-# Runs the benchmark for every thread count in THREADS_LIST and then prints the summary with the recommended resources.
+# For every thread count n in THREADS_LIST it runs the benchmark with n Julia and n BLAS threads (both), n Julia threads
+# and 1 BLAS thread (julia) and 1 Julia thread and n BLAS threads (blas), and then prints the summary with the
+# recommended resources and thread split.
 # Run from the repo root:
 #   bash hpc/benchmark_RTFIM_NormalizedITE.sh 16                    # submit as one PBS job (ppn = largest thread count)
 #   LOCAL=1 bash hpc/benchmark_RTFIM_NormalizedITE.sh 16            # run here, e.g. on an interactive node
 #   DRYRUN=1 bash hpc/benchmark_RTFIM_NormalizedITE.sh 16           # only print the job
 #   THREADS_LIST="1 4 16" BENCH_STEPS=6 DMAX_SCHEDULE="300:8,200:16" bash hpc/benchmark_RTFIM_NormalizedITE.sh 16
+#   MODES="both blas" bash hpc/benchmark_RTFIM_NormalizedITE.sh 16  # only some of the thread splits
 #
-# Benchmark parameters: THREADS_LIST ("1 2 4 8 16 32"), BENCH_STEPS (8 steps per cap), DELTA (0.0), W (0.1), and the run
+# Benchmark parameters: THREADS_LIST ("1 2 4 8 16 32"), MODES ("both julia blas"), BENCH_STEPS (8 steps per cap), DELTA (0.0), W (0.1), and the run
 # parameters DTAU, ORDER, DMAX_SCHEDULE, DATA_DIR (as in the sweep, so the run tag matches). Summary: EFF_MIN (0.5),
 # SAFETY (1.5), NODE_CORES (96). The summary is printed at the end of the job log and can be reprinted any time with
 #   julia hpc/benchmark_RTFIM_NormalizedITE.jl --summary <L>
@@ -19,18 +22,31 @@ set -euo pipefail
 L="${1:?usage: bash hpc/benchmark_RTFIM_NormalizedITE.sh <L>}"
 
 THREADS_LIST="${THREADS_LIST:-1 2 4 8 16 32}"
-BENCH_WALLTIME="${BENCH_WALLTIME:-2:00:00}"
+MODES="${MODES:-both julia blas}"
+BENCH_WALLTIME="${BENCH_WALLTIME:-6:00:00}"
 BENCH_MEM="${BENCH_MEM:-32GB}"
 CLUSTER="${CLUSTER:-skiddo}"
 JULIA="${JULIA:-$HOME/.juliaup/bin/julia +1.12.6}"
 
 maxthreads=$(echo $THREADS_LIST | tr ' ' '\n' | sort -n | tail -1)
 
-# Commands of the benchmark: install and precompile the dependencies, one run per thread count, then the summary
+# Commands of the benchmark: install and precompile the dependencies, one run per (Julia threads, BLAS threads), then the
+# summary. For n = 1 the three splits coincide, so every split runs only once
 body="set -e"
 body+=$'\n'"$JULIA --project=. --threads=$maxthreads -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'"
+splits=""
 for n in $THREADS_LIST; do
-    body+=$'\n'"$JULIA --project=. --threads=$n hpc/benchmark_RTFIM_NormalizedITE.jl $L"
+    for mode in $MODES; do
+        case $mode in
+            both)  split="$n:$n" ;;
+            julia) split="$n:1" ;;
+            blas)  split="1:$n" ;;
+            *)     echo "unknown mode '$mode' in MODES (both, julia, blas)" >&2; exit 1 ;;
+        esac
+        case " $splits " in *" $split "*) continue ;; esac
+        splits+=" $split"
+        body+=$'\n'"BLAS_THREADS=${split#*:} $JULIA --project=. --threads=${split%:*} hpc/benchmark_RTFIM_NormalizedITE.jl $L"
+    done
 done
 body+=$'\n'"$JULIA --project=. hpc/benchmark_RTFIM_NormalizedITE.jl --summary $L"
 
@@ -48,7 +64,7 @@ job=$(cat <<EOF
 cd \$PBS_O_WORKDIR
 module purge
 echo "PBS: \$PBS_JOBID"
-echo "Benchmark RTFIM normalized ITE: L = $L, threads $THREADS_LIST"
+echo "Benchmark RTFIM normalized ITE: L = $L, threads $THREADS_LIST, modes $MODES"
 echo "Job started at : \$(date)"
 $body
 echo "Job ended at : \$(date)"

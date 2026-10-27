@@ -14,7 +14,7 @@ are computed from the stored states when plotting.
 |---|---|
 | `RTFIM_NormalizedITE.jl` | one point (L, δ, W): runs the ITE and stores the final state, the state at the end of every cap stage and the per-step diagnostics |
 | `sweep_RTFIM_NormalizedITE.sh` | generates and submits one PBS job per (δ, W) for a given L, skipping points that already have a result |
-| `benchmark_RTFIM_NormalizedITE.jl` / `.sh` | measures time per step, peak memory and thread scaling for a given L, and recommends WALLTIME, MEM and PPN |
+| `benchmark_RTFIM_NormalizedITE.jl` / `.sh` | measures time per step, peak memory and thread scaling for a given L, and recommends WALLTIME, MEM, PPN and the split into Julia and BLAS threads |
 
 ## Usage (from the repo root, on the login node)
 
@@ -32,30 +32,36 @@ added after a `git pull` are installed before the computation starts.
 
 Run parameters (environment): `DTAU` (0.02), `ORDER` (2), `DMAX_SCHEDULE` ("300:8,100:16,100:32", steps:cap),
 `MAXITER` (total steps of the schedule), `CONVTOL` (1e-8), `FILTER_TAIL_TOL` (1e-8), `SEED` (20266001), `QUICK`,
-`DATA_DIR` ($VSC_DATA/data). Job resources: `WALLTIME` (24:00:00), `MEM` (16GB), `PPN` (4, also the number of Julia
-threads), `CLUSTER` (skiddo), `JULIA` (`~/.juliaup/bin/julia +1.12.6`). Grid: `DELTAS`, `WS`.
+`DATA_DIR` ($VSC_DATA/data). Job resources: `WALLTIME` (24:00:00), `MEM` (16GB), `PPN` (4), `JULIA_THREADS` and
+`BLAS_THREADS` (both `PPN` by default), `CLUSTER` (skiddo), `JULIA` (`~/.juliaup/bin/julia +1.12.6`). Grid: `DELTAS`, `WS`.
 
 ## Choosing resources
 
 Run the benchmark once per L (and whenever the cap schedule changes), before the sweep:
 
     bash hpc/benchmark_RTFIM_NormalizedITE.sh 16           # one PBS job, threads 1 2 4 8 16 32
+    MODES="both blas" bash hpc/benchmark_RTFIM_NormalizedITE.sh 16   # only some of the thread splits
     LOCAL=1 bash hpc/benchmark_RTFIM_NormalizedITE.sh 16   # or directly, e.g. on an interactive node
     julia hpc/benchmark_RTFIM_NormalizedITE.jl --summary 16   # reprint the summary
 
-For every thread count it runs `BENCH_STEPS` (8) ITE steps at every cap of `DMAX_SCHEDULE` near criticality (`DELTA`
+For every thread count n it runs three splits (`MODES`, default all): `both` = n Julia and n BLAS threads, `julia` =
+n Julia threads and 1 BLAS thread, `blas` = 1 Julia thread and n BLAS threads. Julia threads parallelize the loops over
+disorder words, BLAS threads the dense linear algebra inside one word. Every split runs `BENCH_STEPS` (8) ITE steps at every cap of `DMAX_SCHEDULE` near criticality (`DELTA`
 = 0, `W` = 0.1) and records the time per step once the bonds have saturated and the peak memory. The summary prints:
 
-- the time per step per cap and thread count;
+- the time per step per cap for every split;
 - the estimated full run time T = warm-up + Σ_stages steps × time per step (an upper bound, since a run stops when it
-  converges), with the speedup and parallel efficiency of the steps;
-- a recommendation: `PPN` = the largest thread count with efficiency ≥ `EFF_MIN` (0.5), `WALLTIME` = `SAFETY` (1.5) × T,
-  `MEM` = `SAFETY` × peak memory, and the matching sweep command.
+  converges), with the speedup (relative to 1 Julia and 1 BLAS thread) and parallel efficiency (speedup / cores, cores =
+  max(Julia, BLAS threads)) of the steps;
+- a recommendation: `PPN` = the most cores among the splits with efficiency ≥ `EFF_MIN` (0.5), the fastest split for
+  that number of cores (`JULIA_THREADS`, `BLAS_THREADS`), `WALLTIME` = `SAFETY` (1.5) × T, `MEM` = `SAFETY` × peak
+  memory, and the matching sweep command.
 
-Every job simulates one point on one node: the nodes per job is always 1, and `PPN` sets the number of Julia and BLAS
-threads (`--threads=$PPN`, BLAS is set to the same number so jobs never oversubscribe a shared node). More points run in
+Every job simulates one point on one node: the nodes per job is always 1, and `PPN` sets the cores per job; `JULIA_THREADS`
+(`--threads`) and `BLAS_THREADS` should not exceed it, so jobs never oversubscribe a shared node. More points run in
 parallel as separate jobs, so a small `PPN` with good efficiency is usually best. The benchmark results are stored in
-`$DATA_DIR/RTFIM_NormalizedITE/benchmarks/<run tag>/L<L>/threads<n>.csv`.
+`$DATA_DIR/RTFIM_NormalizedITE/benchmarks/<run tag>/L<L>/threads<nj>_blas<nb>.csv` (older `threads<n>.csv` files are
+read as n Julia and n BLAS threads).
 
 ## Data layout
 
@@ -68,7 +74,7 @@ parallel as separate jobs, so a small `PPN` with good efficiency is usually best
             ...
           W0.5000/
             ...
-      benchmarks/<run tag>/L<L>/threads<n>.csv   benchmark results
+      benchmarks/<run tag>/L<L>/threads<nj>_blas<nb>.csv   benchmark results
     logs/RTFIM_NormalizedITE/<run tag>/L<L>/     PBS stdout/stderr of every job
     logs/RTFIM_NormalizedITE/benchmarks/<run tag>/L<L>/
 
