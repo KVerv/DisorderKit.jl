@@ -13,9 +13,9 @@ set -euo pipefail
 
 L="${1:?usage: bash hpc/submit_plot_BoseHubbard_NormalizedITE.sh <L>}"
 
-WALLTIME="${WALLTIME:-1:00:00}"
-MEM="${MEM:-8GB}"
-PPN="${PPN:-4}"
+WALLTIME="${WALLTIME:-0:30:00}"
+MEM="${MEM:-4GB}"
+PPN="${PPN:-1}"
 CLUSTER="${CLUSTER:-skiddo}"
 JULIA="${JULIA:-$HOME/.juliaup/bin/julia +1.12.6}"
 
