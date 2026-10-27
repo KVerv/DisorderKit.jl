@@ -108,7 +108,7 @@ BLAS.set_num_threads(nblas)
 δ = parse(Float64, get(ENV, "DELTA", "0.0"))
 W = parse(Float64, get(ENV, "W", "0.1"))
 Δτ = parse(Float64, dtau_str)
-bench_steps = parse(Int, get(ENV, "BENCH_STEPS", "8"))
+bench_steps = parse(Int, get(ENV, "BENCH_STEPS", "50"))
 bench_steps >= 2 || error("BENCH_STEPS must be at least 2")
 
 hs = exp(δ) .* [1.0, exp(-2W)]

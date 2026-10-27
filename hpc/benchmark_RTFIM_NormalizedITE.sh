@@ -21,10 +21,10 @@ set -euo pipefail
 
 L="${1:?usage: bash hpc/benchmark_RTFIM_NormalizedITE.sh <L>}"
 
-THREADS_LIST="${THREADS_LIST:-1 2 4 8 16 32}"
+THREADS_LIST="${THREADS_LIST:-1 2 4 8}"
 MODES="${MODES:-both julia blas}"
-BENCH_WALLTIME="${BENCH_WALLTIME:-6:00:00}"
-BENCH_MEM="${BENCH_MEM:-32GB}"
+BENCH_WALLTIME="${BENCH_WALLTIME:-1:00:00}"
+BENCH_MEM="${BENCH_MEM:-8GB}"
 CLUSTER="${CLUSTER:-skiddo}"
 JULIA="${JULIA:-$HOME/.juliaup/bin/julia +1.12.6}"
 
@@ -56,7 +56,8 @@ if [ "${LOCAL:-0}" = "1" ]; then
 fi
 
 # Same run tag as the production script (via its --path mode), for the log folder
-tag=$($JULIA --startup-file=no hpc/RTFIM_NormalizedITE.jl --path "$L" 0 0 | head -1)
+mapfile -t paths < <($JULIA --startup-file=no hpc/RTFIM_NormalizedITE.jl --path "$L" 0 0)   # read all output (head would close the pipe early)
+tag="${paths[0]}"
 logdir="logs/RTFIM_NormalizedITE/benchmarks/$tag/L$L"
 
 job=$(cat <<EOF
