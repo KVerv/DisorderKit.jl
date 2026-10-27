@@ -25,7 +25,7 @@ L = parse(Int, args[1])
 # Same run tag as RTFIM_NormalizedITE.jl
 dtau_str = get(ENV, "DTAU", "0.02")
 order = parse(Int, get(ENV, "ORDER", "2"))
-schedule_str = get(ENV, "DMAX_SCHEDULE", "300:8,100:16,100:32")
+schedule_str = get(ENV, "DMAX_SCHEDULE", "100:8,100:16,100:32")
 schedule = map(split(schedule_str, ",")) do stage
     steps, cap = parse.(Int, split(stage, ":"))
     steps => cap

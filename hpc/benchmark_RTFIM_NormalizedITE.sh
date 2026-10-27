@@ -8,22 +8,28 @@
 #   DRYRUN=1 bash hpc/benchmark_RTFIM_NormalizedITE.sh 16           # only print the job
 #   THREADS_LIST="1 4 16" BENCH_STEPS=6 DMAX_SCHEDULE="300:8,200:16" bash hpc/benchmark_RTFIM_NormalizedITE.sh 16
 #
-# Benchmark parameters: THREADS_LIST ("1 2 4 8 16"), BENCH_STEPS (8 steps per cap), DELTA (0.0), W (0.1), and the run
+# Benchmark parameters: THREADS_LIST ("1 2 4 8 16 32"), BENCH_STEPS (8 steps per cap), DELTA (0.0), W (0.1), and the run
 # parameters DTAU, ORDER, DMAX_SCHEDULE, DATA_DIR (as in the sweep, so the run tag matches). Summary: EFF_MIN (0.5),
 # SAFETY (1.5), NODE_CORES (96). The summary is printed at the end of the job log and can be reprinted any time with
 #   julia hpc/benchmark_RTFIM_NormalizedITE.jl --summary <L>
+# Before running or submitting (not with DRYRUN), the script runs Pkg.instantiate() and Pkg.precompile().
 
 set -euo pipefail
 
 L="${1:?usage: bash hpc/benchmark_RTFIM_NormalizedITE.sh <L>}"
 
-THREADS_LIST="${THREADS_LIST:-1 2 4 8 16}"
-BENCH_WALLTIME="${BENCH_WALLTIME:-4:00:00}"
+THREADS_LIST="${THREADS_LIST:-1 2 4 8 16 32}"
+BENCH_WALLTIME="${BENCH_WALLTIME:-2:00:00}"
 BENCH_MEM="${BENCH_MEM:-32GB}"
 CLUSTER="${CLUSTER:-skiddo}"
 JULIA="${JULIA:-$HOME/.juliaup/bin/julia +1.12.6}"
 
 maxthreads=$(echo $THREADS_LIST | tr ' ' '\n' | sort -n | tail -1)
+
+# Install and precompile the dependencies here (login node), so the jobs never miss a package after a git pull
+if [ "${DRYRUN:-0}" != "1" ]; then
+    $JULIA --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+fi
 
 # Commands of the benchmark: one run per thread count, then the summary
 body="set -e"

@@ -18,15 +18,16 @@ are computed from the stored states when plotting.
 
 ## Usage (from the repo root, on the login node)
 
-    # one-time setup (avoids precompile races between jobs)
-    ~/.juliaup/bin/julia +1.12.6 --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+Both `.sh` scripts first run `Pkg.instantiate(); Pkg.precompile()` on the login node (skipped with `DRYRUN=1`), so
+dependencies added after a `git pull` are installed before any job starts.
 
     DRYRUN=1 bash hpc/sweep_RTFIM_NormalizedITE.sh 16      # show what would be submitted
     bash hpc/sweep_RTFIM_NormalizedITE.sh 16               # submit the default grid for L = 16
     DELTAS="-0.5 0 0.5" WS="0.5 1" bash hpc/sweep_RTFIM_NormalizedITE.sh 16
     FORCE=1 bash hpc/sweep_RTFIM_NormalizedITE.sh 16       # also rerun points that already have a result
 
-    # a single point, without the scheduler (QUICK=1: a few steps only)
+    # a single point, without the scheduler (QUICK=1: a few steps only; instantiate first after a git pull)
+    ~/.juliaup/bin/julia +1.12.6 --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
     QUICK=1 julia --project=. hpc/RTFIM_NormalizedITE.jl 6 0.0000 0.1000
 
 Run parameters (environment): `DTAU` (0.02), `ORDER` (2), `DMAX_SCHEDULE` ("300:8,100:16,100:32", steps:cap),
@@ -38,7 +39,7 @@ threads), `CLUSTER` (skiddo), `JULIA` (`~/.juliaup/bin/julia +1.12.6`). Grid: `D
 
 Run the benchmark once per L (and whenever the cap schedule changes), before the sweep:
 
-    bash hpc/benchmark_RTFIM_NormalizedITE.sh 16           # one PBS job, threads 1 2 4 8 16
+    bash hpc/benchmark_RTFIM_NormalizedITE.sh 16           # one PBS job, threads 1 2 4 8 16 32
     LOCAL=1 bash hpc/benchmark_RTFIM_NormalizedITE.sh 16   # or directly, e.g. on an interactive node
     julia hpc/benchmark_RTFIM_NormalizedITE.jl --summary 16   # reprint the summary
 
