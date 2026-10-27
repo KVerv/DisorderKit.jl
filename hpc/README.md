@@ -18,8 +18,8 @@ are computed from the stored states when plotting.
 
 ## Usage (from the repo root, on the login node)
 
-Both `.sh` scripts first run `Pkg.instantiate(); Pkg.precompile()` on the login node (skipped with `DRYRUN=1`), so
-dependencies added after a `git pull` are installed before any job starts.
+Every job of both `.sh` scripts first runs `Pkg.instantiate(); Pkg.precompile()` on its compute node, so dependencies
+added after a `git pull` are installed before the computation starts.
 
     DRYRUN=1 bash hpc/sweep_RTFIM_NormalizedITE.sh 16      # show what would be submitted
     bash hpc/sweep_RTFIM_NormalizedITE.sh 16               # submit the default grid for L = 16

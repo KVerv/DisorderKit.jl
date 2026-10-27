@@ -13,8 +13,8 @@
 # Results: <DATA_DIR>/RTFIM_NormalizedITE/<run tag>/L<L>/W<W>/delta<δ>.jld2
 # Logs:    logs/RTFIM_NormalizedITE/<run tag>/L<L>/
 #
-# Before submitting (not with DRYRUN), the script runs Pkg.instantiate() and Pkg.precompile() on the login node, so new
-# dependencies are installed and the jobs do not race to precompile.
+# Every job first runs Pkg.instantiate() and Pkg.precompile() on its compute node, so new dependencies are installed
+# (concurrent jobs wait for each other through Julia's precompile locks).
 
 set -euo pipefail
 
@@ -34,11 +34,6 @@ JULIA="${JULIA:-$HOME/.juliaup/bin/julia +1.12.6}"
 
 if command -v module > /dev/null 2>&1; then
     module swap cluster/$CLUSTER   # qsub submits to the currently loaded cluster module
-fi
-
-# Install and precompile the dependencies here (login node), so the jobs never miss a package after a git pull
-if [ "${DRYRUN:-0}" != "1" ]; then
-    $JULIA --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 fi
 
 submitted=0
@@ -68,6 +63,7 @@ module purge
 echo "PBS: \$PBS_JOBID"
 echo "RTFIM normalized ITE: L = $L, δ = $d, W = $W"
 echo "Job started at : \$(date)"
+$JULIA --project=. --threads=$PPN -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 $JULIA --project=. --threads=$PPN hpc/RTFIM_NormalizedITE.jl $L $d $W
 echo "Job ended at : \$(date)"
 EOF
