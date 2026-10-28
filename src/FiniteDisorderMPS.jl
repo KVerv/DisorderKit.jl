@@ -309,27 +309,30 @@ function conditional_entanglement_entropy(ρ::FiniteDisorderMPS, word::AbstractV
     end
 end
 
-# Disorder average 𝔼_w[S_w(k)] of the entanglement entropy on every bond k = 1..L-1 and its standard error, over words
-# w = (p₁…p_L) with pᵢ ~ ρ.ps iid. If there are at most n_samples words they are all enumerated (exact, zero error),
-# otherwise n_samples words are sampled
+# Disorder average 𝔼_w[S_w(k)] of the entanglement entropy on every bond k = 1..L-1, its standard error and the disorder
+# variance Var_w[S_w(k)] = 𝔼_w[S_w(k)²] - 𝔼_w[S_w(k)]², over words w = (p₁…p_L) with pᵢ ~ ρ.ps iid. If there are at most
+# n_samples words they are all enumerated (exact, zero error), otherwise n_samples words are sampled
 function average_entanglement_entropy(ρ::FiniteDisorderMPS; n_samples::Int = 1000, rng::AbstractRNG = Random.default_rng())
     L, d = length(ρ), length(ρ.ps)
     if float(d)^L <= n_samples
         S_avg = zeros(Float64, L-1)
+        S2_avg = zeros(Float64, L-1)
         for word in Iterators.product(fill(1:d, L)...)
             w = prod(ρ.ps[p] for p in word)
             iszero(w) && continue
-            S_avg .+= w .* conditional_entanglement_entropy(ρ, collect(word))
+            S_w = conditional_entanglement_entropy(ρ, collect(word))
+            S_avg .+= w .* S_w
+            S2_avg .+= w .* S_w.^2
         end
-        return S_avg, zeros(Float64, L-1)
+        return S_avg, zeros(Float64, L-1), max.(S2_avg .- S_avg.^2, 0.0)
     end
 
     Ss = reduce(hcat, [conditional_entanglement_entropy(ρ, sample(rng, 1:d, Weights(ρ.ps), L)) for _ in 1:n_samples])
-    return vec(mean(Ss; dims=2)), vec(std(Ss; dims=2)) ./ sqrt(n_samples)
+    return vec(mean(Ss; dims=2)), vec(std(Ss; dims=2)) ./ sqrt(n_samples), vec(var(Ss; dims=2))
 end
 
-# Disorder averaged entanglement entropy on the bond between site k and k+1 and its standard error
+# Disorder averaged entanglement entropy on the bond between site k and k+1, its standard error and its disorder variance
 function average_entanglement_entropy(ρ::FiniteDisorderMPS, k::Int; kwargs...)
-    Ss, Ss_err = average_entanglement_entropy(ρ; kwargs...)
-    return Ss[k], Ss_err[k]
+    Ss, Ss_err, Ss_var = average_entanglement_entropy(ρ; kwargs...)
+    return Ss[k], Ss_err[k], Ss_var[k]
 end

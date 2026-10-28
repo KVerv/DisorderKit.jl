@@ -1,6 +1,7 @@
 # Observables and plot of a hpc/sweep_BoseHubbard_NormalizedITE.sh run: from the stored states it computes the
 # disorder-averaged density ρ, compressibility κ = dρ/dμ, condensate weight |⟨a⟩|² and entanglement entropy profile
-# S(k) on every bond k = 1..L-1. It plots ρ, κ and |⟨a⟩|² against μ/U, and S(k) for a few μ/U in a second panel.
+# S(k) on every bond k = 1..L-1 with its disorder variance Var[S](k). It plots ρ, κ and |⟨a⟩|² against μ/U, and S(k)
+# and Var[S](k) for a few μ/U in two panels on the right.
 #
 # Usage (from the repo root, normally through hpc/submit_plot_BoseHubbard_NormalizedITE.sh, which sets the environment):
 #   T=0.16 U=1.0 NMAX=4 DTAU=0.05 MAXD=16 DATA_DIR=$VSC_DATA/data N_SAMPLES=10000 S_MUS="0.3 0.6 1.0" \
@@ -10,7 +11,7 @@
 #   DATA_DIR (the same as for the sweep, so the run tag matches), N_SAMPLES (disorder words are enumerated exactly if
 #   q^L ≤ N_SAMPLES, else sampled), S_MUS (μ/U values of the entropy profiles; the nearest grid points are used)
 # Output: the table on stdout, <DATA_DIR>/BoseHubbard_NormalizedITE/<run tag>/L<L>/observables.csv (with the profile in
-#   the columns S_1..S_{L-1}) and plots/BoseHubbard_NormalizedITE_<run tag>_L<L>.png
+#   the columns S_1..S_{L-1} and its variance in varS_1..varS_{L-1}) and plots/BoseHubbard_NormalizedITE_<run tag>_L<L>.png
 #
 # H conserves N, so an exact ground state with a fixed particle number has ⟨aᵢ⟩ = 0. ⟨aᵢ⟩ is nonzero only when the state
 # mixes neighbouring particle numbers, which the evolution from the uniform state keeps where they are nearly degenerate
@@ -90,10 +91,11 @@ isempty(files) && error("no results in $folder")
 results = map(files) do f
     data = load(joinpath(folder, f))
     ρ, φ = disorder_average(data["ψ"])
-    # Disorder-averaged entanglement entropy on every bond and its standard error (zero if the words are enumerated)
-    S, S_err = DisorderKit.average_entanglement_entropy(data["ψ"]; n_samples, rng = Xoshiro(1))
+    # Disorder-averaged entanglement entropy on every bond, its standard error (zero if the words are enumerated) and
+    # its disorder variance
+    S, S_err, S_var = DisorderKit.average_entanglement_entropy(data["ψ"]; n_samples, rng = Xoshiro(1))
     p = data["params"]
-    (; μ = p.μ, U = p.U, t = p.t, ρ, φ, S, S_err, nsteps = data["nsteps"], converged = data["converged"],
+    (; μ = p.μ, U = p.U, t = p.t, ρ, φ, S, S_err, S_var, nsteps = data["nsteps"], converged = data["converged"],
      ϵconv = data["info"].ϵsconv[end])
 end
 sort!(results; by = r -> r.μ)
@@ -121,9 +123,11 @@ all(converged) || println("$(count(!, converged)) of $(length(converged)) points
 
 csv = joinpath(folder, "observables.csv")
 open(csv, "w") do io
-    println(io, "mu_over_U,rho,kappa,a2,nsteps,eps_conv,converged,", join(("S_$b" for b in 1:L-1), ","))
+    println(io, "mu_over_U,rho,kappa,a2,nsteps,eps_conv,converged,", join(("S_$b" for b in 1:L-1), ","), ",",
+            join(("varS_$b" for b in 1:L-1), ","))
     for (k, r) in enumerate(results)
-        println(io, "$(μs[k]),$(ρs[k]),$(κs[k]),$(φs[k]),$(r.nsteps),$(r.ϵconv),$(r.converged),", join(r.S, ","))
+        println(io, "$(μs[k]),$(ρs[k]),$(κs[k]),$(φs[k]),$(r.nsteps),$(r.ϵconv),$(r.converged),", join(r.S, ","), ",",
+                join(r.S_var, ","))
     end
 end
 println("Saved $csv")
@@ -131,10 +135,10 @@ println("Saved $csv")
 # Figure: ρ and |⟨a⟩|² on the left axis, κ on the right axis, sharing μ/U. Unconverged points have open markers
 set_theme!(theme_latexfonts())
 cρ, cκ, cφ = Makie.wong_colors()[1], Makie.wong_colors()[2], Makie.wong_colors()[3]
-fig = Figure(backgroundcolor = :white, fontsize = 30, size = (2200, 800))
+fig = Figure(backgroundcolor = :white, fontsize = 30, size = (2200, 1100))
 title = L"$L=%$L$, $t/U=%$(t/U)$, $t' = t/3$, $D=%$maxD$"
-axρ = Axis(fig[1, 1]; xlabel = L"μ/U", ylabel = L"ρ,\ |\langle a \rangle|^2", title)
-axκ = Axis(fig[1, 1]; ylabel = L"κ = dρ/dμ", yaxisposition = :right, ylabelcolor = cκ, yticklabelcolor = cκ,
+axρ = Axis(fig[1:2, 1]; xlabel = L"μ/U", ylabel = L"ρ,\ |\langle a \rangle|^2", title)
+axκ = Axis(fig[1:2, 1]; ylabel = L"κ = dρ/dμ", yaxisposition = :right, ylabelcolor = cκ, yticklabelcolor = cκ,
            ygridvisible = false)
 hidespines!(axκ)
 hidexdecorations!(axκ)
@@ -154,7 +158,7 @@ entry(c, m, ms) = [LineElement(color = c, linewidth = 3), MarkerElement(color = 
 axislegend(axρ, [entry(cρ, :circle, 14), entry(cφ, :diamond, 16), entry(cκ, :rect, 14)],
            [L"ρ", L"|\langle a \rangle|^2", L"κ"]; position = :lt)
 
-# Second panel: entropy profile S(k) for the grid points nearest to the requested μ/U
+# Right panels: entropy profile S(k) and its disorder variance for the grid points nearest to the requested μ/U
 profile_ks = Int[]
 for m in S_mus
     k = argmin(abs.(μs .- m))
@@ -162,16 +166,22 @@ for m in S_mus
     k in profile_ks || push!(profile_ks, k)
 end
 bonds = 1:L-1
-axS = Axis(fig[1, 2]; xlabel = L"\textrm{bond}\ k", ylabel = L"\overline{S}(k)", title = "entanglement entropy",
-           xticks = bonds)
+axS = Axis(fig[1, 2]; ylabel = L"\overline{S}(k)", title = "entanglement entropy", xticks = bonds)
+axV = Axis(fig[2, 2]; xlabel = L"\textrm{bond}\ k", ylabel = L"\mathrm{Var}[S](k)", xticks = bonds)
+hidexdecorations!(axS; grid = false)
+linkxaxes!(axS, axV)
 cSs = Makie.wong_colors()[4:end]
 for (j, k) in enumerate(profile_ks)
     r, c = results[k], cSs[mod1(j, length(cSs))]
+    fill = r.converged ? c : :white
     lines!(axS, bonds, r.S; color = c, linewidth = 3, label = L"μ/U = %$(round(μs[k]; digits = 3))")
     any(>(0), r.S_err) && errorbars!(axS, bonds, r.S, r.S_err; color = c, whiskerwidth = 10)
-    scatter!(axS, bonds, r.S; color = r.converged ? c : :white, strokecolor = c, strokewidth = 2, markersize = 14)
+    scatter!(axS, bonds, r.S; color = fill, strokecolor = c, strokewidth = 2, markersize = 14)
+    lines!(axV, bonds, r.S_var; color = c, linewidth = 3)
+    scatter!(axV, bonds, r.S_var; color = fill, strokecolor = c, strokewidth = 2, markersize = 14)
 end
 ylims!(axS, 0, nothing)
+ylims!(axV, 0, nothing)
 axislegend(axS; position = :cb)
 
 mkpath("plots")

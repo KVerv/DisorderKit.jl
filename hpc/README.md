@@ -123,8 +123,9 @@ Run parameters (environment, defaults set in the submit scripts; the Julia scrip
 `CONVTOL` (1e-8), `CROSS_WIDTH` (32), `DATA_DIR` ($VSC_DATA/data). Job resources: `WALLTIME` (1:00:00), `MEM` (8GB),
 `PPN` (8), `JULIA_THREADS` and `BLAS_THREADS` (both `PPN`), `CLUSTER` (skiddo), `JULIA`. Grid: `MUS`. Plot script:
 `N_SAMPLES` (10000, disorder words are enumerated exactly if q^L ≤ `N_SAMPLES`), `S_MUS` ("0.3 0.6 1.0", the μ/U values
-whose disorder-averaged entanglement entropy profile S(k) is plotted in the second panel; the nearest grid points are
-used). The profile on every bond is also stored in `observables.csv` as the columns `S_1..S_{L-1}`. To run the plot
+whose disorder-averaged entanglement entropy profile S(k) and its disorder variance Var[S](k) are plotted in the right
+panels; the nearest grid points are used). The profile and variance on every bond are also stored in `observables.csv`
+as the columns `S_1..S_{L-1}` and `varS_1..varS_{L-1}`. To run the plot
 script directly, set these yourself, e.g. `T=0.16 U=1.0 NMAX=4 DTAU=0.05 MAXD=16 DATA_DIR=$VSC_DATA/data N_SAMPLES=10000 S_MUS="0.3 0.6 1.0" julia --project=. hpc/plot_BoseHubbard_NormalizedITE.jl 6`.
 
 ## Data layout
