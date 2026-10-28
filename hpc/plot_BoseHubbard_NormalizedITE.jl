@@ -1,14 +1,16 @@
 # Observables and plot of a hpc/sweep_BoseHubbard_NormalizedITE.sh run: from the stored states it computes the
-# disorder-averaged density ρ, compressibility κ = dρ/dμ and condensate weight |⟨a⟩|², and plots them against μ/U.
+# disorder-averaged density ρ, compressibility κ = dρ/dμ, condensate weight |⟨a⟩|² and entanglement entropy profile
+# S(k) on every bond k = 1..L-1. It plots ρ, κ and |⟨a⟩|² against μ/U, and S(k) for a few μ/U in a second panel.
 #
-# Usage (from the repo root, with the same run parameters as the sweep, so the run tag matches):
-#   julia --project=. hpc/plot_BoseHubbard_NormalizedITE.jl <L>
-#   T=0.1 MAXD=32 julia --project=. hpc/plot_BoseHubbard_NormalizedITE.jl 6
+# Usage (from the repo root, normally through hpc/submit_plot_BoseHubbard_NormalizedITE.sh, which sets the environment):
+#   T=0.16 U=1.0 NMAX=4 DTAU=0.05 MAXD=16 DATA_DIR=$VSC_DATA/data N_SAMPLES=10000 S_MUS="0.3 0.6 1.0" \
+#       julia --project=. hpc/plot_BoseHubbard_NormalizedITE.jl <L>
 #
-# Environment: T, U, NMAX, DTAU, MAXD, DATA_DIR (as in hpc/BoseHubbard_NormalizedITE.jl), N_SAMPLES=1000 (disorder words
-#   are enumerated exactly if q^L ≤ N_SAMPLES, else sampled)
-# Output: the table on stdout, <DATA_DIR>/BoseHubbard_NormalizedITE/<run tag>/L<L>/observables.csv and
-#   plots/BoseHubbard_NormalizedITE_<run tag>_L<L>.png
+# Environment (all required; defaults in hpc/submit_plot_BoseHubbard_NormalizedITE.sh): T, U, NMAX, DTAU, MAXD,
+#   DATA_DIR (the same as for the sweep, so the run tag matches), N_SAMPLES (disorder words are enumerated exactly if
+#   q^L ≤ N_SAMPLES, else sampled), S_MUS (μ/U values of the entropy profiles; the nearest grid points are used)
+# Output: the table on stdout, <DATA_DIR>/BoseHubbard_NormalizedITE/<run tag>/L<L>/observables.csv (with the profile in
+#   the columns S_1..S_{L-1}) and plots/BoseHubbard_NormalizedITE_<run tag>_L<L>.png
 #
 # H conserves N, so an exact ground state with a fixed particle number has ⟨aᵢ⟩ = 0. ⟨aᵢ⟩ is nonzero only when the state
 # mixes neighbouring particle numbers, which the evolution from the uniform state keeps where they are nearly degenerate
@@ -20,15 +22,17 @@ length(ARGS) == 1 || error("usage: julia --project=. hpc/plot_BoseHubbard_Normal
 L = parse(Int, ARGS[1])
 
 # Same run tag as BoseHubbard_NormalizedITE.jl
-t_str = get(ENV, "T", "0.16")
-U_str = get(ENV, "U", "1.0")
-nmax = parse(Int, get(ENV, "NMAX", "4"))
-dtau_str = get(ENV, "DTAU", "0.05")
-maxD = parse(Int, get(ENV, "MAXD", "16"))
+param(k) = haskey(ENV, k) ? ENV[k] : error("environment variable $k not set; run parameters are set in hpc/submit_plot_BoseHubbard_NormalizedITE.sh")
+t_str = param("T")
+U_str = param("U")
+nmax = parse(Int, param("NMAX"))
+dtau_str = param("DTAU")
+maxD = parse(Int, param("MAXD"))
 run_tag = "t$(t_str)_U$(U_str)_nmax$(nmax)_dtau$(dtau_str)_D$(maxD)"
-data_root = get(ENV, "DATA_DIR", joinpath(get(ENV, "VSC_DATA", "."), "data"))
+data_root = param("DATA_DIR")
 folder = joinpath(data_root, "BoseHubbard_NormalizedITE", run_tag, "L$(L)")
-n_samples = parse(Int, get(ENV, "N_SAMPLES", "10000"))
+n_samples = parse(Int, param("N_SAMPLES"))
+S_mus = parse.(Float64, split(param("S_MUS")))
 
 using TensorKit, DisorderKit, LinearAlgebra, Random, StatsBase, CairoMakie, Printf, JLD2
 
@@ -86,8 +90,10 @@ isempty(files) && error("no results in $folder")
 results = map(files) do f
     data = load(joinpath(folder, f))
     ρ, φ = disorder_average(data["ψ"])
+    # Disorder-averaged entanglement entropy on every bond and its standard error (zero if the words are enumerated)
+    S, S_err = DisorderKit.average_entanglement_entropy(data["ψ"]; n_samples, rng = Xoshiro(1))
     p = data["params"]
-    (; μ = p.μ, U = p.U, t = p.t, ρ, φ, nsteps = data["nsteps"], converged = data["converged"],
+    (; μ = p.μ, U = p.U, t = p.t, ρ, φ, S, S_err, nsteps = data["nsteps"], converged = data["converged"],
      ϵconv = data["info"].ϵsconv[end])
 end
 sort!(results; by = r -> r.μ)
@@ -105,17 +111,19 @@ for k in eachindex(μs)
 end
 
 println("Run tag $run_tag, L = $L ($folder)")
-println("    μ/U        ρ        κ   |⟨a⟩|²   steps   ϵ_conv   converged")
+kmid = max(L ÷ 2, 1)   # central bond
+println("    μ/U        ρ        κ   |⟨a⟩|²  S(L/2)   steps   ϵ_conv   converged")
 for (k, r) in enumerate(results)
-    @printf("%7.3f  %7.4f  %7.3f  %7.4f  %6d  %7.1e   %s\n", μs[k], ρs[k], κs[k], φs[k], r.nsteps, r.ϵconv, r.converged)
+    @printf("%7.3f  %7.4f  %7.3f  %7.4f  %6.4f  %6d  %7.1e   %s\n", μs[k], ρs[k], κs[k], φs[k], r.S[kmid], r.nsteps,
+            r.ϵconv, r.converged)
 end
 all(converged) || println("$(count(!, converged)) of $(length(converged)) points not converged (open markers in the plot)")
 
 csv = joinpath(folder, "observables.csv")
 open(csv, "w") do io
-    println(io, "mu_over_U,rho,kappa,a2,nsteps,eps_conv,converged")
+    println(io, "mu_over_U,rho,kappa,a2,nsteps,eps_conv,converged,", join(("S_$b" for b in 1:L-1), ","))
     for (k, r) in enumerate(results)
-        println(io, "$(μs[k]),$(ρs[k]),$(κs[k]),$(φs[k]),$(r.nsteps),$(r.ϵconv),$(r.converged)")
+        println(io, "$(μs[k]),$(ρs[k]),$(κs[k]),$(φs[k]),$(r.nsteps),$(r.ϵconv),$(r.converged),", join(r.S, ","))
     end
 end
 println("Saved $csv")
@@ -123,7 +131,7 @@ println("Saved $csv")
 # Figure: ρ and |⟨a⟩|² on the left axis, κ on the right axis, sharing μ/U. Unconverged points have open markers
 set_theme!(theme_latexfonts())
 cρ, cκ, cφ = Makie.wong_colors()[1], Makie.wong_colors()[2], Makie.wong_colors()[3]
-fig = Figure(backgroundcolor = :white, fontsize = 30, size = (1200, 800))
+fig = Figure(backgroundcolor = :white, fontsize = 30, size = (2200, 800))
 title = L"$L=%$L$, $t/U=%$(t/U)$, $t' = t/3$, $D=%$maxD$"
 axρ = Axis(fig[1, 1]; xlabel = L"μ/U", ylabel = L"ρ,\ |\langle a \rangle|^2", title)
 axκ = Axis(fig[1, 1]; ylabel = L"κ = dρ/dμ", yaxisposition = :right, ylabelcolor = cκ, yticklabelcolor = cκ,
@@ -145,6 +153,26 @@ ylims!(axκ, 0, nothing)
 entry(c, m, ms) = [LineElement(color = c, linewidth = 3), MarkerElement(color = c, marker = m, markersize = ms)]
 axislegend(axρ, [entry(cρ, :circle, 14), entry(cφ, :diamond, 16), entry(cκ, :rect, 14)],
            [L"ρ", L"|\langle a \rangle|^2", L"κ"]; position = :lt)
+
+# Second panel: entropy profile S(k) for the grid points nearest to the requested μ/U
+profile_ks = Int[]
+for m in S_mus
+    k = argmin(abs.(μs .- m))
+    isapprox(μs[k], m; atol = 1e-8) || println("No μ/U = $m in the run, the entropy profile uses the nearest μ/U = $(μs[k])")
+    k in profile_ks || push!(profile_ks, k)
+end
+bonds = 1:L-1
+axS = Axis(fig[1, 2]; xlabel = L"\textrm{bond}\ k", ylabel = L"\overline{S}(k)", title = "entanglement entropy",
+           xticks = bonds)
+cSs = Makie.wong_colors()[4:end]
+for (j, k) in enumerate(profile_ks)
+    r, c = results[k], cSs[mod1(j, length(cSs))]
+    lines!(axS, bonds, r.S; color = c, linewidth = 3, label = L"μ/U = %$(round(μs[k]; digits = 3))")
+    any(>(0), r.S_err) && errorbars!(axS, bonds, r.S, r.S_err; color = c, whiskerwidth = 10)
+    scatter!(axS, bonds, r.S; color = r.converged ? c : :white, strokecolor = c, strokewidth = 2, markersize = 14)
+end
+ylims!(axS, 0, nothing)
+axislegend(axS; position = :cb)
 
 mkpath("plots")
 file = joinpath("plots", "BoseHubbard_NormalizedITE_$(run_tag)_L$(L).png")

@@ -115,13 +115,17 @@ observables are computed afterwards by the plot script.
     T=0.1 MAXD=32 MAXITER=1000 bash hpc/sweep_BoseHubbard_NormalizedITE.sh 6
 
     # afterwards, with the same run parameters (they set the run tag)
-    julia --project=. hpc/plot_BoseHubbard_NormalizedITE.jl 6
-    T=0.1 MAXD=32 julia --project=. hpc/plot_BoseHubbard_NormalizedITE.jl 6
+    bash hpc/submit_plot_BoseHubbard_NormalizedITE.sh 6
+    T=0.1 MAXD=32 bash hpc/submit_plot_BoseHubbard_NormalizedITE.sh 6
 
-Run parameters (environment): `T` (0.16, strong hopping; the weak bonds have t/3), `U` (1.0), `NMAX` (4), `DTAU` (0.05),
-`MAXD` (16), `MAXITER` (400), `CONVTOL` (1e-8), `CROSS_WIDTH` (50), `DATA_DIR` ($VSC_DATA/data). Job resources:
-`WALLTIME` (4:00:00), `MEM` (8GB), `PPN` (4), `JULIA_THREADS` and `BLAS_THREADS` (both `PPN`), `CLUSTER` (skiddo),
-`JULIA`. Grid: `MUS`. Plot script: `N_SAMPLES` (1000, disorder words are enumerated exactly if q^L ≤ `N_SAMPLES`).
+Run parameters (environment, defaults set in the submit scripts; the Julia scripts have none and require them all):
+`T` (0.16, strong hopping; the weak bonds have t/3), `U` (1.0), `NMAX` (4), `DTAU` (0.05), `MAXD` (16), `MAXITER` (500),
+`CONVTOL` (1e-8), `CROSS_WIDTH` (32), `DATA_DIR` ($VSC_DATA/data). Job resources: `WALLTIME` (1:00:00), `MEM` (8GB),
+`PPN` (8), `JULIA_THREADS` and `BLAS_THREADS` (both `PPN`), `CLUSTER` (skiddo), `JULIA`. Grid: `MUS`. Plot script:
+`N_SAMPLES` (10000, disorder words are enumerated exactly if q^L ≤ `N_SAMPLES`), `S_MUS` ("0.3 0.6 1.0", the μ/U values
+whose disorder-averaged entanglement entropy profile S(k) is plotted in the second panel; the nearest grid points are
+used). The profile on every bond is also stored in `observables.csv` as the columns `S_1..S_{L-1}`. To run the plot
+script directly, set these yourself, e.g. `T=0.16 U=1.0 NMAX=4 DTAU=0.05 MAXD=16 DATA_DIR=$VSC_DATA/data N_SAMPLES=10000 S_MUS="0.3 0.6 1.0" julia --project=. hpc/plot_BoseHubbard_NormalizedITE.jl 6`.
 
 ## Data layout
 

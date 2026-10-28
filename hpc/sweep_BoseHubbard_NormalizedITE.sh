@@ -8,11 +8,12 @@
 #   T=0.1 MAXD=32 MAXITER=1000 bash hpc/sweep_BoseHubbard_NormalizedITE.sh 6
 #   FORCE=1 bash hpc/sweep_BoseHubbard_NormalizedITE.sh 6            # also resubmit points that already have a result
 #
-# Run parameters (T, U, NMAX, DTAU, MAXD, MAXITER, CONVTOL, CROSS_WIDTH, DATA_DIR) are passed to the jobs through the
-# environment (qsub -V); see hpc/BoseHubbard_NormalizedITE.jl for their defaults.
+# Run parameters (T, U, NMAX, DTAU, MAXD, MAXITER, CONVTOL, CROSS_WIDTH, DATA_DIR) and their defaults are set below;
+# override them from the caller's environment. They are written into every job script, hpc/BoseHubbard_NormalizedITE.jl
+# has no defaults of its own.
 # Results: <DATA_DIR>/BoseHubbard_NormalizedITE/<run tag>/L<L>/mu<μ>.jld2
 # Logs:    logs/BoseHubbard_NormalizedITE/<run tag>/L<L>/
-# Observables and plot afterwards: julia --project=. hpc/plot_BoseHubbard_NormalizedITE.jl <L>
+# Observables and plot afterwards: bash hpc/submit_plot_BoseHubbard_NormalizedITE.sh <L> (with the same run parameters)
 #
 # Every job first runs Pkg.instantiate() and Pkg.precompile() on its compute node, so new dependencies are installed
 # (concurrent jobs wait for each other through Julia's precompile locks).
@@ -23,6 +24,17 @@ L="${1:?usage: bash hpc/sweep_BoseHubbard_NormalizedITE.sh <L>}"
 
 # μ/U grid, formatted as %.4f in the file names
 MUS="${MUS:-$(LC_ALL=C seq 0 0.05 1.5)}"
+
+# Run parameters (T, U, NMAX, DTAU, MAXD set the run tag)
+export T="${T:-0.16}"   # strong hopping, the weak bonds have t/3
+export U="${U:-1.0}"
+export NMAX="${NMAX:-4}"
+export DTAU="${DTAU:-0.05}"
+export MAXD="${MAXD:-16}"
+export MAXITER="${MAXITER:-500}"
+export CONVTOL="${CONVTOL:-1e-8}"
+export CROSS_WIDTH="${CROSS_WIDTH:-32}"
+export DATA_DIR="${DATA_DIR:-${VSC_DATA:-.}/data}"
 
 # Resources per job
 WALLTIME="${WALLTIME:-1:00:00}"
@@ -63,8 +75,11 @@ module purge
 echo "PBS: \$PBS_JOBID"
 echo "Bose-Hubbard normalized ITE: L = $L, μ = $mu"
 echo "Job started at : \$(date)"
+export T=$T U=$U NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD
+export MAXITER=$MAXITER CONVTOL=$CONVTOL CROSS_WIDTH=$CROSS_WIDTH DATA_DIR="$DATA_DIR"
+export BLAS_THREADS=$BLAS_THREADS
 $JULIA --project=. --threads=$JULIA_THREADS -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
-BLAS_THREADS=$BLAS_THREADS $JULIA --project=. --threads=$JULIA_THREADS hpc/BoseHubbard_NormalizedITE.jl $L $mu
+$JULIA --project=. --threads=$JULIA_THREADS hpc/BoseHubbard_NormalizedITE.jl $L $mu
 echo "Job ended at : \$(date)"
 EOF
 )

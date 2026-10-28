@@ -5,14 +5,14 @@
 # Stores the final state and the per-step diagnostics; no observables, those are computed from the stored states by
 # hpc/plot_BoseHubbard_NormalizedITE.jl.
 #
-# Usage (from the repo root):
+# Usage (from the repo root, normally through hpc/sweep_BoseHubbard_NormalizedITE.sh):
 #   julia --project=. hpc/BoseHubbard_NormalizedITE.jl <L> <μ>         run and store
 #   julia hpc/BoseHubbard_NormalizedITE.jl --path <L> <μ>              only print the run tag and the output file
 # μ is used verbatim in the file name (the sweep script passes it formatted as %.4f).
 #
-# Run parameters (environment, with defaults):
-#   T=0.16 (strong hopping, the weak bonds have t/3)  U=1.0  NMAX=4  DTAU=0.05  MAXD=16
-#   MAXITER=400  CONVTOL=1e-8  CROSS_WIDTH=50  DATA_DIR (default $VSC_DATA/data, else ./data)
+# Run parameters (environment, all required; their defaults are set in hpc/sweep_BoseHubbard_NormalizedITE.sh):
+#   T (strong hopping, the weak bonds have t/3), U, NMAX, DTAU, MAXD, MAXITER, CONVTOL, CROSS_WIDTH, DATA_DIR
+# Optional: BLAS_THREADS (default: as many as Julia threads)
 #
 # Output: <DATA_DIR>/BoseHubbard_NormalizedITE/<run tag>/L<L>/mu<μ>.jld2, run tag t<T>_U<U>_nmax<NMAX>_dtau<DTAU>_D<MAXD>
 
@@ -23,14 +23,15 @@ length(args) == 2 || error("usage: julia --project=. hpc/BoseHubbard_NormalizedI
 L_str, μ_str = args
 L, μ = parse(Int, L_str), parse(Float64, μ_str)
 
-t_str = get(ENV, "T", "0.16")
-U_str = get(ENV, "U", "1.0")
-nmax = parse(Int, get(ENV, "NMAX", "4"))
-dtau_str = get(ENV, "DTAU", "0.05")
-maxD = parse(Int, get(ENV, "MAXD", "16"))
+param(k) = haskey(ENV, k) ? ENV[k] : error("environment variable $k not set; run parameters are set in hpc/sweep_BoseHubbard_NormalizedITE.sh")
+t_str = param("T")
+U_str = param("U")
+nmax = parse(Int, param("NMAX"))
+dtau_str = param("DTAU")
+maxD = parse(Int, param("MAXD"))
 run_tag = "t$(t_str)_U$(U_str)_nmax$(nmax)_dtau$(dtau_str)_D$(maxD)"
 
-data_root = get(ENV, "DATA_DIR", joinpath(get(ENV, "VSC_DATA", "."), "data"))
+data_root = param("DATA_DIR")
 folder = joinpath(data_root, "BoseHubbard_NormalizedITE", run_tag, "L$(L)")
 filename = joinpath(folder, "mu$(μ_str).jld2")
 
@@ -46,9 +47,9 @@ BLAS.set_num_threads(parse(Int, get(ENV, "BLAS_THREADS", string(Threads.nthreads
 
 t, U = parse(Float64, t_str), parse(Float64, U_str)
 Δτ = parse(Float64, dtau_str)
-maxiter = parse(Int, get(ENV, "MAXITER", "500"))
-convtol = parse(Float64, get(ENV, "CONVTOL", "1e-8"))
-cross_width = parse(Int, get(ENV, "CROSS_WIDTH", "32"))
+maxiter = parse(Int, param("MAXITER"))
+convtol = parse(Float64, param("CONVTOL"))
+cross_width = parse(Int, param("CROSS_WIDTH"))
 ps = [0.5, 0.5]
 d = nmax + 1
 
