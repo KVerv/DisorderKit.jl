@@ -37,11 +37,11 @@ export CROSS_WIDTH="${CROSS_WIDTH:-32}"
 export DATA_DIR="${DATA_DIR:-${VSC_DATA:-.}/data}"
 
 # Resources per job
-WALLTIME="${WALLTIME:-1:00:00}"
+WALLTIME="${WALLTIME:-2:00:00}"
 MEM="${MEM:-8GB}"
 NODES=1
 PPN="${PPN:-8}"   # CPUs per node
-JULIA_THREADS="${JULIA_THREADS:-$PPN}"   # Julia runs with --threads=$JULIA_THREADS
+JULIA_THREADS="${JULIA_THREADS:-1}"   # Julia runs with --threads=$JULIA_THREADS
 BLAS_THREADS="${BLAS_THREADS:-$PPN}"     # and BLAS.set_num_threads($BLAS_THREADS)
 CLUSTER="${CLUSTER:-skiddo}"
 JULIA="${JULIA:-$HOME/.juliaup/bin/julia +1.12.6}"
