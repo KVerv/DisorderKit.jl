@@ -156,7 +156,7 @@ function expectation_value(ρ::FiniteDisorderMPS, Os::Vector{<:AbstractBondTenso
         O += ρ.ps[p]*Op
     end
     N = tr(ls[i+1] * rs[i+1])
-    return O / N
+    return real(O / N)
 end
 
 # Expectation value of a local (disorder) operator on every site
