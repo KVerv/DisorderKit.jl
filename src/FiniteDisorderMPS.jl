@@ -148,7 +148,13 @@ end
 # Expectation value of a local disorder operator O at site i
 function expectation_value(ρ::FiniteDisorderMPS, Os::Vector{<:AbstractBondTensor}, i::Int)
     ls, rs = environments(ρ)
-    return _expectation_value(ρ, Os, i, ls[i], rs[i+1]) / tr(rs[1])
+    O = 0
+    for (p, W) in enumerate(ρ[i])
+        @tensor Op = l[4; 1] * W[1 3; 5] * Os[p][2; 3] * conj(W[4 2; 6]) * r[5; 6]
+        O += ρ.ps[p]*Op
+    end
+    N = tr(ls[i+1] * rs[i+1])
+    return O / N
 end
 
 # Expectation value of a local (disorder) operator on every site
@@ -159,19 +165,9 @@ function expectation_value(ρ::FiniteDisorderMPS, O::AbstractBondTensor)
 end
 
 function expectation_value(ρ::FiniteDisorderMPS, Os::Vector{<:AbstractBondTensor})
-    ls, rs = environments(ρ)
-    N = tr(rs[1])
-    return [_expectation_value(ρ, Os, i, ls[i], rs[i+1]) / N for i in 1:length(ρ)]
+    return [expectation_value(ρ, Os, i) for i in 1:length(ρ)]
 end
 
-function _expectation_value(ρ::FiniteDisorderMPS, Os::Vector{<:AbstractBondTensor}, i::Int, l, r)
-    O = 0
-    for (p, W) in enumerate(ρ[i])
-        @tensor Op = l[4; 1] * W[1 3; 5] * Os[p][2; 3] * conj(W[4 2; 6]) * r[5; 6]
-        O += ρ.ps[p]*Op
-    end
-    return O
-end
 
 # Compute correlation function of two local operators at site i and site j
 function correlator(ρ::FiniteDisorderMPS, O1::AbstractBondTensor, O2::AbstractBondTensor, i::Int, j::Int)

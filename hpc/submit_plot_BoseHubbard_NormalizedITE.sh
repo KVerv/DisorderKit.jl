@@ -19,13 +19,13 @@ export T="${T:-0.16}"
 export U="${U:-1.0}"
 export NMAX="${NMAX:-4}"
 export DTAU="${DTAU:-0.05}"
-export MAXD="${MAXD:-24}"
+export MAXD="${MAXD:-16}"
 export DATA_DIR="${DATA_DIR:-${VSC_DATA:-.}/data}"
-export N_SAMPLES="${N_SAMPLES:-10000}"   # disorder words are enumerated exactly if q^L ≤ N_SAMPLES, else sampled
+export N_SAMPLES="${N_SAMPLES:-1000}"   # disorder words are enumerated exactly if q^L ≤ N_SAMPLES, else sampled
 export S_MUS="${S_MUS:-0.3 0.6 1.0}"     # μ/U values of the entanglement entropy profiles in the plot
 
-WALLTIME="${WALLTIME:-0:50:00}"
-MEM="${MEM:-4GB}"
+WALLTIME="${WALLTIME:-0:30:00}"
+MEM="${MEM:-8GB}"
 PPN="${PPN:-4}"
 CLUSTER="${CLUSTER:-skiddo}"
 JULIA="${JULIA:-$HOME/.juliaup/bin/julia +1.12.6}"
