@@ -7,6 +7,7 @@
 #   MUS="0.1 0.2 0.3" bash hpc/sweep_BoseHubbard_NormalizedITE.sh 6
 #   T=0.1 MAXD=32 MAXITER=1000 bash hpc/sweep_BoseHubbard_NormalizedITE.sh 6
 #   FORCE=1 bash hpc/sweep_BoseHubbard_NormalizedITE.sh 6            # also resubmit points that already have a result
+#   PPN=4 JULIA_THREADS=1 BLAS_THREADS=4 bash hpc/sweep_BoseHubbard_NormalizedITE.sh 6   # thread split from hpc/benchmark_BoseHubbard_NormalizedITE.sh
 #
 # Run parameters (T, U, NMAX, DTAU, MAXD, MAXITER, CONVTOL, CROSS_WIDTH, DATA_DIR) and their defaults are set below;
 # override them from the caller's environment. They are written into every job script, hpc/BoseHubbard_NormalizedITE.jl

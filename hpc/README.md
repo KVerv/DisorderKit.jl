@@ -105,6 +105,7 @@ observables are computed afterwards by the plot script.
 |---|---|
 | `BoseHubbard_NormalizedITE.jl` | one point (L, μ): runs the ITE and stores the final state and the per-step diagnostics |
 | `sweep_BoseHubbard_NormalizedITE.sh` | submits one PBS job per μ for a given L, skipping points that already have a result |
+| `benchmark_BoseHubbard_NormalizedITE.jl` / `.sh` | measures time per step, peak memory and thread scaling for a given L, and recommends WALLTIME, MEM, PPN and the split into Julia and BLAS threads |
 | `plot_BoseHubbard_NormalizedITE.jl` | computes ρ, κ = dρ/dμ and \|⟨a⟩\|² from the stored states, prints and saves them as a CSV, and plots them against μ/U |
 
 ## Usage (from the repo root, on the login node)
@@ -128,6 +129,24 @@ panels; the nearest grid points are used). The profile and variance on every bon
 as the columns `S_1..S_{L-1}` and `varS_1..varS_{L-1}`. To run the plot
 script directly, set these yourself, e.g. `T=0.16 U=1.0 NMAX=4 DTAU=0.05 MAXD=16 DATA_DIR=$VSC_DATA/data N_SAMPLES=10000 S_MUS="0.3 0.6 1.0" julia --project=. hpc/plot_BoseHubbard_NormalizedITE.jl 6`.
 
+## Choosing resources
+
+Run the benchmark once per L (and whenever `MAXD` or `NMAX` changes), before the sweep, with the same run parameters:
+
+    bash hpc/benchmark_BoseHubbard_NormalizedITE.sh 6            # one PBS job, threads 1 2 4 8
+    MODES="both blas" bash hpc/benchmark_BoseHubbard_NormalizedITE.sh 6   # only some of the thread splits
+    LOCAL=1 bash hpc/benchmark_BoseHubbard_NormalizedITE.sh 6    # or directly, e.g. on an interactive node
+    T=0.16 U=1.0 NMAX=4 DTAU=0.05 MAXD=16 MAXITER=500 DATA_DIR=$VSC_DATA/data \
+        julia hpc/benchmark_BoseHubbard_NormalizedITE.jl --summary 6   # reprint the summary
+
+As for the RTFIM, every thread count n runs the splits `both`, `julia` and `blas` (`MODES`). Every split runs
+`BENCH_STEPS` (20) ITE steps at the cap `MAXD` at μ = `MU` (1.0, superfluid between the n = 1 and n = 2 Mott lobes, so
+the bonds saturate at `MAXD`; the summary warns if they did not) and records the time per step once the bonds have
+saturated and the peak memory. The summary estimates T = warm-up + `MAXITER` × time per step (an upper bound, a run stops
+when it converges), the speedup and efficiency per split, and recommends `PPN`, `JULIA_THREADS`, `BLAS_THREADS`,
+`WALLTIME` (`SAFETY` × T, rounded up to 15 minutes) and `MEM` (`SAFETY` × peak memory), with the matching sweep command.
+The results are stored in `$DATA_DIR/BoseHubbard_NormalizedITE/benchmarks/<run tag>/L<L>/threads<nj>_blas<nb>.csv`.
+
 ## Data layout
 
     $DATA_DIR/BoseHubbard_NormalizedITE/
@@ -137,7 +156,9 @@ script directly, set these yourself, e.g. `T=0.16 U=1.0 NMAX=4 DTAU=0.05 MAXD=16
           mu0.0500.jld2
           ...
           observables.csv                       written by the plot script
+      benchmarks/<run tag>/L<L>/threads<nj>_blas<nb>.csv   benchmark results
     logs/BoseHubbard_NormalizedITE/<run tag>/L<L>/   PBS stdout/stderr of every job
+    logs/BoseHubbard_NormalizedITE/benchmarks/<run tag>/L<L>/
     plots/BoseHubbard_NormalizedITE_<run tag>_L<L>.png
 
 `MAXITER` and `CONVTOL` are not in the run tag: rerunning with more steps needs `FORCE=1` (or another `DATA_DIR`).
