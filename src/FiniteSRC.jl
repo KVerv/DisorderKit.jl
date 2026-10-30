@@ -8,7 +8,7 @@
 # The composite bonds V_i are kept as multi-leg ProductSpaces: TensorKit's *, ' and qr work on them directly, so
 # no fusing isomorphism is needed.
 #
-# Dimensions (docs, table "Dimensions and symbols"): d spin dimension, q number of disorder sectors, D_i the bond at cut i
+# Dimensions (docs, table "Dimensions and symbols"): d spin dimension, q = q_i number of disorder sectors of site i, D_i the bond at cut i
 # of the MPS that SRC builds (capped by D_max = max_rank or maxD), n_i = dim X_i the local dimension of the compressed
 # tensor (q for the partition, d q for the state), K the number of test vectors (sketch columns), m the number of basis
 # vectors, rows = n_i D_i.
@@ -33,11 +33,11 @@
 ==========================================================================================#
 
 # √P(w) Z(w) of W A from the four layers A, W, W̄, Ā; physical index the sector u (n_i = q).
-# A[i][u], W[i][u]: layers of site i in sector u; g[u] = √p_u
+# A[i][u], W[i][u]: layers of site i in sector u; g[i][u] = √p_u of sector u on site i
 struct PartitionSource
     A::Vector{<:Vector{<:AbstractMPSTensor}}
     W::Vector{<:Vector{<:AbstractMPOTensor}}
-    g::Vector{Float64}
+    g::Vector{Vector{Float64}}
 end
 
 # Σ_w √P(w) |w⟩ ⊗ f(w) W_w|A_w⟩ from the three layers A, W, f; physical index (s, u), s fastest (n_i = d q)
@@ -45,7 +45,7 @@ struct PhysicalSource
     A::Vector{<:Vector{<:AbstractMPSTensor}}
     W::Vector{<:Vector{<:AbstractMPOTensor}}
     f::Vector{<:Vector{<:AbstractBondTensor}}
-    g::Vector{Float64}
+    g::Vector{Vector{Float64}}
 end
 
 const Source = Union{PartitionSource, PhysicalSource}
@@ -61,8 +61,8 @@ right_space(P::PartitionSource, i::Int) = domain(P.A[i][1])[1] ⊗ domain(P.W[i]
 right_space(P::PhysicalSource, i::Int) = domain(P.A[i][1])[1] ⊗ domain(P.W[i][1])[2] ⊗ domain(P.f[i][1])[1]
 
 # Physical legs X_i of site i: ℂ^q (partition) or (ℂ^d)' ⊗ ℂ^q (physical)
-physical_space(P::PartitionSource, i::Int) = ProductSpace(ℂ^length(P.g))
-physical_space(P::PhysicalSource, i::Int) = space(P.W[i][1], 2)' ⊗ ℂ^length(P.g)
+physical_space(P::PartitionSource, i::Int) = ProductSpace(ℂ^length(P.g[i]))
+physical_space(P::PhysicalSource, i::Int) = space(P.W[i][1], 2)' ⊗ ℂ^length(P.g[i])
 
 # Dimension n_i of the physical legs X_i
 physical_dim(P::Source, i::Int) = dim(physical_space(P, i))
@@ -86,11 +86,10 @@ end
 
 # Identity MPO layers W[1 s; t 1] = δ_st for every site and sector, for the partition of an unevolved ψ
 function identity_layers(ψ::FiniteDisorderMPS)
-    q = length(ψ.ps)
     return map(1:length(ψ)) do i
         s = space(ψ[i, 1], 2)                                    # physical space of site i
         W = permute(id(ComplexF64, ℂ^1 ⊗ s), ((1, 2), (4, 3)))  # (ℂ^1 ⊗ s ← ℂ^1 ⊗ s) to W[1 s; t 1]
-        fill(W, q)
+        fill(W, length(ψ.ps[i]))
     end
 end
 
@@ -109,11 +108,11 @@ dense_view(t::AbstractTensorMap, dims...) = reshape(block(t, Trivial()), dims...
 # Partition: Σ_u e_u ⊗ g_u (A_u W_u W̄_u Ā_u S), e_u the sector-u basis covector on X_i.
 # Contract S with the four layers of sector u (bond legs unfused), weight g_u, write it into physical index u of J.
 function apply_suffix(P::PartitionSource, i::Int, S::AbstractTensorMap)
-    q = length(P.g)
+    q = length(P.g[i])
     T = promote_type(scalartype(S), scalartype(P.A[i][1]), scalartype(P.W[i][1]))
     J = TensorMap{T}(undef, left_space(P, i) ← physical_space(P, i) ⊗ domain(S))   # every sector u is written below
     Jd = dense_view(J, dim(codomain(J)), q, dim(domain(S)))                       # J[v, u, r]
-    for (u, g) in enumerate(P.g)
+    for (u, g) in enumerate(P.g[i])
         A, W = P.A[i][u], P.W[i][u]
         # explicit order, 5-25% faster than opt=true at D_i = 4..16
         @tensor allocator=site_allocator X[-1 -2 -3 -4; -5] := g * ((((S[1 3 5 7; -5] * A[-1 2; 1]) * W[-2 4; 2 3]) * conj(W[-3 4; 6 5])) * conj(A[-4 6; 7]))
@@ -125,12 +124,12 @@ end
 # Physical source: per sector u contract S with A_u, W_u, f_u, keep the spin leg s open,
 # weight g_u, write it into physical index (s, u) of J
 function apply_suffix(P::PhysicalSource, i::Int, S::AbstractTensorMap)
-    q = length(P.g)
+    q = length(P.g[i])
     d = dim(space(P.W[i][1], 2))
     T = promote_type(scalartype(S), scalartype(P.A[i][1]), scalartype(P.W[i][1]), scalartype(P.f[i][1]))
     J = TensorMap{T}(undef, left_space(P, i) ← physical_space(P, i) ⊗ domain(S))   # V_i ← (ℂ^d)' ⊗ ℂ^q ⊗ ℂ^{D_i}
     Jd = dense_view(J, dim(codomain(J)), d, q, dim(domain(S)))                    # J[v, s, u, r]
-    for (u, g) in enumerate(P.g)
+    for (u, g) in enumerate(P.g[i])
         A, W, f = P.A[i][u], P.W[i][u], P.f[i][u]
         # X[a h x; s r]: S[b j y; r] with A[a t; b], W[h s; t j], f[x; y]; the output spin s of W stays open
         @tensor opt=true allocator=site_allocator X[-1 -2 -3; -4 -5] := g * S[1 3 5; -5] * A[-1 2; 1] * W[-2 -4; 2 3] * f[-3; 5]
@@ -148,7 +147,7 @@ function apply_prefix(P::PartitionSource, i::Int, C::AbstractTensorMap, Ω::Abst
     K = codomain(C)[1]
     T = promote_type(scalartype(C), eltype(Ω), scalartype(P.A[i][1]), scalartype(P.W[i][1]))
     out = zeros(T, K ← right_space(P, i))
-    for (u, g) in enumerate(P.g)
+    for (u, g) in enumerate(P.g[i])
         A, W = P.A[i][u], P.W[i][u]
         Cw = DiagonalTensorMap(g .* Ω[u, :], K) * C   # row k of C scaled by g_u Ω[u, k]
         @tensor opt=true allocator=site_allocator out[-1; -2 -3 -4 -5] += Cw[-1; 1 3 5 7] * A[1 2; -2] * W[3 4; 2 -3] * conj(W[5 4; 6 -4]) * conj(A[7 6; -5])
@@ -164,7 +163,7 @@ function apply_prefix(P::PhysicalSource, i::Int, C::AbstractTensorMap, Ω::Abstr
     T = promote_type(scalartype(C), eltype(Ω), scalartype(P.A[i][1]), scalartype(P.W[i][1]), scalartype(P.f[i][1]))
     out = zeros(T, K ← right_space(P, i))
     outd = block(out, Trivial())                      # out[k, w]
-    for (u, g) in enumerate(P.g)
+    for (u, g) in enumerate(P.g[i])
         A, W, f = P.A[i][u], P.W[i][u], P.f[i][u]
         # X[k; b j y s]: C[k; a h x] with A[a t; b], W[h s; t j], f[x; y]; the output spin s of W stays open
         @tensor opt=true allocator=site_allocator X[-1; -2 -3 -4 -5] := C[-1; 1 3 4] * A[1 2; -2] * W[3 -5; 2 -3] * f[4; -4]
@@ -458,14 +457,14 @@ end
 # √P(w) Z(w) of W ψ for the MPO layers Ws[i][u], without forming W ψ
 function src_partition(ψ::FiniteDisorderMPS, Ws::Vector{<:Vector{<:AbstractMPOTensor}}; max_rank::Int, rtol::Real = 1e-10,
                        rank_threshold::Real = 1e-13, rng::AbstractRNG = Random.default_rng(), to::TimerOutput = TimerOutput())
-    any(<=(0), ψ.ps) && throw(ArgumentError("SRC requires strictly positive disorder probabilities"))
+    any(p -> any(<=(0), p), ψ.ps) && throw(ArgumentError("SRC requires strictly positive disorder probabilities"))
     @timeit to "product_setup" begin
         A, la = rescale_layers(ψ.opp)
         W, lw = rescale_layers(Ws)
-        P = PartitionSource(A, W, sqrt.(ψ.ps))
+        P = PartitionSource(A, W, [sqrt.(p) for p in ψ.ps])
     end
     cores, info = run_src(P, rng; rtol = rtol, sketch_cap = max_rank, rank_threshold = rank_threshold, to = to)
-    return ScalarPartition(cores, 2 * (la + lw), collect(Float64, ψ.ps)), info   # ket and bra both carry the scales
+    return ScalarPartition(cores, 2 * (la + lw), ψ.ps), info   # ket and bra both carry the scales
 end
 
 # √P(w) Z(w) of the evolved state Us ψ, without forming Us ψ.
@@ -481,29 +480,29 @@ src_partition(ψ::FiniteDisorderMPS; kwargs...) = src_partition(ψ, identity_lay
 function src_compress(ψ::FiniteDisorderMPS, Us::FiniteDisorderMPO, F::FiniteDisorderFilter; maxD::Int, rtol::Real = 1e-11,
                       sketch_cap::Int = 128, rank_threshold::Real = 1e-13, round_tol::Real = 1e-10, previous_widths = nothing,
                       rng::AbstractRNG = Random.default_rng(), to::TimerOutput = TimerOutput())
-    any(<=(0), ψ.ps) && throw(ArgumentError("SRC requires strictly positive disorder probabilities"))
+    any(p -> any(<=(0), p), ψ.ps) && throw(ArgumentError("SRC requires strictly positive disorder probabilities"))
     L = length(ψ)
     (length(Us.opp) == L == length(F.opp)) || throw(ArgumentError("ψ, Us and F should have the same length"))
     @timeit to "product_setup" begin
         A, la = rescale_layers(ψ.opp)
         W, lw = rescale_layers(Us.opp)
         f, lf = rescale_layers(F.opp)
-        P = PhysicalSource(A, W, f, sqrt.(ψ.ps))
+        P = PhysicalSource(A, W, f, [sqrt.(p) for p in ψ.ps])
     end
     cores, info = run_src(P, rng; rtol = rtol, sketch_cap = sketch_cap, rank_threshold = rank_threshold, round_rank = maxD,
                           round_tol = round_tol, previous_widths = previous_widths, to = to)
 
-    # Sector u of the core c: ℂ^{D_{i-1}} ⊗ ℂ^d ⊗ (ℂ^q)' ← ℂ^{D_i} is the MPS tensor ℂ^{D_{i-1}} ⊗ ℂ^d ← ℂ^{D_i}; the absolute scale is
+    # Sector u of the core c: ℂ^{D_{i-1}} ⊗ ℂ^d ⊗ (ℂ^{q_i})' ← ℂ^{D_i} is the MPS tensor ℂ^{D_{i-1}} ⊗ ℂ^d ← ℂ^{D_i}; the absolute scale is
     # spread evenly over the sites and the weight √p_u is divided out
     factor = exp((la + lw + lf + F.log_scale) / L)
     (isfinite(factor) && factor > 0) || throw(DomainError(factor, "absolute SRC scale cannot be materialized"))
-    q = length(ψ.ps)
-    @timeit to "materialize" opp = map(cores) do c
+    @timeit to "materialize" opp = map(enumerate(cores)) do (i, c)
+        q = length(ψ.ps[i])
         map(1:q) do u
             e = Tensor([j == u ? 1.0 : 0.0 for j in 1:q], ℂ^q)   # basis ket of sector u
             @tensor cu[r s; q] := c[r s x; q] * e[x]
-            cu * (factor / sqrt(ψ.ps[u]))
+            cu * (factor / sqrt(ψ.ps[i][u]))
         end
     end
-    return FiniteDisorderMPS(opp, ψ.ps), info
+    return FiniteDisorderMPS(opp, ψ.ps, ψ.sectors), info
 end

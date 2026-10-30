@@ -36,9 +36,10 @@ n_op = TensorMap(ComplexF64.(diagm(0:nmax)), ℂ^d ← ℂ^d)
 a_op = TensorMap(ComplexF64.(diagm(1 => sqrt.(1:nmax))), ℂ^d ← ℂ^d)   # a|n⟩ = √n |n-1⟩
 
 # Uniform superposition of 0..nmax bosons on every site and in every sector: every conditional state is normalized
-function uniform_state(ps, L, d)
+function uniform_state(Hs, ps, L, d)
     W = TensorMap(fill(ComplexF64(1/sqrt(d)), d), ℂ^1 ⊗ ℂ^d ← ℂ^1)
-    return DisorderKit.FiniteDisorderMPS([[W for _ in ps] for _ in 1:L], ps)
+    site_ps, sectors = DisorderKit.site_sectors(Hs, ps, L)
+    return DisorderKit.FiniteDisorderMPS([[W for _ in p] for p in site_ps], site_ps, sectors)
 end
 
 # Left transfer of an environment E[bra; ket] by the site tensor A[a s; b] with the operator X applied to the ket
@@ -71,10 +72,9 @@ end
 
 # Disorder-averaged density and |⟨a⟩|²: all words if there are at most n_samples, else sampled words
 function disorder_average(ψ; rng = Xoshiro(1))
-    q = length(ψ.ps)
-    words = float(q)^L <= n_samples ? [collect(w) for w in vec(collect(Iterators.product(fill(1:q, L)...)))] :
-                                       [sample(rng, 1:q, Weights(ψ.ps), L) for _ in 1:n_samples]
-    weights = float(q)^L <= n_samples ? [prod(ψ.ps[w]) for w in words] : fill(1/length(words), length(words))
+    exact = prod(float.(length.(ψ.ps))) <= n_samples
+    words = DisorderKit.assessment_words(ψ.ps, n_samples; rng)
+    weights = exact ? [prod(ψ.ps[i][u] for (i, u) in enumerate(w)) for w in words] : fill(1/length(words), length(words))
     ρ, φ = 0.0, 0.0
     for (w, P) in zip(words, weights)
         N, as = word_observables(ψ, w)
@@ -89,7 +89,7 @@ end
 for μ in μs
     Hs = DisorderKit.random_bose_hubbard([t, t/3], [U], [μ]; nmax)
     alg = DisorderKit.Groundstate_FiniteNormalizedITE(; maxD, order = 2, convtol, maxiter, verbosity = 2, cross_width = 50)
-    ψ, _, info = DisorderKit.groundstate(uniform_state(ps, L, d), Hs, Δτ, alg)
+    ψ, _, info = DisorderKit.groundstate(uniform_state(Hs, ps, L, d), Hs, Δτ, alg)
     ρ, φ = disorder_average(ψ)
     push!(ρs, ρ)
     push!(φs, φ)

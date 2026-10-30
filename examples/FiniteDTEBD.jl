@@ -21,7 +21,7 @@ D = 8 # Initial state Bonddimension
 Dmax = 8 # Maximal state Bonddimension
 D_dis = length(ps) # Disorder Bonddimension
 D_phys = 2 # Physical dimension
-ψ = DisorderKit.FiniteDisorderMPS(ps, L, D_dis, D_phys, D; zero_variance = false)
+ψ = DisorderKit.FiniteDisorderMPS(Hs, ps, L, D_phys, D; zero_variance = false)
 
 Z = TensorMap([1. 0.; 0. -1.], ℂ^2, ℂ^2)
 X = TensorMap([0. 1.; 1. 0.], ℂ^2, ℂ^2)

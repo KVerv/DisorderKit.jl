@@ -16,14 +16,14 @@ rtol_Z = 1e-10  # partition rtol
 rtol_ψ = 1e-11  # state rtol
 
 Random.seed!(1234)
-ψ = DisorderKit.FiniteDisorderMPS(ps, L, length(ps), 2, 8)
-Us = DisorderKit.time_evolution_MPO(Hs, Δτ, L; N = 2)
+ψ = DisorderKit.FiniteDisorderMPS(Hs, ps, L, 2, 8)
+Us = DisorderKit.time_evolution_MPO(Hs, Δτ, ψ.sectors; N = 2)
 F, _ = DisorderKit.normalization_filter(ψ, Us; max_rank = D)
 
 # Exact references
 Uψ = Us * ψ
 ψ_exact = F * Uψ
-words = DisorderKit.assessment_words(ps, L, 10^6)              # all 4^L words
+words = DisorderKit.assessment_words(ψ.ps, 10^6)               # all 4^(L-1)·2 words (site L only carries h)
 
 # log|√P(w) Z(w)| of a ScalarPartition: exp(log_scale) cores[1][:, w₁, :] ⋯ cores[L][:, w_L, :]
 function log_partition(Z::DisorderKit.ScalarPartition, w)
@@ -40,7 +40,7 @@ function log_partition(Z::DisorderKit.ScalarPartition, w)
 end
 
 # log √P(w) Z(w) of Us ψ, exact
-exact_log_partition(w) = 0.5*sum(log, ps[w]) + DisorderKit.conditional_log_norm(Uψ, w)
+exact_log_partition(w) = 0.5*sum(log(ψ.ps[i][u]) for (i, u) in enumerate(w)) + DisorderKit.conditional_log_norm(Uψ, w)
 
 # Relative P-weighted distance ‖a - b‖/‖b‖ with ⟨a|b⟩ = Σ_w P(w) ⟨a_w|b_w⟩
 function relative_distance(a::DisorderKit.FiniteDisorderMPS, b::DisorderKit.FiniteDisorderMPS)

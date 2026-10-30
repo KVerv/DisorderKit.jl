@@ -45,7 +45,7 @@ S_FF_err = zeros(length(Ls))
 Sprofiles_FF = Vector{Vector{Float64}}(undef, length(Ls))
 Sprofiles_FF_err = Vector{Vector{Float64}}(undef, length(Ls))
 for (ix, L) in enumerate(Ls)
-    ψ0 = DisorderKit.plus_state(ps, L) # |+x⟩ on every site, every disorder word normalized
+    ψ0 = DisorderKit.plus_state(Hs, ps, L) # |+x⟩ on every site, every disorder word normalized
     alg = DisorderKit.Groundstate_FiniteNormalizedITE(; maxD = Dmax, order= 2, convtol = 1e-6, maxiter = maxiter, verbosity = 1, timer_output = TimerOutput(), finalizer = myFinalizer)
     ψgs, data, info = DisorderKit.groundstate(ψ0, Hs, Δτ, alg)
 

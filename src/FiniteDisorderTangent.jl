@@ -31,7 +31,7 @@ function retract(x::FiniteDisorderMPS, ξ::FiniteDisorderTangent, α::Real)
             newtangents[i][p] = tangenta
         end
     end
-    ρa = FiniteDisorderMPS(Ws, x.ps)
+    ρa = FiniteDisorderMPS(Ws, x.ps, x.sectors)
     return ρa, FiniteDisorderTangent(ρa, newtangents)
 end
 

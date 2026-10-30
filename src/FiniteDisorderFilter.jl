@@ -51,7 +51,7 @@ function Base.:*(F::FiniteDisorderFilter, ψ::FiniteDisorderMPS)
             @tensor Wnew[-1 -2; -4] := factor * isol[-1; 1 2] * W[1 -2; 4] * f[2; 5] * conj(isor[-4; 4 5])
         end
     end
-    return FiniteDisorderMPS(opp, ψ.ps)
+    return FiniteDisorderMPS(opp, ψ.ps, ψ.sectors)
 end
 
 # log|f(w)| of the filter for word w: a row vector v: ℂ^1 ← ℂ^r swept through the sites, rescaled to max |entry| 1
@@ -116,11 +116,12 @@ end
 ==========================================================================================#
 
 # Compressed partition function: exp(log_scale) * cores[1][:, w₁, :] ⋯ cores[L][:, w_L, :] = √P(w) Z(w),
-# with MPS cores c: ℂ^{D_{Z,i-1}} ⊗ (ℂ^q)' ← ℂ^{D_{Z,i}} (sector u in the middle)
+# with MPS cores c: ℂ^{D_{Z,i-1}} ⊗ (ℂ^{q_i})' ← ℂ^{D_{Z,i}} (sector u in the middle), ps[i] the probabilities of the q_i
+# sectors of site i
 struct ScalarPartition{T<:AbstractTensorMap}
     cores::Vector{T}
     log_scale::Float64
-    ps::Vector{Float64}
+    ps::Vector{Vector{Float64}}
 end
 
 Base.length(Z::ScalarPartition) = length(Z.cores)
@@ -129,9 +130,9 @@ bond_dimensions(Z::ScalarPartition) = [dim(space(c, 3)) for c in Z.cores[1:end-1
 # Sector matrices G[i][p]: ℂ^{D_{Z,i-1}} ← ℂ^{D_{Z,i}} of the partition, every site divided by its largest entry.
 # Returns (G, λ) with √P(w) Z(w) = exp(λ) G[1][w₁] ⋯ G[L][w_L]
 function sector_matrices(Z::ScalarPartition)
-    q = length(Z.ps)
     λ = Z.log_scale
-    G = map(Z.cores) do c
+    G = map(enumerate(Z.cores)) do (i, c)
+        q = length(Z.ps[i])
         map(1:q) do p
             e = Tensor([j == p ? 1.0 : 0.0 for j in 1:q], ℂ^q)   # basis ket of sector p
             @tensor g[r; q] := c[r x; q] * e[x]
@@ -235,8 +236,8 @@ end
 function collect_nested_cross(Z::ScalarPartition; width::Int = 32, cycles::Int = 2, rng::AbstractRNG = Random.default_rng(),
                               to::TimerOutput = TimerOutput())
     G, λ = sector_matrices(Z)
-    h = 0.5 .* log.(Z.ps)
-    L, q = length(Z), length(Z.ps)
+    h = [0.5 .* log.(p) for p in Z.ps]
+    L = length(Z)
     diag = CrossDiagnostics()
     targets(C, R) = log_targets(λ, C, R, diag)
 
@@ -245,7 +246,7 @@ function collect_nested_cross(Z::ScalarPartition; width::Int = 32, cycles::Int =
     right = Vector{WordFamily}(undef, L+1)
     left[1], right[L+1] = empty_family(), empty_family()
     @timeit to "initial_suffixes" for i in L-1:-1:1
-        candidates = extend_suffix_family(right[i+2], G[i+1], h)
+        candidates = extend_suffix_family(right[i+2], G[i+1], h[i+1])
         n = family_size(candidates)
         right[i+1] = select_suffixes(candidates, randperm(rng, n)[1:min(width, n)])
     end
@@ -253,12 +254,12 @@ function collect_nested_cross(Z::ScalarPartition; width::Int = 32, cycles::Int =
     for _ in 1:cycles
         # Prefix sweep against the current suffixes
         @timeit to "prefix_sweep" for i in 1:L-1
-            candidates = extend_prefix_family(left[i], G[i], h)
+            candidates = extend_prefix_family(left[i], G[i], h[i])
             left[i+1] = select_prefixes(candidates, pivot_rows(targets(candidates, right[i+1]), width))
         end
         # Suffix sweep against the new prefixes
         @timeit to "suffix_sweep" for i in L-1:-1:1
-            candidates = extend_suffix_family(right[i+2], G[i+1], h)
+            candidates = extend_suffix_family(right[i+2], G[i+1], h[i+1])
             right[i+1] = select_suffixes(candidates, pivot_rows(transpose(targets(left[i+1], candidates)), width))
         end
     end
@@ -266,8 +267,8 @@ function collect_nested_cross(Z::ScalarPartition; width::Int = 32, cycles::Int =
     @timeit to "cut_blocks" H = [targets(left[i+1], right[i+1]) for i in 1:L-1]
     @timeit to "site_blocks" K = map(1:L) do i
         n = family_size(left[i])
-        logs = targets(extend_prefix_family(left[i], G[i], h), right[i+1])
-        [logs[(p-1)*n .+ (1:n), :] for p in 1:q]
+        logs = targets(extend_prefix_family(left[i], G[i], h[i]), right[i+1])
+        [logs[(p-1)*n .+ (1:n), :] for p in eachindex(G[i])]
     end
     return H, K, diag
 end

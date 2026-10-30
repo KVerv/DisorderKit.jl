@@ -25,15 +25,16 @@ function outgoing_coupling(Hs::DisorderMPOHam)
     return DisorderMPOHam(Hs.As, fill(R_ref, length(Hs.Rs)), [α*L for (α, L) in zip(αs, Hs.Ls)], Hs.Ds)
 end
 
-# Time evolution MPO on a chain of length L with open boundary conditions:
-# bulk tensors of the infinite time evolution MPO of every sector, where only the first row is kept
-# on the first site and the first column on the last site (as in MPSKit.open_boundary_conditions).
+# Time evolution MPO on an open chain with the disorder sectors of every site, sectors[i][p] the Hamiltonian sector of
+# sector p on site i (as in FiniteDisorderMPS): bulk tensors of the infinite time evolution MPO of every sector, where
+# only the first row is kept on the first site and the first column on the last site (as in MPSKit.open_boundary_conditions).
 # The coupling of bond (i, i+1) is set by the sector of site i, as in energy and the free fermion reference
-function time_evolution_MPO(Hs::DisorderMPOHam, dt::Real, L::Int; N::Int = 1)
+function time_evolution_MPO(Hs::DisorderMPOHam, dt::Real, sectors::Vector{<:Vector{<:Integer}}; N::Int = 1)
     Us = time_evolution_MPO(outgoing_coupling(Hs), dt; N = N)
+    L = length(sectors)
 
     opp = map(1:L) do i
-        map(Us.opp) do U
+        map(Us.opp[sectors[i]]) do U
             Ui = U
             if i == 1
                 el = zeros(ComplexF64, ℂ^1, space(U, 1))
@@ -54,7 +55,7 @@ end
 # Multiply FiniteDisorderMPS with FiniteDisorderMPO
 function Base.:*(O::FiniteDisorderMPO, ψ::FiniteDisorderMPS)
     (length(ψ) == length(O)) || throw(ArgumentError("O should have the same length as ψ"))
-    (length(ψ[1]) == length(O[1])) || throw(ArgumentError("O should have the same amount of disorder sectors as ψ"))
+    all(length(ψ[i]) == length(O[i]) for i in 1:length(ψ)) || throw(ArgumentError("O should have the same amount of disorder sectors as ψ on every site"))
 
     opp = map(1:length(ψ)) do i
         map(enumerate(ψ[i])) do (p, W)
@@ -65,7 +66,7 @@ function Base.:*(O::FiniteDisorderMPO, ψ::FiniteDisorderMPS)
         end
     end
 
-    return FiniteDisorderMPS(opp, ψ.ps)
+    return FiniteDisorderMPS(opp, ψ.ps, ψ.sectors)
 end
 
 # Approximate ψ by a left-isometric FiniteDisorderMPS by maximizing the normalized overlap, starting from ϕ0
@@ -103,11 +104,10 @@ function groundstate(ψ0::FiniteDisorderMPS, Hs::DisorderMPOHam, dτ::Float64, a
     info = GroundstateInfo(alg.maxiter)
 
     L = length(ψ0)
-    D_dis = length(ψ0.ps)
     D_phys = dim(space(ψ0[1,1], 2))
 
     @timeit alg.timer_output "Copy" ψ = deepcopy(ψ0)
-    @timeit alg.timer_output "construct_time_evolution_operator" Us = time_evolution_MPO(Hs, dτ, L; N = 4)
+    @timeit alg.timer_output "construct_time_evolution_operator" Us = time_evolution_MPO(Hs, dτ, ψ0.sectors; N = 4)
 
     ix = 0
     ϵ_conv = 1.0
@@ -123,7 +123,7 @@ function groundstate(ψ0::FiniteDisorderMPS, Hs::DisorderMPOHam, dτ::Float64, a
         (alg.verbosity > 1) && (@info(crayon"magenta"("Before approximation: Bonddimensions of ψ = $([dim(space(ψ_ev[i,1],1)) for i in 2:L])")))
 
         # Start from the previous state once it has reached the maximal bond dimensions, otherwise from a random one
-        ϕ0 = FiniteDisorderMPS(ψ.ps, L, D_dis, D_phys, maxD)
+        ϕ0 = FiniteDisorderMPS(ψ.ps, ψ.sectors, D_phys, maxD)
         if all(space(ϕ0[i,1]) == space(ψ[i,1]) for i in 1:L)
             ϕ0 = ψ
         end

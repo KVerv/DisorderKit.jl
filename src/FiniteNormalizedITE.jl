@@ -6,10 +6,11 @@
 # Every conditional state ψ_w stays normalized, the tensors are not isometric.
 # The cap of the partition, the filter and the state follows a stage schedule; the state is carried across stages.
 
-# Product state |+x⟩ on every site and for every disorder sector
-function plus_state(ps::Vector{Float64}, L::Int)
+# Product state |+x⟩ on every site and for every disorder sector, with the disorder sectors of site_sectors(Hs, ps, L)
+function plus_state(Hs::DisorderMPOHam, ps::Vector{Float64}, L::Int)
     W = TensorMap(ComplexF64[1, 1]/sqrt(2), ℂ^1 ⊗ ℂ^2, ℂ^1)
-    return FiniteDisorderMPS([[W for _ in ps] for _ in 1:L], ps)
+    site_ps, sectors = site_sectors(Hs, ps, L)
+    return FiniteDisorderMPS([[W for _ in p] for p in site_ps], site_ps, sectors)
 end
 
 bond_dimensions(ψ::FiniteDisorderMPS) = [dim(space(ψ[i,1], 3)) for i in 1:length(ψ)-1]
@@ -83,12 +84,13 @@ end
 FiniteNormalizedITEInfo() = FiniteNormalizedITEInfo(Float64[], Float64[], Int[], Vector{Int}[], Bool[], Float64[], Int[],
                                                     Vector{Int}[], Bool[], Vector{Int}[], Int[], Vector{Int}[], Float64[], Float64[], Float64[])
 
-# Assessment words: every word if there are at most n of them, otherwise n words drawn from the disorder distribution
-function assessment_words(ps::Vector{<:Real}, L::Int, n::Int; rng::AbstractRNG = Random.default_rng())
-    if float(length(ps))^L <= n
-        return [collect(w) for w in vec(collect(Iterators.product(fill(eachindex(ps), L)...)))]
+# Assessment words: every word if there are at most n of them, otherwise n words drawn from the disorder distribution,
+# ps[i] the distribution of site i
+function assessment_words(ps::Vector{<:Vector{<:Real}}, n::Int; rng::AbstractRNG = Random.default_rng())
+    if prod(float.(length.(ps))) <= n
+        return [collect(w) for w in vec(collect(Iterators.product(eachindex.(ps)...)))]
     end
-    return [sample(rng, eachindex(ps), Weights(ps), L) for _ in 1:n]
+    return [sample_word(rng, ps) for _ in 1:n]
 end
 
 function groundstate(ψ0::FiniteDisorderMPS, Hs::DisorderMPOHam, dτ::Float64, alg::Groundstate_FiniteNormalizedITE)
@@ -97,7 +99,7 @@ function groundstate(ψ0::FiniteDisorderMPS, Hs::DisorderMPOHam, dτ::Float64, a
     L = length(ψ0)
     to = alg.timer_output
 
-    @timeit to "construct_time_evolution_operator" Us = time_evolution_MPO(Hs, dτ, L; N = alg.order)
+    @timeit to "construct_time_evolution_operator" Us = time_evolution_MPO(Hs, dτ, ψ0.sectors; N = alg.order)
 
     ψ = ψ0
     widths, previous_cap = nothing, nothing
@@ -126,7 +128,7 @@ function groundstate(ψ0::FiniteDisorderMPS, Hs::DisorderMPOHam, dτ::Float64, a
         widths, previous_cap = src.sketch_widths, cap
         (alg.verbosity > 1) && (@info(crayon"magenta"("Bond dimensions: before rounding = $(src.pre_round_ranks), after rounding = $(bond_dimensions(ψ)), rounding error = $(src.rounding_error)")))
 
-        @timeit to "assess_normalization" residuals = normalization_residuals(ψ, assessment_words(ψ.ps, L, alg.n_assess; rng = rng(:post)))
+        @timeit to "assess_normalization" residuals = normalization_residuals(ψ, assessment_words(ψ.ps, alg.n_assess; rng = rng(:post)))
         rms, rmax = sqrt(mean(abs2, residuals)), maximum(abs, residuals)
         (alg.verbosity > 1) && (@info(crayon"magenta"("Normalization residuals: rms = $(rms), max = $(rmax)")))
         (rmax > alg.post_warn) && (@warn "Step $ix: maximal normalization residual $(rmax) exceeds $(alg.post_warn)")
@@ -188,9 +190,10 @@ function filter_normalized_energy_density(ψ::FiniteDisorderMPS, Hs::DisorderMPO
     for i in 1:L
         nb, ny = size(A[i], 3), size(f[i], 2)
         N′, E′, O′ = zeros(ComplexF64, nb, ny, nb, ny), zeros(ComplexF64, nb, ny, nb, ny), zeros(ComplexF64, nb, ny, nb, ny, nv)
-        for (u, p) in enumerate(ψ.ps)
+        for (u, p) in enumerate(ψ.ps[i])
             Au, fu = A[i][:, :, :, u], f[i][:, :, u]
-            @tensor DA[a, s, b] := D[u][s, t] * Au[a, t, b]
+            Du, Lu = D[ψ.sectors[i][u]], Lop[ψ.sectors[i][u]]   # terms of the Hamiltonian sector of sector u on site i
+            @tensor DA[a, s, b] := Du[s, t] * Au[a, t, b]
             N′ .+= p .* transfer(lN, Au, fu, Au)
             E′ .+= p .* (transfer(lE, Au, fu, Au) .+ transfer(lN, DA, fu, Au))
             if i > 1
@@ -198,7 +201,7 @@ function filter_normalized_energy_density(ψ::FiniteDisorderMPS, Hs::DisorderMPO
                 E′ .+= p .* transfer_close(lO, RA, fu, Au)
             end
             if i < L
-                @tensor LA[a, s, b, v] := Lop[u][s, t, v] * Au[a, t, b]
+                @tensor LA[a, s, b, v] := Lu[s, t, v] * Au[a, t, b]
                 O′ .+= p .* transfer_open(lN, LA, fu, Au)
             end
         end

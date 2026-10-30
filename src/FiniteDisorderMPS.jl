@@ -1,13 +1,45 @@
 # Convention virtual, physical ← virtual
 
 # Finite (open boundary) DisorderMPS of length L
-# opp[i][p] is the MPS tensor at site i for disorder sector p, same disorder distribution ps on every site
+# opp[i][p] is the MPS tensor at site i for disorder sector p, with probability ps[i][p]. Every site has its own sectors:
+# sectors[i][p] is the Hamiltonian sector (index into Hs.Ds, Hs.Ls, Hs.Rs) of sector p on site i
 struct FiniteDisorderMPS{T<:AbstractMPSTensor}
     opp::Vector{Vector{T}}
-    ps::Vector{<:Real}
+    ps::Vector{Vector{Float64}}
+    sectors::Vector{Vector{Int}}
+    function FiniteDisorderMPS(opp::Vector{Vector{T}}, ps::Vector{<:Vector{<:Real}}, sectors::Vector{<:Vector{<:Integer}}) where {T<:AbstractMPSTensor}
+        (length(opp) == length(ps) == length(sectors)) || throw(ArgumentError("opp, ps and sectors should have the same length"))
+        all(length(opp[i]) == length(ps[i]) == length(sectors[i]) for i in eachindex(opp)) || throw(ArgumentError("opp, ps and sectors should have the same number of sectors on every site"))
+        return new{T}(opp, ps, sectors)
+    end
 end
 
-function FiniteDisorderMPS(ps::Vector{Float64}, L::Int, D_dis::Int, D_phys::Int, D::Int; T=ComplexF64, zero_variance::Bool=false)
+# Disorder sectors of every site of a chain of length L for the Hamiltonian sectors of Hs with probabilities ps.
+# The coupling of bond (i, i+1) is set by the sector of site i, so the last site has no coupling: the sectors with the same
+# on-site term are merged there into one sector with the summed (marginal) probability. Returns (site ps, site sectors)
+function site_sectors(Hs::DisorderMPOHam, ps::Vector{<:Real}, L::Int)
+    length(ps) == length(Hs.Ds) || throw(ArgumentError("ps should have one probability per sector of Hs"))
+    reps, ps_last = Int[], Float64[]
+    for p in eachindex(ps)
+        k = findfirst(r -> Hs.Ds[r] ≈ Hs.Ds[p], reps)
+        if isnothing(k)
+            push!(reps, p)
+            push!(ps_last, ps[p])
+        else
+            ps_last[k] += ps[p]
+        end
+    end
+    site_ps = [i < L ? collect(Float64, ps) : ps_last for i in 1:L]
+    sectors = [i < L ? collect(eachindex(ps)) : reps for i in 1:L]
+    return site_ps, sectors
+end
+
+function FiniteDisorderMPS(Hs::DisorderMPOHam, ps::Vector{<:Real}, L::Int, D_phys::Int, D::Int; kwargs...)
+    return FiniteDisorderMPS(site_sectors(Hs, ps, L)..., D_phys, D; kwargs...)
+end
+
+function FiniteDisorderMPS(ps::Vector{<:Vector{<:Real}}, sectors::Vector{<:Vector{<:Integer}}, D_phys::Int, D::Int; T=ComplexF64, zero_variance::Bool=false)
+    L = length(ps)
     # Bond dimensions, capped by the maximal dimension allowed by the open boundaries
     Ds = ones(Int, L+1)
     for i in 2:L
@@ -20,13 +52,19 @@ function FiniteDisorderMPS(ps::Vector{Float64}, L::Int, D_dis::Int, D_phys::Int,
     opp = map(1:L) do i
         if zero_variance
             Q, _ = qr_compact(rand(T, ℂ^Ds[i]⊗ℂ^D_phys, ℂ^Ds[i+1]))
-            [Q for p in 1:D_dis]
+            [Q for _ in ps[i]]
         else
-            [first(qr_compact(rand(T, ℂ^Ds[i]⊗ℂ^D_phys, ℂ^Ds[i+1]))) for p in 1:D_dis]
+            [first(qr_compact(rand(T, ℂ^Ds[i]⊗ℂ^D_phys, ℂ^Ds[i+1]))) for _ in ps[i]]
         end
     end
-    return FiniteDisorderMPS(opp, ps)
+    return FiniteDisorderMPS(opp, ps, sectors)
 end
+
+# Same disorder sectors (and probabilities) on every site
+same_sectors(ρ1::FiniteDisorderMPS, ρ2::FiniteDisorderMPS) = (ρ1.sectors == ρ2.sectors) && (ρ1.ps == ρ2.ps)
+
+# Number of Hamiltonian sectors the site sectors of ρ refer to
+num_hamiltonian_sectors(ρ::FiniteDisorderMPS) = maximum(maximum, ρ.sectors)
 
 Base.getindex(ρ::FiniteDisorderMPS, i::Int) = ρ.opp[i]
 Base.getindex(ρ::FiniteDisorderMPS, i::Int, p::Int) = ρ.opp[i][p]
@@ -37,7 +75,7 @@ Base.iterate(ρ::FiniteDisorderMPS, i=1) = (i > length(ρ.opp)) ? nothing : (ρ[
 
 function rescale(ρ::FiniteDisorderMPS, α::Number)
     opp = [Ws*α for Ws in ρ.opp]
-    return FiniteDisorderMPS(opp, ρ.ps)
+    return FiniteDisorderMPS(opp, ρ.ps, ρ.sectors)
 end
 
 # Construct application left transfer matrix at site i: v*T -> v
@@ -46,7 +84,7 @@ function transfer_left(ρ::FiniteDisorderMPS, i::Int)
         v = zeros(ComplexF64, space(ρ[i,1],3)', space(ρ[i,1],3)')
         for (p,W) in enumerate(ρ[i])
             @tensor vp[-2; -1] := W[1 3; -1] * conj(W[2 3; -2]) * vl[2; 1]
-            v += ρ.ps[p]*vp
+            v += ρ.ps[i][p]*vp
         end
         return v
     end
@@ -59,7 +97,7 @@ function transfer_right(ρ::FiniteDisorderMPS, i::Int)
         v = zeros(ComplexF64, space(ρ[i,1],1), space(ρ[i,1],1))
         for (p,W) in enumerate(ρ[i])
             @tensor vp[-1; -2] := W[-1 3; 1] * conj(W[-2 3; 2]) * vr[1; 2]
-            v += ρ.ps[p]*vp
+            v += ρ.ps[i][p]*vp
         end
         return v
     end
@@ -112,17 +150,18 @@ function energy(ρ::FiniteDisorderMPS, Hs::DisorderMPOHam)
         l = ls[i]
         r = rs[i+1]
         for (p, W) in enumerate(ρ[i])
-            @tensor ED = l[4; 1] * W[1 2; 5] * Hs.Ds[p][3; 2] * conj(W[4 3; 6]) * r[5; 6]
-            E += ρ.ps[p] * ED
+            @tensor ED = l[4; 1] * W[1 2; 5] * Hs.Ds[ρ.sectors[i][p]][3; 2] * conj(W[4 3; 6]) * r[5; 6]
+            E += ρ.ps[i][p] * ED
         end
     end
     for i in 1:L-1
         l = ls[i]
         r = rs[i+2]
         for (p, W) in enumerate(ρ[i])
+            s = ρ.sectors[i][p]     # the coupling of bond (i, i+1) is set by the sector of site i
             for (q, V) in enumerate(ρ[i+1])
-                @tensor ELR = l[11; 1] * W[1 2; 4] * Hs.Ls[p][3; 2 5] * conj(W[11 3; 6]) * V[4 7; 9] * Hs.Rs[p][5 8; 7] * conj(V[6 8; 10]) * r[9; 10]
-                E += ρ.ps[p] * ρ.ps[q] * ELR
+                @tensor ELR = l[11; 1] * W[1 2; 4] * Hs.Ls[s][3; 2 5] * conj(W[11 3; 6]) * V[4 7; 9] * Hs.Rs[s][5 8; 7] * conj(V[6 8; 10]) * r[9; 10]
+                E += ρ.ps[i][p] * ρ.ps[i+1][q] * ELR
             end
         end
         #FIXME : currently only nearest-neighbor interactions
@@ -140,12 +179,12 @@ end
 
 # Expectation value of a local operator O at site i
 function expectation_value(ρ::FiniteDisorderMPS, O::AbstractBondTensor, i::Int)
-    Os = [O for p in 1:length(ρ[i])]
+    Os = fill(O, num_hamiltonian_sectors(ρ))
 
     return expectation_value(ρ, Os, i)
 end
 
-# Expectation value of a local disorder operator O at site i
+# Expectation value of a local disorder operator at site i, Os[s] is the operator of Hamiltonian sector s
 function expectation_value(ρ::FiniteDisorderMPS, Os::Vector{<:AbstractBondTensor}, i::Int)
     ls, rs = environments(ρ)
     O = _expectation_value(ρ, Os, i, ls[i], rs[i+1])
@@ -157,15 +196,15 @@ end
 function _expectation_value(ρ::FiniteDisorderMPS, Os::Vector{<:AbstractBondTensor}, i::Int, l, r)
     O = 0
     for (p, W) in enumerate(ρ[i])
-        @tensor Op = l[4; 1] * W[1 3; 5] * Os[p][2; 3] * conj(W[4 2; 6]) * r[5; 6]
-        O += ρ.ps[p]*Op
+        @tensor Op = l[4; 1] * W[1 3; 5] * Os[ρ.sectors[i][p]][2; 3] * conj(W[4 2; 6]) * r[5; 6]
+        O += ρ.ps[i][p]*Op
     end
     return O
 end
 
 # Expectation value of a local (disorder) operator on every site
 function expectation_value(ρ::FiniteDisorderMPS, O::AbstractBondTensor)
-    Os = [O for p in 1:length(ρ[1])]
+    Os = fill(O, num_hamiltonian_sectors(ρ))
 
     return expectation_value(ρ, Os)
 end
@@ -177,8 +216,8 @@ end
 
 # Compute correlation function of two local operators at site i and site j
 function correlator(ρ::FiniteDisorderMPS, O1::AbstractBondTensor, O2::AbstractBondTensor, i::Int, j::Int)
-    O1s = [O1 for p in 1:length(ρ[i])]
-    O2s = [O2 for p in 1:length(ρ[i])]
+    O1s = fill(O1, num_hamiltonian_sectors(ρ))
+    O2s = fill(O2, num_hamiltonian_sectors(ρ))
 
     return correlator(ρ, O1s, O2s, i, j)
 end
@@ -194,8 +233,8 @@ function correlator(ρ::FiniteDisorderMPS, O1s::Vector{<:AbstractBondTensor}, O2
     l = ls[i]
     vl = zeros(ComplexF64, space(ρ[i,1],3)', space(ρ[i,1],3)')
     for (p, W) in enumerate(ρ[i])
-        @tensor vlO1[-2; -1] := l[2; 1] * W[1 3; -1] * O1s[p][4; 3] * conj(W[2 4; -2])
-        vl += ρ.ps[p]*vlO1
+        @tensor vlO1[-2; -1] := l[2; 1] * W[1 3; -1] * O1s[ρ.sectors[i][p]][4; 3] * conj(W[2 4; -2])
+        vl += ρ.ps[i][p]*vlO1
     end
     for k in i+1:j
         Cs[k-i] = _expectation_value(ρ, O2s, k, vl, rs[k+1]) / N
@@ -212,7 +251,7 @@ function transfer_mixed_right(ρ1::FiniteDisorderMPS, ρ2::FiniteDisorderMPS, i:
         for (p,X) in enumerate(ρ1[i])
             Y = ρ2[i,p]
             @tensor vp[-1; -2] := Y[-1 3; 1] * conj(X[-2 3; 2]) * vr[1; 2]
-            v += ρ1.ps[p]*vp
+            v += ρ1.ps[i][p]*vp
         end
         return v
     end
@@ -227,7 +266,7 @@ function transfer_mixed2_right(ρ1::FiniteDisorderMPS, ρ2::FiniteDisorderMPS, i
         for (p,X) in enumerate(ρ1[i])
             Y = ρ2[i,p]
             @tensor vp[-1 -2; -3 -4] := Y[-1 2; 1] * conj(X[-2 2; 3]) * X[-3 5; 4] * conj(Y[-4 5; 6]) * vr[1 3; 4 6]
-            v += ρ1.ps[p]*vp
+            v += ρ1.ps[i][p]*vp
         end
         return v
     end
@@ -242,7 +281,7 @@ function transfer_mixed2_left(ρ1::FiniteDisorderMPS, ρ2::FiniteDisorderMPS, i:
         for (p,X) in enumerate(ρ1[i])
             Y = ρ2[i,p]
             @tensor vp[-1 -2; -3 -4] := Y[1 2; -3] * conj(X[3 2; -4]) * X[4 5; -1] * conj(Y[6 5; -2]) * vl[4 6; 1 3]
-            v += ρ1.ps[p]*vp
+            v += ρ1.ps[i][p]*vp
         end
         return v
     end
@@ -251,7 +290,7 @@ end
 
 function overlap(ρ1::FiniteDisorderMPS, ρ2::FiniteDisorderMPS)
     (length(ρ1) == length(ρ2)) || throw(ArgumentError("ρ1 and ρ2 should have the same length"))
-    (length(ρ1[1]) == length(ρ2[1])) || throw(ArgumentError("ρ1 and ρ2 should have the same amount of disorder sectors"))
+    same_sectors(ρ1, ρ2) || throw(ArgumentError("ρ1 and ρ2 should have the same disorder sectors on every site"))
 
     L = length(ρ1)
     v1space = space(ρ1[L,1],3)'
@@ -266,7 +305,7 @@ end
 
 function overlap_squared(ρ1::FiniteDisorderMPS, ρ2::FiniteDisorderMPS)
     (length(ρ1) == length(ρ2)) || throw(ArgumentError("ρ1 and ρ2 should have the same length"))
-    (length(ρ1[1]) == length(ρ2[1])) || throw(ArgumentError("ρ1 and ρ2 should have the same amount of disorder sectors"))
+    same_sectors(ρ1, ρ2) || throw(ArgumentError("ρ1 and ρ2 should have the same disorder sectors on every site"))
 
     L = length(ρ1)
     v1space = space(ρ1[L,1],3)'
@@ -312,15 +351,15 @@ function conditional_entanglement_entropy(ρ::FiniteDisorderMPS, word::AbstractV
 end
 
 # Disorder average 𝔼_w[S_w(k)] of the entanglement entropy on every bond k = 1..L-1, its standard error and the disorder
-# variance Var_w[S_w(k)] = 𝔼_w[S_w(k)²] - 𝔼_w[S_w(k)]², over words w = (p₁…p_L) with pᵢ ~ ρ.ps iid. If there are at most
-# n_samples words they are all enumerated (exact, zero error), otherwise n_samples words are sampled
+# variance Var_w[S_w(k)] = 𝔼_w[S_w(k)²] - 𝔼_w[S_w(k)]², over words w = (p₁…p_L) with pᵢ ~ ρ.ps[i] independent. If there are at
+# most n_samples words they are all enumerated (exact, zero error), otherwise n_samples words are sampled
 function average_entanglement_entropy(ρ::FiniteDisorderMPS; n_samples::Int = 1000, rng::AbstractRNG = Random.default_rng())
-    L, d = length(ρ), length(ρ.ps)
-    if float(d)^L <= n_samples
+    L = length(ρ)
+    if prod(float.(length.(ρ.ps))) <= n_samples
         S_avg = zeros(Float64, L-1)
         S2_avg = zeros(Float64, L-1)
-        for word in Iterators.product(fill(1:d, L)...)
-            w = prod(ρ.ps[p] for p in word)
+        for word in ProgressBar(Iterators.product(eachindex.(ρ.ps)...))
+            w = prod(ρ.ps[i][p] for (i, p) in enumerate(word))
             iszero(w) && continue
             S_w = conditional_entanglement_entropy(ρ, collect(word))
             S_avg .+= w .* S_w
@@ -329,9 +368,12 @@ function average_entanglement_entropy(ρ::FiniteDisorderMPS; n_samples::Int = 10
         return S_avg, zeros(Float64, L-1), max.(S2_avg .- S_avg.^2, 0.0)
     end
 
-    Ss = reduce(hcat, [conditional_entanglement_entropy(ρ, sample(rng, 1:d, Weights(ρ.ps), L)) for _ in 1:n_samples])
+    Ss = reduce(hcat, [conditional_entanglement_entropy(ρ, sample_word(rng, ρ.ps)) for _ in ProgressBar(1:n_samples)])
     return vec(mean(Ss; dims=2)), vec(std(Ss; dims=2)) ./ sqrt(n_samples), vec(var(Ss; dims=2))
 end
+
+# Disorder word with the sector of site i drawn from ps[i]
+sample_word(rng::AbstractRNG, ps::Vector{<:Vector{<:Real}}) = [sample(rng, eachindex(p), Weights(p)) for p in ps]
 
 # Disorder averaged entanglement entropy on the bond between site k and k+1, its standard error and its disorder variance
 function average_entanglement_entropy(ρ::FiniteDisorderMPS, k::Int; kwargs...)
