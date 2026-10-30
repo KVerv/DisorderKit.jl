@@ -98,41 +98,51 @@ end
  Site tensors: the interface between the SRC algorithm and the source
 ==========================================================================================#
 
+# Intermediates of the site contractions are freed right away instead of being left to the GC
+const site_allocator = TensorKit.TensorOperations.ManualAllocator()
+
+# Dense array of a tensor between trivially graded spaces, as a view on its data: codomain legs first, every leg
+# fastest-first as in convert(Array, t)
+dense_view(t::AbstractTensorMap, dims...) = reshape(block(t, Trivial()), dims...)
+
 # Step 1 primitive: J = M_i S, i.e. J[v; x r] = Σ_w M_i[v; x w] S[w; r].  S: R_i ← ℂ^{D_i}, J: V_i ← X_i ⊗ ℂ^{D_i}.
 # Partition: Σ_u e_u ⊗ g_u (A_u W_u W̄_u Ā_u S), e_u the sector-u basis covector on X_i.
-# Contract S with the four layers of sector u (bond legs unfused), weight g_u, place it at physical index u.
+# Contract S with the four layers of sector u (bond legs unfused), weight g_u, write it into physical index u of J.
 function apply_suffix(P::PartitionSource, i::Int, S::AbstractTensorMap)
     q = length(P.g)
     T = promote_type(scalartype(S), scalartype(P.A[i][1]), scalartype(P.W[i][1]))
-    J = zeros(T, left_space(P, i) ← physical_space(P, i) ⊗ domain(S))
+    J = TensorMap{T}(undef, left_space(P, i) ← physical_space(P, i) ⊗ domain(S))   # every sector u is written below
+    Jd = dense_view(J, dim(codomain(J)), q, dim(domain(S)))                       # J[v, u, r]
     for (u, g) in enumerate(P.g)
         A, W = P.A[i][u], P.W[i][u]
-        e = Tensor([j == u ? g : zero(g) for j in 1:q], (ℂ^q)')   # g e_u, enters J as the domain leg ℂ^q
-        @tensor opt=true X[-1 -2 -3 -4; -5] := S[1 3 5 7; -5] * A[-1 2; 1] * W[-2 4; 2 3] * conj(W[-3 4; 6 5]) * conj(A[-4 6; 7])
-        @tensor J[-1 -2 -3 -4; -5 -6] += e[-5] * X[-1 -2 -3 -4; -6]
+        # explicit order, 5-25% faster than opt=true at D_i = 4..16
+        @tensor allocator=site_allocator X[-1 -2 -3 -4; -5] := g * ((((S[1 3 5 7; -5] * A[-1 2; 1]) * W[-2 4; 2 3]) * conj(W[-3 4; 6 5])) * conj(A[-4 6; 7]))
+        Jd[:, u, :] .= block(X, Trivial())
     end
     return J
 end
 
 # Physical source: per sector u contract S with A_u, W_u, f_u, keep the spin leg s open,
-# weight g_u, place it at physical index (s, u)
+# weight g_u, write it into physical index (s, u) of J
 function apply_suffix(P::PhysicalSource, i::Int, S::AbstractTensorMap)
     q = length(P.g)
+    d = dim(space(P.W[i][1], 2))
     T = promote_type(scalartype(S), scalartype(P.A[i][1]), scalartype(P.W[i][1]), scalartype(P.f[i][1]))
-    J = zeros(T, left_space(P, i) ← physical_space(P, i) ⊗ domain(S))   # V_i ← (ℂ^d)' ⊗ ℂ^q ⊗ ℂ^{D_i}
+    J = TensorMap{T}(undef, left_space(P, i) ← physical_space(P, i) ⊗ domain(S))   # V_i ← (ℂ^d)' ⊗ ℂ^q ⊗ ℂ^{D_i}
+    Jd = dense_view(J, dim(codomain(J)), d, q, dim(domain(S)))                    # J[v, s, u, r]
     for (u, g) in enumerate(P.g)
         A, W, f = P.A[i][u], P.W[i][u], P.f[i][u]
-        e = Tensor([j == u ? g : zero(g) for j in 1:q], (ℂ^q)')   # g e_u, enters J as the domain leg ℂ^q
         # X[a h x; s r]: S[b j y; r] with A[a t; b], W[h s; t j], f[x; y]; the output spin s of W stays open
-        @tensor opt=true X[-1 -2 -3; -4 -5] := S[1 3 5; -5] * A[-1 2; 1] * W[-2 -4; 2 3] * f[-3; 5]
-        @tensor J[-1 -2 -3; -4 -5 -6] += X[-1 -2 -3; -4 -6] * e[-5]
+        @tensor opt=true allocator=site_allocator X[-1 -2 -3; -4 -5] := g * S[1 3 5; -5] * A[-1 2; 1] * W[-2 -4; 2 3] * f[-3; 5]
+        Jd[:, :, u, :] .= dense_view(X, dim(codomain(J)), d, dim(domain(S)))
     end
     return J
 end
 
 # Step 3 primitive (Khatri-Rao): C′[k; w] = Σ_{v,x} C[k; v] M_i[v; x w] Ω[x, k]; row k uses column k of Ω.
 # C: ℂ^K ← V_i, Ω: n_i × K (x linear, s fastest), C′: ℂ^K ← R_i.
-# Partition: Σ_u Diag(g_u Ω[u, :]) * (C contracted with the four layers of u).
+# Partition: Σ_u (Diag(g_u Ω[u, :]) C) contracted with the four layers of u; the row weights commute with the
+# contraction, so they are applied to C (K × dim V_i) instead of the result.
 # The sector δ of M_i becomes the loop over u; no copy tensor needed
 function apply_prefix(P::PartitionSource, i::Int, C::AbstractTensorMap, Ω::AbstractMatrix)
     K = codomain(C)[1]
@@ -140,31 +150,28 @@ function apply_prefix(P::PartitionSource, i::Int, C::AbstractTensorMap, Ω::Abst
     out = zeros(T, K ← right_space(P, i))
     for (u, g) in enumerate(P.g)
         A, W = P.A[i][u], P.W[i][u]
-        @tensor opt=true X[-1; -2 -3 -4 -5] := C[-1; 1 3 5 7] * A[1 2; -2] * W[3 4; 2 -3] * conj(W[5 4; 6 -4]) * conj(A[7 6; -5])
-        weights = g .* Ω[u, :]                        # weight of row k: g_u Ω[u, k]
-        Dw = DiagonalTensorMap(weights, K)            # ℂ^K ← ℂ^K, diag(weights)
-        out += Dw * X                                 # scales row k of X by weights[k]
+        Cw = DiagonalTensorMap(g .* Ω[u, :], K) * C   # row k of C scaled by g_u Ω[u, k]
+        @tensor opt=true allocator=site_allocator out[-1; -2 -3 -4 -5] += Cw[-1; 1 3 5 7] * A[1 2; -2] * W[3 4; 2 -3] * conj(W[5 4; 6 -4]) * conj(A[7 6; -5])
     end
     return out
 end
 
-# Physical source: per u contract C with A_u, W_u with s open, then
-# Σ_s Diag(g_u Ω[(u-1) d + s, :]) on the result, then f_u
+# Physical source: per u contract C with A_u, W_u with s open, then f_u, then
+# out[k; ⋯] += Σ_s g_u Ω[(u-1) d + s, k] X[k; ⋯ s] in place on the dense arrays
 function apply_prefix(P::PhysicalSource, i::Int, C::AbstractTensorMap, Ω::AbstractMatrix)
     K = codomain(C)[1]
     d = dim(space(P.W[i][1], 2))
     T = promote_type(scalartype(C), eltype(Ω), scalartype(P.A[i][1]), scalartype(P.W[i][1]), scalartype(P.f[i][1]))
     out = zeros(T, K ← right_space(P, i))
+    outd = block(out, Trivial())                      # out[k, w]
     for (u, g) in enumerate(P.g)
         A, W, f = P.A[i][u], P.W[i][u], P.f[i][u]
         # X[k; b j y s]: C[k; a h x] with A[a t; b], W[h s; t j], f[x; y]; the output spin s of W stays open
-        @tensor opt=true X[-1; -2 -3 -4 -5] := C[-1; 1 3 4] * A[1 2; -2] * W[3 -5; 2 -3] * f[4; -4]
+        @tensor opt=true allocator=site_allocator X[-1; -2 -3 -4 -5] := C[-1; 1 3 4] * A[1 2; -2] * W[3 -5; 2 -3] * f[4; -4]
+        Xd = dense_view(X, dim(K), size(outd, 2), d)  # X[k, w, s]
         for s in 1:d
-            e = Tensor([j == s ? 1.0 : 0.0 for j in 1:d], (ℂ^d)')   # picks spin s
-            @tensor Xs[-1; -2 -3 -4] := X[-1; -2 -3 -4 1] * e[1]
-            weights = g .* Ω[(u - 1) * d + s, :]     # weight of row k: g_u Ω[(s, u), k], s fastest
-            Dw = DiagonalTensorMap(weights, K)        # ℂ^K ← ℂ^K, diag(weights)
-            out += Dw * Xs                            # scales row k of Xs by weights[k]
+            weights = g .* view(Ω, (u - 1) * d + s, :)   # weight of row k: g_u Ω[(s, u), k], s fastest
+            outd .+= weights .* view(Xd, :, :, s)
         end
     end
     return out

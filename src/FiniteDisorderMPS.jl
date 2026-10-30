@@ -148,15 +148,19 @@ end
 # Expectation value of a local disorder operator O at site i
 function expectation_value(ρ::FiniteDisorderMPS, Os::Vector{<:AbstractBondTensor}, i::Int)
     ls, rs = environments(ρ)
-    l=ls[i]
-    r=rs[i+1]
+    O = _expectation_value(ρ, Os, i, ls[i], rs[i+1])
+    N = tr(ls[i+1] * rs[i+1])
+    return real(O / N)
+end
+
+# Unnormalized disorder average of Os at site i between the environments l and r
+function _expectation_value(ρ::FiniteDisorderMPS, Os::Vector{<:AbstractBondTensor}, i::Int, l, r)
     O = 0
     for (p, W) in enumerate(ρ[i])
         @tensor Op = l[4; 1] * W[1 3; 5] * Os[p][2; 3] * conj(W[4 2; 6]) * r[5; 6]
         O += ρ.ps[p]*Op
     end
-    N = tr(ls[i+1] * rs[i+1])
-    return real(O / N)
+    return O
 end
 
 # Expectation value of a local (disorder) operator on every site
