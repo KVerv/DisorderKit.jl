@@ -54,13 +54,14 @@ ps = [0.5, 0.5]
 d = nmax + 1
 
 # Uniform superposition of 0..nmax bosons on every site and in every sector: every conditional state is normalized
-function uniform_state(ps, L, d)
+function uniform_state(Hs, ps, L, d)
     W = TensorMap(fill(ComplexF64(1/sqrt(d)), d), ℂ^1 ⊗ ℂ^d ← ℂ^1)
-    return DisorderKit.FiniteDisorderMPS([[W for _ in ps] for _ in 1:L], ps)
+    site_ps, sectors = DisorderKit.site_sectors(Hs, ps, L)
+    return DisorderKit.FiniteDisorderMPS([[W for _ in p] for p in site_ps], site_ps, sectors)
 end
 
 Hs = DisorderKit.random_bose_hubbard([t, t/3], [U], [μ]; nmax)
-ψ0 = uniform_state(ps, L, d)
+ψ0 = uniform_state(Hs, ps, L, d)
 
 params = (; L, μ, t, U, nmax, ps, Δτ, maxD, maxiter, convtol, cross_width)
 println("Bose-Hubbard normalized ITE: L = $L, μ = $μ, t = $t, U = $U, nmax = $nmax, maxD = $maxD, Δτ = $Δτ")

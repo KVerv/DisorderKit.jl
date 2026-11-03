@@ -10,7 +10,7 @@
 #
 # Environment (all required; defaults in hpc/submit_plot_BoseHubbard_NormalizedITE.sh): T, U, NMAX, DTAU, MAXD,
 #   DATA_DIR (the same as for the sweep, so the run tag matches), N_SAMPLES (disorder words are enumerated exactly if
-#   q^L ≤ N_SAMPLES, else sampled), S_MUS (μ/U values of the entropy profiles; the nearest grid points are used)
+#   ∏ᵢ qᵢ ≤ N_SAMPLES, qᵢ the number of sectors of site i, else sampled), S_MUS (μ/U values of the entropy profiles; the nearest grid points are used)
 # Output: the table on stdout, <DATA_DIR>/BoseHubbard_NormalizedITE/<run tag>/L<L>/observables.csv (with the chain-
 #   averaged variance in varS_avg, the profile in the columns S_1..S_{L-1} and its variance in varS_1..varS_{L-1}) and plots/BoseHubbard_NormalizedITE_<run tag>_L<L>.png
 #
