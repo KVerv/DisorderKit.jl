@@ -331,7 +331,14 @@ end
 # environments of _advance (FiniteDisorderFilter.jl) are the Gram matrices l[bra; ket] and r[ket; bra] of the left
 # (sites 1..k) and right (sites k+1..L) Schmidt vectors; the Schmidt spectrum is eig(r * l) normalized to one, so ψ_w
 # does not have to be normalized
-function conditional_entanglement_entropy(ρ::FiniteDisorderMPS, word::AbstractVector{Int})
+#
+# With charges (the U(1) charge of every physical basis state, e.g. 0:nmax bosons) ψ_w is first projected onto its most
+# likely total charge N*. A conditional state of a charge conserving H can be a superposition of charges (ITE from a
+# state that contains every N); the charge fluctuations then no longer entangle the two halves, which lowers S most in
+# the bulk. The projected state is block diagonal in the charge c left of the cut, so its Schmidt spectrum is the union
+# over c of the spectra of the charge-resolved Gram matrices r[N* - c] * l[c]
+function conditional_entanglement_entropy(ρ::FiniteDisorderMPS, word::AbstractVector{Int}; charges = nothing)
+    isnothing(charges) || return _projected_entanglement_entropy(ρ, word, charges)
     L = length(word)
     lefts = Vector{Any}(undef, L)
     rights = Vector{Any}(undef, L+1)
@@ -350,10 +357,66 @@ function conditional_entanglement_entropy(ρ::FiniteDisorderMPS, word::AbstractV
     end
 end
 
+# Charge-resolved Gram matrices of the conditional state of word w: lefts[i][c] of sites 1..i-1 with total charge c
+# (G_L[b̄, b] = Σ conj(X_b̄) X_b) and rights[i][c] of sites i..L (G_R[a, ā] = Σ Y_a conj(Y_ā)). All charge blocks of a
+# site are divided by one common factor, which cancels once the spectrum is normalized
+function _charge_environments(ρ::FiniteDisorderMPS, word::AbstractVector{Int}, charges)
+    L = length(word)
+    As = [convert(Array, ρ[i, p]) for (i, p) in enumerate(word)]   # A[a, s, b]
+    all(size(A, 2) == length(charges) for A in As) || throw(ArgumentError("charges should have one entry per physical basis state"))
+    rescale!(E) = (m = maximum(e -> LinearAlgebra.norm(e, Inf), values(E)); m > 0 && foreach(c -> E[c] ./= m, keys(E)); E)
+    lefts = Vector{Dict{Int, Matrix{ComplexF64}}}(undef, L+1)
+    rights = Vector{Dict{Int, Matrix{ComplexF64}}}(undef, L+1)
+    lefts[1] = Dict(0 => ones(ComplexF64, 1, 1))
+    for i in 1:L
+        E = Dict{Int, Matrix{ComplexF64}}()
+        for (c, G) in lefts[i], (s, n) in enumerate(charges)
+            As_ = As[i][:, s, :]
+            E[c+n] = get(E, c+n, zeros(ComplexF64, size(As_, 2), size(As_, 2))) + As_' * G * As_
+        end
+        lefts[i+1] = rescale!(E)
+    end
+    rights[L+1] = Dict(0 => ones(ComplexF64, 1, 1))
+    for i in L:-1:1
+        E = Dict{Int, Matrix{ComplexF64}}()
+        for (c, G) in rights[i+1], (s, n) in enumerate(charges)
+            As_ = As[i][:, s, :]
+            E[c+n] = get(E, c+n, zeros(ComplexF64, size(As_, 1), size(As_, 1))) + As_ * G * As_'
+        end
+        rights[i] = rescale!(E)
+    end
+    return lefts, rights
+end
+
+# Distribution p_N of the total charge in the conditional state of word w (charges as in conditional_entanglement_entropy)
+function conditional_number_distribution(ρ::FiniteDisorderMPS, word::AbstractVector{Int}, charges)
+    lefts, _ = _charge_environments(ρ, word, charges)
+    p = Dict(N => max(real(tr(G)), 0.0) for (N, G) in lefts[end])
+    Z = sum(values(p))
+    return Dict(N => x / Z for (N, x) in p)
+end
+
+function _projected_entanglement_entropy(ρ::FiniteDisorderMPS, word::AbstractVector{Int}, charges)
+    L = length(word)
+    lefts, rights = _charge_environments(ρ, word, charges)
+    N = argmax(N -> real(tr(lefts[end][N])), collect(keys(lefts[end])))
+    return map(1:L-1) do k
+        λ = Float64[]
+        for (c, G) in lefts[k+1]
+            haskey(rights[k+1], N - c) || continue
+            append!(λ, max.(real.(eigvals(rights[k+1][N - c] * G)), 0.0))
+        end
+        λ ./= sum(λ)
+        -sum(x -> x > 0 ? x * log(x) : 0.0, λ)
+    end
+end
+
 # Disorder average 𝔼_w[S_w(k)] of the entanglement entropy on every bond k = 1..L-1, its standard error and the disorder
 # variance Var_w[S_w(k)] = 𝔼_w[S_w(k)²] - 𝔼_w[S_w(k)]², over words w = (p₁…p_L) with pᵢ ~ ρ.ps[i] independent. If there are at
-# most n_samples words they are all enumerated (exact, zero error), otherwise n_samples words are sampled
-function average_entanglement_entropy(ρ::FiniteDisorderMPS; n_samples::Int = 1000, rng::AbstractRNG = Random.default_rng())
+# most n_samples words they are all enumerated (exact, zero error), otherwise n_samples words are sampled. With charges
+# the entropies of the conditional states projected onto their most likely total charge (conditional_entanglement_entropy)
+function average_entanglement_entropy(ρ::FiniteDisorderMPS; n_samples::Int = 1000, rng::AbstractRNG = Random.default_rng(),
+                                     charges = nothing)
     L = length(ρ)
     if prod(float.(length.(ρ.ps))) <= n_samples
         S_avg = zeros(Float64, L-1)
@@ -361,14 +424,14 @@ function average_entanglement_entropy(ρ::FiniteDisorderMPS; n_samples::Int = 10
         for word in ProgressBar(Iterators.product(eachindex.(ρ.ps)...))
             w = prod(ρ.ps[i][p] for (i, p) in enumerate(word))
             iszero(w) && continue
-            S_w = conditional_entanglement_entropy(ρ, collect(word))
+            S_w = conditional_entanglement_entropy(ρ, collect(word); charges)
             S_avg .+= w .* S_w
             S2_avg .+= w .* S_w.^2
         end
         return S_avg, zeros(Float64, L-1), max.(S2_avg .- S_avg.^2, 0.0)
     end
 
-    Ss = reduce(hcat, [conditional_entanglement_entropy(ρ, sample_word(rng, ρ.ps)) for _ in ProgressBar(1:n_samples)])
+    Ss = reduce(hcat, [conditional_entanglement_entropy(ρ, sample_word(rng, ρ.ps); charges) for _ in ProgressBar(1:n_samples)])
     return vec(mean(Ss; dims=2)), vec(std(Ss; dims=2)) ./ sqrt(n_samples), vec(var(Ss; dims=2))
 end
 

@@ -19,6 +19,8 @@
 # (superfluid) and the bond cap maxD favours. |⟨a⟩|² is thus a superfluid indicator (≈ 0 on a Mott plateau), not a
 # converged ground-state value. Every conditional state has its own global phase, so the squared modulus is averaged:
 #   |⟨a⟩|² = Σ_w P(w) (1/L) Σᵢ |⟨aᵢ⟩_w|².
+# The same mixing of particle numbers lowers the entanglement entropy (most in the bulk), so S is computed for every
+# conditional state projected onto its most likely particle number, the number of its exact ground state.
 
 length(ARGS) == 1 || error("usage: julia --project=. hpc/plot_BoseHubbard_NormalizedITE.jl <L>")
 L = parse(Int, ARGS[1])
@@ -57,8 +59,8 @@ results = map(files) do f
     data = load(joinpath(folder, f))
     ρ, φ = disorder_average_observables(data["ψ"])
     # Disorder-averaged entanglement entropy on every bond, its standard error (zero if the words are enumerated) and
-    # its disorder variance
-    S, S_err, S_var = DisorderKit.average_entanglement_entropy(data["ψ"]; n_samples, rng = Xoshiro(1))
+    # its disorder variance, of the conditional states projected onto their most likely particle number
+    S, S_err, S_var = DisorderKit.average_entanglement_entropy(data["ψ"]; n_samples, rng = Xoshiro(1), charges = 0:nmax)
     p = data["params"]
     (; μ = p.μ, U = p.U, t = p.t, ρ, φ, S, S_err, S_var, nsteps = data["nsteps"], converged = data["converged"],
      ϵconv = data["info"].ϵsconv[end])

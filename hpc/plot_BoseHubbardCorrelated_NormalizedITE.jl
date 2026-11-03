@@ -12,13 +12,16 @@
 #   DATA_DIR (the same as for the sweep, so the run tag matches), N_SAMPLES (disorder words are enumerated exactly if
 #   ∏ᵢ qᵢ ≤ N_SAMPLES, qᵢ the number of sectors of site i, else sampled)
 # Output: the table on stdout, <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/observables.csv and
-#   plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png. Grid points without a result are left blank.
+#   plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png. Grid points without a usable result (no file,
+#   or one that cannot be read) are set to 0 and marked with a cross; the grid is set by the t<t>/mu<μ>.jld2 names.
 #
 # H conserves N, so an exact ground state with a fixed particle number has ⟨aᵢ⟩ = 0. ⟨aᵢ⟩ is nonzero only when the state
 # mixes neighbouring particle numbers, which the evolution from the uniform state keeps where they are nearly degenerate
 # (superfluid) and the bond cap maxD favours. |⟨a⟩|² is thus a superfluid indicator (≈ 0 on a Mott plateau), not a
 # converged ground-state value. Every conditional state has its own global phase, so the squared modulus is averaged:
 #   |⟨a⟩|² = Σ_w P(w) (1/L) Σᵢ |⟨aᵢ⟩_w|².
+# The same mixing of particle numbers lowers the entanglement entropy (most in the bulk), so Var[S] is computed for
+# every conditional state projected onto its most likely particle number, the number of its exact ground state.
 
 length(ARGS) == 1 || error("usage: julia --project=. hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl <L>")
 L = parse(Int, ARGS[1])
@@ -85,39 +88,56 @@ function disorder_average(ψ; rng = Xoshiro(1))
     return ρ, φ
 end
 
-# Load every (t, μ) of the run
+# (t/U, μ/U) grid from the folder and file names, so that points whose job failed, is still running or never ran are
+# part of it too
+U, r = parse(Float64, U_str), parse(Float64, r_str)
 isdir(folder) || error("no results in $folder")
-files = [joinpath(folder, td, f) for td in filter(s -> occursin(r"^t-?[\d.]+$", s), readdir(folder))
-         for f in filter(f -> occursin(r"^mu-?[\d.]+\.jld2$", f), readdir(joinpath(folder, td)))]
+tdirs = filter(s -> occursin(r"^t-?[\d.]+$", s) && isdir(joinpath(folder, s)), readdir(folder))
+tvalue(td) = parse(Float64, td[2:end]) / U
+μvalue(f) = parse(Float64, f[3:end-5]) / U
+files = [(td, f) for td in tdirs for f in filter(f -> occursin(r"^mu-?[\d.]+\.jld2$", f), readdir(joinpath(folder, td)))]
 isempty(files) && error("no results in $folder")
-results = map(files) do f
-    data = load(f)
-    ψ = data["ψ"]
-    ρ, φ = disorder_average(ψ)
-    # Disorder variance of the entanglement entropy on every bond, averaged over the chain
-    _, _, S_var = DisorderKit.average_entanglement_entropy(ψ; n_samples, rng = Xoshiro(1))
-    p = data["params"]
-    (; t = p.t, μ = p.μ, U = p.U, r = p.r, ρ, φ, varS = sum(S_var) / length(S_var), nsteps = data["nsteps"],
-     converged = data["converged"], ϵconv = data["info"].ϵsconv[end])
-end
-U, r = results[1].U, results[1].r
+ts = sort(unique(tvalue.(tdirs)))
+μs = sort(unique(μvalue(f) for (_, f) in files))
 
-# (t/U, μ/U) grid, NaN where there is no result
-ts = sort(unique(x.t / U for x in results))
-μs = sort(unique(x.μ / U for x in results))
-grid() = fill(NaN, length(ts), length(μs))
+# Load every (t, μ) of the run; a file that cannot be read or evaluated is skipped with a warning
+results = map(files) do (td, f)
+    file = joinpath(folder, td, f)
+    try
+        data = load(file)
+        ψ = data["ψ"]
+        ρ, φ = disorder_average(ψ)
+        # Disorder variance of the entanglement entropy on every bond, averaged over the chain, of the conditional
+        # states projected onto their most likely particle number
+        _, _, S_var = DisorderKit.average_entanglement_entropy(ψ; n_samples, rng = Xoshiro(1), charges = 0:nmax)
+        ϵs = data["info"].ϵsconv
+        (; t = tvalue(td), μ = μvalue(f), ρ, φ, varS = sum(S_var) / length(S_var), nsteps = get(data, "nsteps", -1),
+         converged = get(data, "converged", false), ϵconv = isempty(ϵs) ? NaN : last(ϵs))
+    catch e
+        @warn "skipping $file: $(sprint(showerror, e))"
+        nothing
+    end
+end
+results = filter(!isnothing, results)
+
+# Observables on the grid, 0 where there is no result (marked with a cross in the plot)
+grid() = zeros(length(ts), length(μs))
 ρs, φs, varSs, κs = grid(), grid(), grid(), grid()
 converged = fill(true, length(ts), length(μs))
-index(x) = (searchsortedfirst(ts, x.t / U), searchsortedfirst(μs, x.μ / U))
+hasdata = fill(false, length(ts), length(μs))
+index(x) = (searchsortedfirst(ts, x.t), searchsortedfirst(μs, x.μ))
 for x in results
     i, j = index(x)
-    ρs[i, j], φs[i, j], varSs[i, j], converged[i, j] = x.ρ, x.φ, x.varS, x.converged
+    ρs[i, j], φs[i, j], varSs[i, j], converged[i, j], hasdata[i, j] = x.ρ, x.φ, x.varS, x.converged, true
 end
 
-# Compressibility κ = dρ/dμ along μ at fixed t (central differences, one-sided at the ends)
+# Compressibility κ = dρ/dμ along μ at fixed t: central differences over the nearest neighbours with a result
+# (one-sided at the ends and next to missing points), 0 where there is no result or no neighbour
 for i in eachindex(ts), j in eachindex(μs)
-    lo, hi = max(j - 1, 1), min(j + 1, length(μs))
-    κs[i, j] = hi == lo ? NaN : (ρs[i, hi] - ρs[i, lo]) / (U * (μs[hi] - μs[lo]))
+    hasdata[i, j] || continue
+    lo = j > 1 && hasdata[i, j-1] ? j - 1 : j
+    hi = j < length(μs) && hasdata[i, j+1] ? j + 1 : j
+    κs[i, j] = hi == lo ? 0.0 : (ρs[i, hi] - ρs[i, lo]) / (U * (μs[hi] - μs[lo]))
 end
 
 println("Run tag $run_tag, L = $L ($folder)")
@@ -130,8 +150,11 @@ for x in results
 end
 nconv = count(!, (x.converged for x in results))
 nconv > 0 && println("$nconv of $(length(results)) points not converged (open circles in the plot)")
-nmissing = length(ts) * length(μs) - length(results)
-nmissing > 0 && println("$nmissing grid points without a result (blank in the plot)")
+missingpts = [(ts[i], μs[j]) for i in eachindex(ts), j in eachindex(μs) if !hasdata[i, j]]
+if !isempty(missingpts)
+    println("$(length(missingpts)) grid points without a result (0, marked × in the plot), (t/U, μ/U):")
+    foreach(p -> @printf("  %7.4f  %7.4f\n", p...), missingpts)
+end
 
 csv = joinpath(folder, "observables.csv")
 open(csv, "w") do io
@@ -143,7 +166,8 @@ open(csv, "w") do io
 end
 println("Saved $csv")
 
-# Figure: four heatmaps over (t/U, μ/U); unconverged points are marked with open circles
+# Figure: four heatmaps over (t/U, μ/U); unconverged points are marked with open circles, points without a result
+# with crosses
 set_theme!(theme_latexfonts())
 fig = Figure(backgroundcolor = :white, fontsize = 30, size = (2000, 1600))
 Label(fig[0, 1:4], L"$L=%$L$, $r=%$r$, $t' = t/3$, $μ' = μ/3$, $D=%$maxD$"; fontsize = 36)
@@ -153,10 +177,12 @@ panels = [(κs, L"κ = dρ/dμ", :viridis), (varSs, L"\overline{\mathrm{Var}[S]}
 for (k, (M, label, cmap)) in enumerate(panels)
     row, col = fldmod1(k, 2)
     ax = Axis(fig[row, 2col-1]; xlabel = L"t/U", ylabel = L"μ/U", title = label)
-    finite = filter(isfinite, M)
+    finite = filter(isfinite, M[hasdata])
     colorrange = isempty(finite) || minimum(finite) == maximum(finite) ? (0, 1) : extrema(finite)
     hm = heatmap!(ax, ts, μs, M; colormap = cmap, colorrange, nan_color = :white)
     isempty(unconv) || scatter!(ax, unconv; color = :transparent, strokecolor = :white, strokewidth = 2, markersize = 12)
+    isempty(missingpts) || scatter!(ax, missingpts; marker = :xcross, color = :white, strokecolor = :black,
+                                    strokewidth = 1.5, markersize = 22)
     Colorbar(fig[row, 2col], hm)
 end
 
