@@ -11,6 +11,14 @@
 # Usage (from the repo root, normally through hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh):
 #   julia --project=. hpc/BoseHubbardCorrelated_NormalizedITE.jl <L> <t> <μ>      run and store
 #   julia hpc/BoseHubbardCorrelated_NormalizedITE.jl --path <L> <t> <μ>           only print the run tag and the output file
+#   julia --project=. hpc/BoseHubbardCorrelated_NormalizedITE.jl --status <L> <t> <μ>   print the run tag, the output
+#       file, the status (run, rerun or uptodate) and the reason for it; the sweep only submits run and rerun points
+# The status compares the stored state (its final ϵ_conv and the maxiter and convtol it was run with) with the MAXITER
+# and CONVTOL of the environment:
+#   run       there is no (readable) stored state
+#   uptodate  the stored state is converged for this job: final ϵ_conv ≤ CONVTOL
+#   rerun     it is not, and MAXITER > stored maxiter or CONVTOL < stored convtol (the rerun starts from scratch)
+#   uptodate  it is not, but the same settings would give the same result
 # t and μ (the strong values) are used verbatim in the file name (the sweep script passes them formatted as %.4f).
 #
 # Run parameters (environment, all required; their defaults are set in hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh):
@@ -20,10 +28,11 @@
 # Output: <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/t<t>/mu<μ>.jld2,
 #   run tag U<U>_r<R>_nmax<NMAX>_dtau<DTAU>_D<MAXD>
 
-# ---- Parameters and paths (before loading DisorderKit, so --path is fast)
+# ---- Parameters and paths (before loading DisorderKit, so --path and --status are fast)
 path_only = !isempty(ARGS) && ARGS[1] == "--path"
-args = path_only ? ARGS[2:end] : ARGS
-length(args) == 3 || error("usage: julia --project=. hpc/BoseHubbardCorrelated_NormalizedITE.jl [--path] <L> <t> <μ>")
+status_only = !isempty(ARGS) && ARGS[1] == "--status"
+args = path_only || status_only ? ARGS[2:end] : ARGS
+length(args) == 3 || error("usage: julia --project=. hpc/BoseHubbardCorrelated_NormalizedITE.jl [--path | --status] <L> <t> <μ>")
 L_str, t_str, μ_str = args
 L, t, μ = parse(Int, L_str), parse(Float64, t_str), parse(Float64, μ_str)
 
@@ -42,6 +51,36 @@ filename = joinpath(folder, "mu$(μ_str).jld2")
 if path_only
     println(run_tag)
     println(filename)
+    exit()
+end
+
+# Status of the stored state for this job's MAXITER and CONVTOL (see the header); JLD2 is only loaded if there is a
+# state, and only params and info are read from it (not ψ)
+status_only && isfile(filename) && @eval using JLD2
+function status(filename, maxiter, convtol)
+    isfile(filename) || return "run", "no state"
+    stored = try
+        jldopen(filename, "r") do f
+            ϵs = f["info"].ϵsconv
+            (; maxiter = f["params"].maxiter, convtol = f["params"].convtol, ϵ = isempty(ϵs) ? Inf : last(ϵs))
+        end
+    catch e
+        return "run", "unreadable state: $(sprint(showerror, e))"
+    end
+    ϵ = "ϵ = $(round(stored.ϵ; sigdigits = 2))"
+    stored.ϵ <= convtol && return "uptodate", "converged: $ϵ ≤ convtol $convtol"
+    changes = String[]
+    maxiter > stored.maxiter && push!(changes, "maxiter $(stored.maxiter) → $maxiter")
+    convtol < stored.convtol && push!(changes, "convtol $(stored.convtol) → $convtol")
+    isempty(changes) && return "uptodate", "unconverged ($ϵ), but run with maxiter $(stored.maxiter) ≥ $maxiter and convtol $(stored.convtol) ≤ $convtol"
+    return "rerun", "unconverged ($ϵ), $(join(changes, ", "))"
+end
+if status_only
+    st, reason = status(filename, parse(Int, param("MAXITER")), parse(Float64, param("CONVTOL")))
+    println(run_tag)
+    println(filename)
+    println(st)
+    println(reason)
     exit()
 end
 

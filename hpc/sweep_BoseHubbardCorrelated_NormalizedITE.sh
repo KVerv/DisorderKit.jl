@@ -6,12 +6,17 @@
 #   DRYRUN=1 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6           # only print what would be submitted
 #   TS="0.05 0.1" MUS="0.2 0.4 0.6" bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6
 #   R=0.5 MAXD=32 MAXITER=1000 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6
-#   FORCE=1 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6            # also resubmit points that already have a result
+#   MAXITER=4000 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6       # rerun the unconverged points with more steps
+#   FORCE=1 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6            # resubmit every point, also those that are done
 #   PPN=4 JULIA_THREADS=1 BLAS_THREADS=4 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6
 #
 # Run parameters (U, R, NMAX, DTAU, MAXD, MAXITER, CONVTOL, CROSS_WIDTH, DATA_DIR) and their defaults are set below;
 # override them from the caller's environment. They are written into every job script,
 # hpc/BoseHubbardCorrelated_NormalizedITE.jl has no defaults of its own.
+# A point is only submitted if it has no stored state (run), or if its stored state is not converged for this CONVTOL
+# (final ϵ_conv > CONVTOL) and this sweep has a larger MAXITER or a smaller CONVTOL than the stored run (rerun, from
+# scratch). Converged points, and unconverged points that the same settings would not improve, are skipped. The decision
+# is made by hpc/BoseHubbardCorrelated_NormalizedITE.jl --status (it reads the stored params and ϵ_conv history).
 # Results: <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/t<t>/mu<μ>.jld2
 # Logs:    logs/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/
 # Observables afterwards: bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh <L> (one job per point),
@@ -54,6 +59,7 @@ if command -v module > /dev/null 2>&1; then
 fi
 
 submitted=0
+rerun=0
 skipped=0
 shown_job=0
 for t in $TS; do
@@ -61,15 +67,22 @@ for t in $TS; do
     for mu in $MUS; do
         mu=$(LC_ALL=C printf "%.4f" "$mu")
         # The Julia script decides the run tag and the output file, so the paths always agree
-        mapfile -t paths < <($JULIA --startup-file=no hpc/BoseHubbardCorrelated_NormalizedITE.jl --path "$L" "$t" "$mu")
+        # and whether the point has to be (re)run for this MAXITER and CONVTOL
+        mapfile -t paths < <($JULIA --project=. --startup-file=no hpc/BoseHubbardCorrelated_NormalizedITE.jl --status "$L" "$t" "$mu")
         tag="${paths[0]}"
         out="${paths[1]}"
+        st="${paths[2]}"
+        reason="${paths[3]}"
         logdir="logs/BoseHubbardCorrelated_NormalizedITE/$tag/L$L"
 
-        if [ -f "$out" ] && [ "${FORCE:-0}" != "1" ]; then
-            echo "skip   L=$L t=$t μ=$mu (exists: $out)"
+        if [ "$st" = "uptodate" ] && [ "${FORCE:-0}" != "1" ]; then
+            echo "skip   L=$L t=$t μ=$mu ($reason)"
             skipped=$((skipped + 1))
             continue
+        fi
+        if [ "$st" = "rerun" ]; then
+            echo "rerun  L=$L t=$t μ=$mu ($reason)"
+            rerun=$((rerun + 1))
         fi
 
         # Job script. Unescaped variables are filled in now, escaped ones (\$) when the job runs.
@@ -105,4 +118,4 @@ EOF
     done
 done
 
-echo "L = $L: $submitted job(s) $([ "${DRYRUN:-0}" = "1" ] && echo "to submit" || echo "submitted"), $skipped skipped (result exists)"
+echo "L = $L: $submitted job(s) $([ "${DRYRUN:-0}" = "1" ] && echo "to submit" || echo "submitted") ($rerun rerun), $skipped skipped (done)"
