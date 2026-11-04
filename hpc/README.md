@@ -200,8 +200,10 @@ diagnostics only.
 |---|---|
 | `BoseHubbardCorrelated_NormalizedITE.jl` | one point (L, t, μ): runs the ITE and stores the final state and the per-step diagnostics |
 | `sweep_BoseHubbardCorrelated_NormalizedITE.sh` | submits one PBS job per (t, μ) for a given L, skipping points that already have a result |
-| `plot_BoseHubbardCorrelated_NormalizedITE.jl` | computes ρ, κ = dρ/dμ, \|⟨a⟩\|² and the chain-averaged Var[S] from the stored states, prints and saves them as a CSV, and plots them as four heatmaps over (t/U, μ/U) |
-| `submit_plot_BoseHubbardCorrelated_NormalizedITE.sh` | submits the plot script as one PBS job |
+| `observables_BoseHubbardCorrelated_NormalizedITE.jl` | one point (L, t, μ): computes ρ, \|⟨a⟩\|², S and Var[S] per bond from the stored state and writes them to `mu<μ>_obs.csv`; `--status` only reports whether that is needed |
+| `submit_observables_BoseHubbardCorrelated_NormalizedITE.sh` | submits one PBS job per (t, μ) with a state whose observables are missing, older than the state, or sampled with fewer than `N_SAMPLES` words |
+| `plot_BoseHubbardCorrelated_NormalizedITE.jl` | reads only the `mu<μ>_obs.csv` files, computes κ = dρ/dμ, prints the table, saves the combined `observables.csv` and plots κ, Var[S], ρ and \|⟨a⟩\|² as four heatmaps over (t/U, μ/U) |
+| `submit_plot_BoseHubbardCorrelated_NormalizedITE.sh` | submits the plot script as one PBS job (`WALLTIME` 0:30:00, `MEM` 4GB, `PPN` 1) |
 
 ## Usage (from the repo root, on the login node)
 
@@ -210,7 +212,12 @@ diagnostics only.
     TS="0.05 0.1" MUS="0.2 0.4 0.6" bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6
     R=0.5 MAXD=32 MAXITER=1000 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6
 
-    # afterwards, with the same run parameters (they set the run tag)
+    # afterwards, with the same run parameters (they set the run tag): observables, one job per point ...
+    DRYRUN=1 bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 6
+    bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 6
+    N_SAMPLES=10000 bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 6   # more words where sampled
+    R=0.5 MAXD=32 bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 6
+    # ... then, once those jobs have finished, the plot job
     bash hpc/submit_plot_BoseHubbardCorrelated_NormalizedITE.sh 6
     R=0.5 MAXD=32 bash hpc/submit_plot_BoseHubbardCorrelated_NormalizedITE.sh 6
 
@@ -219,10 +226,13 @@ Run parameters (environment, defaults set in the submit scripts; the Julia scrip
 `CROSS_WIDTH` (32), `DATA_DIR` ($VSC_DATA/data). Job resources as for the Bose-Hubbard sweep (`WALLTIME`, `MEM`, `PPN`,
 `JULIA_THREADS`, `BLAS_THREADS`, `CLUSTER`, `JULIA`); `benchmark_BoseHubbard_NormalizedITE.sh` at the same L, `NMAX`
 and `MAXD` gives a good estimate (4 instead of 2 sectors per site makes a step somewhat slower). Grid: `TS`, `MUS` (the
-strong values t/U and μ/U). Plot script: `N_SAMPLES` (1000, disorder words are enumerated exactly if ∏ᵢ qᵢ ≤
-`N_SAMPLES`, qᵢ the number of sectors of site i). κ = dρ/dμ is taken along μ at fixed t (central differences, one-sided
+strong values t/U and μ/U). Observables: `N_SAMPLES` (1000, disorder words are enumerated exactly if ∏ᵢ qᵢ ≤
+`N_SAMPLES`, qᵢ the number of sectors of site i), job resources `WALLTIME` (1:00:00), `MEM` (8GB), `PPN` (4), and
+`TS`/`MUS` to restrict the points (default: every stored state); `FORCE=1` recomputes every point. A point is
+(re)computed only if its `mu<μ>_obs.csv` is missing or unreadable, older than the state (the point was rerun), or its
+words were sampled (`exact = false`) with fewer than `N_SAMPLES`; exactly enumerated points are never redone. κ = dρ/dμ is taken along μ at fixed t (central differences, one-sided
 at the ends). Var[S] is computed for the conditional states projected onto their most likely particle number, as in the
-Bose-Hubbard plot script. Unconverged points are marked with open circles, grid points without a result are blank.
+Bose-Hubbard plot script. Unconverged points are marked with open circles, grid points without observables with crosses.
 
 ## Data layout
 
@@ -232,11 +242,12 @@ Bose-Hubbard plot script. Unconverged points are marked with open circles, grid 
           t0.0200/
             mu0.0000.jld2
             mu0.2000.jld2
+            mu0.2000_obs.csv                    observables of the point (observables script)
             ...
           t0.0600/
           ...
-          observables.csv                       written by the plot script
-    logs/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/   PBS stdout/stderr of every job (plot job in plot/)
+          observables.csv                       all points with κ, written by the plot script
+    logs/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/   PBS stdout/stderr of every job (observables jobs in obs/, plot job in plot/)
     plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png
 
 `MAXITER` and `CONVTOL` are not in the run tag: rerunning with more steps needs `FORCE=1` (or another `DATA_DIR`).

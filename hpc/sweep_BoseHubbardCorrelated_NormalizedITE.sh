@@ -14,8 +14,8 @@
 # hpc/BoseHubbardCorrelated_NormalizedITE.jl has no defaults of its own.
 # Results: <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/t<t>/mu<μ>.jld2
 # Logs:    logs/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/
-# Observables and plot afterwards: bash hpc/submit_plot_BoseHubbardCorrelated_NormalizedITE.sh <L> (with the same run
-# parameters)
+# Observables afterwards: bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh <L> (one job per point),
+# then the plot job: bash hpc/submit_plot_BoseHubbardCorrelated_NormalizedITE.sh <L> (both with the same run parameters)
 #
 # Every job first runs Pkg.instantiate() and Pkg.precompile() on its compute node, so new dependencies are installed
 # (concurrent jobs wait for each other through Julia's precompile locks).
@@ -25,8 +25,8 @@ set -euo pipefail
 L="${1:?usage: bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh <L>}"
 
 # (t/U, μ/U) grid of the strong values (the weak ones are t/3 and μ/3), formatted as %.4f in the file names
-TS="${TS:-$(LC_ALL=C seq 0.02 0.04 0.30)}"
-MUS="${MUS:-$(LC_ALL=C seq 0 0.2 1.6)}"
+TS="${TS:-$(LC_ALL=C seq 0.02 0.02 0.30)}"
+MUS="${MUS:-$(LC_ALL=C seq 0 0.1 1.6)}"
 
 # Run parameters (U, R, NMAX, DTAU, MAXD set the run tag)
 export U="${U:-1.0}"
@@ -34,7 +34,7 @@ export R="${R:-0.0}"   # correlation of hopping and potential: P = (1±R)/4
 export NMAX="${NMAX:-4}"
 export DTAU="${DTAU:-0.05}"
 export MAXD="${MAXD:-16}"
-export MAXITER="${MAXITER:-500}"
+export MAXITER="${MAXITER:-2000}"
 export CONVTOL="${CONVTOL:-1e-8}"
 export CROSS_WIDTH="${CROSS_WIDTH:-32}"
 export DATA_DIR="${DATA_DIR:-${VSC_DATA:-.}/data}"
