@@ -2,8 +2,8 @@
 # hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl (submitted with hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh):
 # it reads the per-point files t<t>/mu<μ>_obs.csv, computes the compressibility κ = dρ/dμ (along μ at fixed t) and plots
 # κ, the homogeneity of the disorder-averaged entanglement entropy along the chain Var_k[S̄(k)] (S_inhom), the density ρ
-# the quasi-condensate density |⟨a⟩|² and the relative bond-to-bond fluctuation of the entropy S_bstd/S_avg
-# (𝔼_w[std_k S_w(k)] / 𝔼_w[mean_k S_w(k)]) as heatmaps over (t/U, μ/U). t and μ are the strong values, the weak ones are t/3 and μ/3. No state is
+# the quasi-condensate density |⟨a⟩|², the bond-to-bond fluctuation of the entropy S_bstd = 𝔼_w[std_k S_w(k)] and its
+# relative size S_bstd/S_avg (𝔼_w[std_k S_w(k)] / 𝔼_w[mean_k S_w(k)]) as heatmaps over (t/U, μ/U). t and μ are the strong values, the weak ones are t/3 and μ/3. No state is
 # loaded, so the script is fast and can run on the login node.
 #
 # Usage (from the repo root, with the same run parameters as the sweep, so the run tag matches):
@@ -122,15 +122,16 @@ open(csv, "w") do io
 end
 println("Saved $csv")
 
-# Figure: five heatmaps over (t/U, μ/U) in a 2×3 grid; unconverged points are marked with open circles, points without
+# Figure: six heatmaps over (t/U, μ/U) in a 2×3 grid (top: κ, ρ, |⟨a⟩|²; bottom: the entropy observables); unconverged points are marked with open circles, points without
 # a result with crosses
 set_theme!(theme_latexfonts())
 fig = Figure(backgroundcolor = :white, fontsize = 30, size = (3000, 1600))
 Label(fig[0, 1:6], L"$L=%$L$, $r=%$r$, $t' = t/3$, $μ' = μ/3$, $D=%$maxD$"; fontsize = 36)
 unconv = [(ts[i], μs[j]) for i in eachindex(ts), j in eachindex(μs) if hasdata[i, j] && !converged[i, j]]
-panels = [(κs, L"κ = dρ/dμ", :viridis), (Sinhoms, L"\mathrm{Var}_k[\overline{S}(k)]", :magma),
-          (ratios, L"\mathbb{E}_w[\mathrm{std}_k S_w(k)] / \overline{S}", :inferno),
-          (ρs, L"ρ", :cividis), (φs, L"|\langle a \rangle|^2", :plasma)]
+panels = [(κs, L"κ = dρ/dμ", :viridis), (ρs, L"ρ", :cividis), (φs, L"|\langle a \rangle|^2", :plasma),
+          (Sinhoms, L"\mathrm{Var}_k[\overline{S}(k)]", :magma),
+          (Sbstds, L"\mathbb{E}_w[\mathrm{std}_k S_w(k)]", :magma),
+          (ratios, L"\mathbb{E}_w[\mathrm{std}_k S_w(k)] / \overline{S}", :inferno)]
 for (k, (M, label, cmap)) in enumerate(panels)
     row, col = fldmod1(k, 3)
     ax = Axis(fig[row, 2col-1]; xlabel = L"t/U", ylabel = L"μ/U", title = label)
