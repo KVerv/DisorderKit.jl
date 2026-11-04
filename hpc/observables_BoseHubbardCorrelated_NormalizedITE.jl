@@ -5,6 +5,10 @@
 #   varS_avg = (1/(L-1)) Σₖ Var[S](k)                     chain average of the disorder variance
 #   S_avg    = (1/(L-1)) Σₖ S̄(k)                          chain average of the entropy
 #   S_inhom  = (1/(L-1)) Σₖ (S̄(k) - S_avg)²               homogeneity of the average entropy along the chain
+# and, per disorder word w, the standard deviation of S_w(k) across the bonds, averaged over the words
+# (DisorderKit.bond_averaged_entanglement_entropy, same words as S̄):
+#   S_bstd   = 𝔼_w[std_k S_w(k)]                           bond-to-bond fluctuation of the entropy in one realization
+#   S_bstd_err                                             its standard error (0 if the words are enumerated)
 # The compressibility κ = dρ/dμ needs the neighbouring points and is computed by hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl.
 #
 # Usage (from the repo root, normally through hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh):
@@ -19,11 +23,11 @@
 #
 # Input:  <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/t<t>/mu<μ>.jld2
 # Output: <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/t<t>/mu<μ>_obs.csv, columns
-#   t_over_U, mu_over_U, rho, a2, varS_avg, S_avg, S_inhom, n_samples, exact, nsteps, eps_conv, converged, S_1..S_{L-1},
+#   t_over_U, mu_over_U, rho, a2, varS_avg, S_avg, S_inhom, S_bstd, S_bstd_err, n_samples, exact, nsteps, eps_conv, converged, S_1..S_{L-1},
 #   varS_1..varS_{L-1} (n_samples and exact refer to the entropy)
 #
 # The observables are (re)computed only if (status compute)
-#   - there is no readable observables file, or it is of an older format (no S_inhom column), or
+#   - there is no readable observables file, or it is of an older format (no S_bstd column), or
 #   - the state is newer than the observables file (the point was rerun), or
 #   - the stored words were sampled (exact = false) and N_SAMPLES is larger than the stored n_samples.
 # Exactly enumerated points are never recomputed for a larger N_SAMPLES.
@@ -70,7 +74,7 @@ end
 function status(statefile, obsfile, n_samples)
     isfile(statefile) || return "nostate"
     row = read_row(obsfile)
-    (isnothing(row) || !all(k -> haskey(row, k), ("n_samples", "exact", "S_inhom"))) && return "compute"
+    (isnothing(row) || !all(k -> haskey(row, k), ("n_samples", "exact", "S_inhom", "S_bstd"))) && return "compute"
     mtime(statefile) > mtime(obsfile) && return "compute"
     stored = tryparse(Int, row["n_samples"])
     exact = tryparse(Bool, row["exact"])
@@ -111,6 +115,7 @@ walltime = @elapsed begin
     ρ = mean(DisorderKit.expectation_value(ψ, n_op))
     φ = mean(abs2, DisorderKit.expectation_value(ψ, a_op))
     S, _, S_var = DisorderKit.average_entanglement_entropy(ψ; n_samples, rng = Xoshiro(1), charges = 0:nmax)
+    _, _, S_bstd, S_bstd_err = DisorderKit.bond_averaged_entanglement_entropy(ψ; n_samples, rng = Xoshiro(1), charges = 0:nmax)
 end
 ϵs = data["info"].ϵsconv
 nsteps = get(data, "nsteps", -1)
@@ -121,10 +126,10 @@ S_avg = mean(S)
 S_inhom = mean(abs2, S .- S_avg)
 
 # Write to a temporary file and move it in place, so an interrupted job never leaves a partial result
-header = ["t_over_U", "mu_over_U", "rho", "a2", "varS_avg", "S_avg", "S_inhom", "n_samples", "exact", "nsteps", "eps_conv",
+header = ["t_over_U", "mu_over_U", "rho", "a2", "varS_avg", "S_avg", "S_inhom", "S_bstd", "S_bstd_err", "n_samples", "exact", "nsteps", "eps_conv",
           "converged",
           ("S_$k" for k in eachindex(S))..., ("varS_$k" for k in eachindex(S_var))...]
-row = Any[parse(Float64, t_str) / U, parse(Float64, μ_str) / U, ρ, φ, varS, S_avg, S_inhom, n_samples, exact, nsteps, ϵconv, converged,
+row = Any[parse(Float64, t_str) / U, parse(Float64, μ_str) / U, ρ, φ, varS, S_avg, S_inhom, S_bstd, S_bstd_err, n_samples, exact, nsteps, ϵconv, converged,
        S..., S_var...]
 tmp = obsfile * ".tmp"
 open(tmp, "w") do io
@@ -133,6 +138,6 @@ open(tmp, "w") do io
 end
 mv(tmp, obsfile; force = true)
 
-@printf("ρ = %.6f, |⟨a⟩|² = %.6f, ⟨Var S⟩ = %.6f, ⟨S⟩ = %.6f, Var_k[S] = %.6f (entropy from %s, %.1f s)\n", ρ, φ,
-        varS, S_avg, S_inhom, exact ? "exact enumeration" : "$n_samples sampled words", walltime)
+@printf("ρ = %.6f, |⟨a⟩|² = %.6f, ⟨Var S⟩ = %.6f, ⟨S⟩ = %.6f, Var_k[S] = %.6f, 𝔼_w[std_k S] = %.6f ± %.6f (entropy from %s, %.1f s)\n", ρ, φ,
+        varS, S_avg, S_inhom, S_bstd, S_bstd_err, exact ? "exact enumeration" : "$n_samples sampled words", walltime)
 println("Saved $obsfile")

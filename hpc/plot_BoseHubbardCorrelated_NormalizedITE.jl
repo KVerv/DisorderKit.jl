@@ -2,7 +2,8 @@
 # hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl (submitted with hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh):
 # it reads the per-point files t<t>/mu<μ>_obs.csv, computes the compressibility κ = dρ/dμ (along μ at fixed t) and plots
 # κ, the homogeneity of the disorder-averaged entanglement entropy along the chain Var_k[S̄(k)] (S_inhom), the density ρ
-# and the quasi-condensate density |⟨a⟩|² as heatmaps over (t/U, μ/U). t and μ are the strong values, the weak ones are t/3 and μ/3. No state is
+# the quasi-condensate density |⟨a⟩|² and the relative bond-to-bond fluctuation of the entropy S_bstd/S_avg
+# (𝔼_w[std_k S_w(k)] / 𝔼_w[mean_k S_w(k)]) as heatmaps over (t/U, μ/U). t and μ are the strong values, the weak ones are t/3 and μ/3. No state is
 # loaded, so the script is fast and can run on the login node.
 #
 # Usage (from the repo root, with the same run parameters as the sweep, so the run tag matches):
@@ -58,6 +59,7 @@ results = map(obsfiles) do file
         num(k) = parse(Float64, x[k])
         (; t = num("t_over_U"), μ = num("mu_over_U"), ρ = num("rho"), φ = num("a2"), varS = num("varS_avg"),
          Savg = num("S_avg"), Sinhom = num("S_inhom"),
+         Sbstd = haskey(x, "S_bstd") ? num("S_bstd") : NaN,   # NaN for observables of an older format
          n_samples = parse(Int, x["n_samples"]), exact = parse(Bool, x["exact"]), nsteps = parse(Int, x["nsteps"]),
          ϵconv = num("eps_conv"), converged = parse(Bool, x["converged"]))
     catch e
@@ -69,15 +71,17 @@ results = filter(!isnothing, results)
 
 # Observables on the grid, 0 where there is no result (marked with a cross in the plot)
 grid() = zeros(length(ts), length(μs))
-ρs, φs, varSs, Savgs, Sinhoms, κs = grid(), grid(), grid(), grid(), grid(), grid()
+ρs, φs, varSs, Savgs, Sinhoms, Sbstds, κs = grid(), grid(), grid(), grid(), grid(), grid(), grid()
 converged = fill(true, length(ts), length(μs))
 hasdata = fill(false, length(ts), length(μs))
 index(x) = (argmin(abs.(ts .- x.t)), argmin(abs.(μs .- x.μ)))
 for x in results
     i, j = index(x)
     ρs[i, j], φs[i, j], varSs[i, j], converged[i, j], hasdata[i, j] = x.ρ, x.φ, x.varS, x.converged, true
-    Savgs[i, j], Sinhoms[i, j] = x.Savg, x.Sinhom
+    Savgs[i, j], Sinhoms[i, j], Sbstds[i, j] = x.Savg, x.Sinhom, x.Sbstd
 end
+# Relative bond-to-bond fluctuation of the entropy, NaN (white) where S_avg = 0 and 0 where there is no result
+ratios = [hasdata[i, j] ? (iszero(Savgs[i, j]) ? NaN : Sbstds[i, j] / Savgs[i, j]) : 0.0 for i in eachindex(ts), j in eachindex(μs)]
 
 # Compressibility κ = dρ/dμ along μ at fixed t: central differences over the nearest neighbours with a result
 # (one-sided at the ends and next to missing points), 0 where there is no result or no neighbour
@@ -89,12 +93,12 @@ for i in eachindex(ts), j in eachindex(μs)
 end
 
 println("Run tag $run_tag, L = $L ($folder)")
-println("    t/U      μ/U        ρ        κ   |⟨a⟩|²  ⟨Var S⟩      ⟨S⟩  Var_k S  samples   steps   ϵ_conv   converged")
+println("    t/U      μ/U        ρ        κ   |⟨a⟩|²  ⟨Var S⟩      ⟨S⟩  Var_k S   std_k S   ratio  samples   steps   ϵ_conv   converged")
 sort!(results; by = x -> (x.t, x.μ))
 for x in results
     i, j = index(x)
-    @printf("%7.4f  %7.4f  %7.4f  %7.3f  %7.4f  %7.4f  %7.4f  %7.4f  %7s  %6d  %7.1e   %s\n", ts[i], μs[j], ρs[i, j],
-            κs[i, j], φs[i, j], varSs[i, j], Savgs[i, j], Sinhoms[i, j], x.exact ? "exact" : string(x.n_samples), x.nsteps, x.ϵconv, x.converged)
+    @printf("%7.4f  %7.4f  %7.4f  %7.3f  %7.4f  %7.4f  %7.4f  %7.4f  %8.4f  %6.3f  %7s  %6d  %7.1e   %s\n", ts[i], μs[j], ρs[i, j],
+            κs[i, j], φs[i, j], varSs[i, j], Savgs[i, j], Sinhoms[i, j], Sbstds[i, j], ratios[i, j], x.exact ? "exact" : string(x.n_samples), x.nsteps, x.ϵconv, x.converged)
 end
 nconv = count(!, (x.converged for x in results))
 nconv > 0 && println("$nconv of $(length(results)) points not converged (open circles in the plot)")
@@ -108,25 +112,27 @@ end
 
 csv = joinpath(folder, "observables.csv")
 open(csv, "w") do io
-    println(io, "t_over_U,mu_over_U,rho,kappa,a2,varS_avg,S_avg,S_inhom,n_samples,exact,nsteps,eps_conv,converged")
+    println(io, "t_over_U,mu_over_U,rho,kappa,a2,varS_avg,S_avg,S_inhom,S_bstd,S_bstd_over_S_avg,n_samples,exact,nsteps,eps_conv,converged")
     for x in results
         i, j = index(x)
-        println(io, "$(ts[i]),$(μs[j]),$(ρs[i, j]),$(κs[i, j]),$(φs[i, j]),$(varSs[i, j]),$(Savgs[i, j]),$(Sinhoms[i, j]),$(x.n_samples),$(x.exact),",
+        println(io, "$(ts[i]),$(μs[j]),$(ρs[i, j]),$(κs[i, j]),$(φs[i, j]),$(varSs[i, j]),$(Savgs[i, j]),$(Sinhoms[i, j]),",
+                "$(Sbstds[i, j]),$(ratios[i, j]),$(x.n_samples),$(x.exact),",
                 "$(x.nsteps),$(x.ϵconv),$(x.converged)")
     end
 end
 println("Saved $csv")
 
-# Figure: four heatmaps over (t/U, μ/U); unconverged points are marked with open circles, points without a result
-# with crosses
+# Figure: five heatmaps over (t/U, μ/U) in a 2×3 grid; unconverged points are marked with open circles, points without
+# a result with crosses
 set_theme!(theme_latexfonts())
-fig = Figure(backgroundcolor = :white, fontsize = 30, size = (2000, 1600))
-Label(fig[0, 1:4], L"$L=%$L$, $r=%$r$, $t' = t/3$, $μ' = μ/3$, $D=%$maxD$"; fontsize = 36)
+fig = Figure(backgroundcolor = :white, fontsize = 30, size = (3000, 1600))
+Label(fig[0, 1:6], L"$L=%$L$, $r=%$r$, $t' = t/3$, $μ' = μ/3$, $D=%$maxD$"; fontsize = 36)
 unconv = [(ts[i], μs[j]) for i in eachindex(ts), j in eachindex(μs) if hasdata[i, j] && !converged[i, j]]
 panels = [(κs, L"κ = dρ/dμ", :viridis), (Sinhoms, L"\mathrm{Var}_k[\overline{S}(k)]", :magma),
+          (ratios, L"\mathbb{E}_w[\mathrm{std}_k S_w(k)] / \overline{S}", :inferno),
           (ρs, L"ρ", :cividis), (φs, L"|\langle a \rangle|^2", :plasma)]
 for (k, (M, label, cmap)) in enumerate(panels)
-    row, col = fldmod1(k, 2)
+    row, col = fldmod1(k, 3)
     ax = Axis(fig[row, 2col-1]; xlabel = L"t/U", ylabel = L"μ/U", title = label)
     finite = filter(isfinite, M[hasdata])
     colorrange = isempty(finite) || minimum(finite) == maximum(finite) ? (0, 1) : extrema(finite)
