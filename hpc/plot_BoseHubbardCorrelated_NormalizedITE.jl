@@ -1,8 +1,8 @@
 # Phase diagram of a hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh run from the observables computed by
 # hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl (submitted with hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh):
 # it reads the per-point files t<t>/mu<μ>_obs.csv, computes the compressibility κ = dρ/dμ (along μ at fixed t) and plots
-# κ, the chain average of the disorder variance of the entanglement entropy, the density ρ and the quasi-condensate
-# density |⟨a⟩|² as heatmaps over (t/U, μ/U). t and μ are the strong values, the weak ones are t/3 and μ/3. No state is
+# κ, the homogeneity of the disorder-averaged entanglement entropy along the chain Var_k[S̄(k)] (S_inhom), the density ρ
+# and the quasi-condensate density |⟨a⟩|² as heatmaps over (t/U, μ/U). t and μ are the strong values, the weak ones are t/3 and μ/3. No state is
 # loaded, so the script is fast and can run on the login node.
 #
 # Usage (from the repo root, with the same run parameters as the sweep, so the run tag matches):
@@ -57,6 +57,7 @@ results = map(obsfiles) do file
         x = read_row(file)
         num(k) = parse(Float64, x[k])
         (; t = num("t_over_U"), μ = num("mu_over_U"), ρ = num("rho"), φ = num("a2"), varS = num("varS_avg"),
+         Savg = num("S_avg"), Sinhom = num("S_inhom"),
          n_samples = parse(Int, x["n_samples"]), exact = parse(Bool, x["exact"]), nsteps = parse(Int, x["nsteps"]),
          ϵconv = num("eps_conv"), converged = parse(Bool, x["converged"]))
     catch e
@@ -68,13 +69,14 @@ results = filter(!isnothing, results)
 
 # Observables on the grid, 0 where there is no result (marked with a cross in the plot)
 grid() = zeros(length(ts), length(μs))
-ρs, φs, varSs, κs = grid(), grid(), grid(), grid()
+ρs, φs, varSs, Savgs, Sinhoms, κs = grid(), grid(), grid(), grid(), grid(), grid()
 converged = fill(true, length(ts), length(μs))
 hasdata = fill(false, length(ts), length(μs))
 index(x) = (argmin(abs.(ts .- x.t)), argmin(abs.(μs .- x.μ)))
 for x in results
     i, j = index(x)
     ρs[i, j], φs[i, j], varSs[i, j], converged[i, j], hasdata[i, j] = x.ρ, x.φ, x.varS, x.converged, true
+    Savgs[i, j], Sinhoms[i, j] = x.Savg, x.Sinhom
 end
 
 # Compressibility κ = dρ/dμ along μ at fixed t: central differences over the nearest neighbours with a result
@@ -87,12 +89,12 @@ for i in eachindex(ts), j in eachindex(μs)
 end
 
 println("Run tag $run_tag, L = $L ($folder)")
-println("    t/U      μ/U        ρ        κ   |⟨a⟩|²  ⟨Var S⟩  samples   steps   ϵ_conv   converged")
+println("    t/U      μ/U        ρ        κ   |⟨a⟩|²  ⟨Var S⟩      ⟨S⟩  Var_k S  samples   steps   ϵ_conv   converged")
 sort!(results; by = x -> (x.t, x.μ))
 for x in results
     i, j = index(x)
-    @printf("%7.4f  %7.4f  %7.4f  %7.3f  %7.4f  %7.4f  %7s  %6d  %7.1e   %s\n", ts[i], μs[j], ρs[i, j], κs[i, j],
-            φs[i, j], varSs[i, j], x.exact ? "exact" : string(x.n_samples), x.nsteps, x.ϵconv, x.converged)
+    @printf("%7.4f  %7.4f  %7.4f  %7.3f  %7.4f  %7.4f  %7.4f  %7.4f  %7s  %6d  %7.1e   %s\n", ts[i], μs[j], ρs[i, j],
+            κs[i, j], φs[i, j], varSs[i, j], Savgs[i, j], Sinhoms[i, j], x.exact ? "exact" : string(x.n_samples), x.nsteps, x.ϵconv, x.converged)
 end
 nconv = count(!, (x.converged for x in results))
 nconv > 0 && println("$nconv of $(length(results)) points not converged (open circles in the plot)")
@@ -106,10 +108,10 @@ end
 
 csv = joinpath(folder, "observables.csv")
 open(csv, "w") do io
-    println(io, "t_over_U,mu_over_U,rho,kappa,a2,varS_avg,n_samples,exact,nsteps,eps_conv,converged")
+    println(io, "t_over_U,mu_over_U,rho,kappa,a2,varS_avg,S_avg,S_inhom,n_samples,exact,nsteps,eps_conv,converged")
     for x in results
         i, j = index(x)
-        println(io, "$(ts[i]),$(μs[j]),$(ρs[i, j]),$(κs[i, j]),$(φs[i, j]),$(varSs[i, j]),$(x.n_samples),$(x.exact),",
+        println(io, "$(ts[i]),$(μs[j]),$(ρs[i, j]),$(κs[i, j]),$(φs[i, j]),$(varSs[i, j]),$(Savgs[i, j]),$(Sinhoms[i, j]),$(x.n_samples),$(x.exact),",
                 "$(x.nsteps),$(x.ϵconv),$(x.converged)")
     end
 end
@@ -121,7 +123,7 @@ set_theme!(theme_latexfonts())
 fig = Figure(backgroundcolor = :white, fontsize = 30, size = (2000, 1600))
 Label(fig[0, 1:4], L"$L=%$L$, $r=%$r$, $t' = t/3$, $μ' = μ/3$, $D=%$maxD$"; fontsize = 36)
 unconv = [(ts[i], μs[j]) for i in eachindex(ts), j in eachindex(μs) if hasdata[i, j] && !converged[i, j]]
-panels = [(κs, L"κ = dρ/dμ", :viridis), (varSs, L"\overline{\mathrm{Var}[S]}", :magma),
+panels = [(κs, L"κ = dρ/dμ", :viridis), (Sinhoms, L"\mathrm{Var}_k[\overline{S}(k)]", :magma),
           (ρs, L"ρ", :cividis), (φs, L"|\langle a \rangle|^2", :plasma)]
 for (k, (M, label, cmap)) in enumerate(panels)
     row, col = fldmod1(k, 2)

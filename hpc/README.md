@@ -200,9 +200,9 @@ diagnostics only.
 |---|---|
 | `BoseHubbardCorrelated_NormalizedITE.jl` | one point (L, t, μ): runs the ITE and stores the final state and the per-step diagnostics |
 | `sweep_BoseHubbardCorrelated_NormalizedITE.sh` | submits one PBS job per (t, μ) for a given L, skipping points that already have a result |
-| `observables_BoseHubbardCorrelated_NormalizedITE.jl` | one point (L, t, μ): computes ρ, \|⟨a⟩\|², S and Var[S] per bond from the stored state and writes them to `mu<μ>_obs.csv`; `--status` only reports whether that is needed |
+| `observables_BoseHubbardCorrelated_NormalizedITE.jl` | one point (L, t, μ): computes ρ and \|⟨a⟩\|² exactly (`expectation_value`), S̄ and Var[S] per bond (enumerated or sampled words), their chain averages and the homogeneity `S_inhom` = Var_k[S̄(k)] from the stored state and writes them to `mu<μ>_obs.csv`; `--status` only reports whether that is needed |
 | `submit_observables_BoseHubbardCorrelated_NormalizedITE.sh` | submits one PBS job per (t, μ) with a state whose observables are missing, older than the state, or sampled with fewer than `N_SAMPLES` words |
-| `plot_BoseHubbardCorrelated_NormalizedITE.jl` | reads only the `mu<μ>_obs.csv` files, computes κ = dρ/dμ, prints the table, saves the combined `observables.csv` and plots κ, Var[S], ρ and \|⟨a⟩\|² as four heatmaps over (t/U, μ/U) |
+| `plot_BoseHubbardCorrelated_NormalizedITE.jl` | reads only the `mu<μ>_obs.csv` files, computes κ = dρ/dμ, prints the table, saves the combined `observables.csv` and plots κ, Var_k[S̄(k)], ρ and \|⟨a⟩\|² as four heatmaps over (t/U, μ/U) |
 | `submit_plot_BoseHubbardCorrelated_NormalizedITE.sh` | submits the plot script as one PBS job (`WALLTIME` 0:30:00, `MEM` 4GB, `PPN` 1) |
 
 ## Usage (from the repo root, on the login node)
@@ -226,10 +226,10 @@ Run parameters (environment, defaults set in the submit scripts; the Julia scrip
 `CROSS_WIDTH` (32), `DATA_DIR` ($VSC_DATA/data). Job resources as for the Bose-Hubbard sweep (`WALLTIME`, `MEM`, `PPN`,
 `JULIA_THREADS`, `BLAS_THREADS`, `CLUSTER`, `JULIA`); `benchmark_BoseHubbard_NormalizedITE.sh` at the same L, `NMAX`
 and `MAXD` gives a good estimate (4 instead of 2 sectors per site makes a step somewhat slower). Grid: `TS`, `MUS` (the
-strong values t/U and μ/U). Observables: `N_SAMPLES` (1000, disorder words are enumerated exactly if ∏ᵢ qᵢ ≤
+strong values t/U and μ/U). Observables: ρ and \|⟨a⟩\|² = (1/L) Σᵢ ⟨aᵢ⟩² are exact disorder averages; `N_SAMPLES` applies to the entropy only (1000, disorder words are enumerated exactly if ∏ᵢ qᵢ ≤
 `N_SAMPLES`, qᵢ the number of sectors of site i), job resources `WALLTIME` (1:00:00), `MEM` (8GB), `PPN` (4), and
 `TS`/`MUS` to restrict the points (default: every stored state); `FORCE=1` recomputes every point. A point is
-(re)computed only if its `mu<μ>_obs.csv` is missing or unreadable, older than the state (the point was rerun), or its
+(re)computed only if its `mu<μ>_obs.csv` is missing, unreadable or of an older format (no `S_inhom`), older than the state (the point was rerun), or its
 words were sampled (`exact = false`) with fewer than `N_SAMPLES`; exactly enumerated points are never redone. κ = dρ/dμ is taken along μ at fixed t (central differences, one-sided
 at the ends). Var[S] is computed for the conditional states projected onto their most likely particle number, as in the
 Bose-Hubbard plot script. Unconverged points are marked with open circles, grid points without observables with crosses.
