@@ -1,7 +1,7 @@
 # Phase diagram of a hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh run from the observables computed by
 # hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl (submitted with hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh):
 # it reads the per-point files t<t>/mu<μ>_obs.csv, computes the compressibility κ = dρ/dμ (along μ at fixed t) and plots
-# κ, the homogeneity of the disorder-averaged entanglement entropy along the chain Var_k[S̄(k)] (S_inhom), the density ρ
+# κ, the bond-averaged disorder-averaged entanglement entropy S̄ = (1/(L-1)) Σₖ S̄(k) (S_avg), the density ρ,
 # the quasi-condensate density |⟨a⟩|², the bond-to-bond fluctuation of the entropy S_bstd = 𝔼_w[std_k S_w(k)] and its
 # relative size S_bstd/S_avg (𝔼_w[std_k S_w(k)] / 𝔼_w[mean_k S_w(k)]) as heatmaps over (t/U, μ/U). t and μ are the strong values, the weak ones are t/3 and μ/3. No state is
 # loaded, so the script is fast and can run on the login node.
@@ -129,7 +129,7 @@ fig = Figure(backgroundcolor = :white, fontsize = 30, size = (3000, 1600))
 Label(fig[0, 1:6], L"$L=%$L$, $r=%$r$, $t' = t/3$, $μ' = μ/3$, $D=%$maxD$"; fontsize = 36)
 unconv = [(ts[i], μs[j]) for i in eachindex(ts), j in eachindex(μs) if hasdata[i, j] && !converged[i, j]]
 panels = [(κs, L"κ = dρ/dμ", :viridis), (ρs, L"ρ", :cividis), (φs, L"|\langle a \rangle|^2", :plasma),
-          (Sinhoms, L"\mathrm{Var}_k[\overline{S}(k)]", :magma),
+          (Savgs, L"\overline{S} = \frac{1}{L-1}\sum_k \overline{S}(k)", :magma),
           (Sbstds, L"\mathbb{E}_w[\mathrm{std}_k S_w(k)]", :magma),
           (ratios, L"\mathbb{E}_w[\mathrm{std}_k S_w(k)] / \overline{S}", :inferno)]
 for (k, (M, label, cmap)) in enumerate(panels)
