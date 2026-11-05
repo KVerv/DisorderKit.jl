@@ -7,11 +7,15 @@
 # loaded, so the script is fast and can run on the login node.
 #
 # Usage (from the repo root, with the same run parameters as the sweep, so the run tag matches):
-#   U=1.0 R=0.0 NMAX=4 DTAU=0.05 MAXD=16 DATA_DIR=$VSC_DATA/data julia --project=. hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl <L>
+#   U=1.0 R=0.0 NMAX=4 DTAU=0.05 MAXD=16 KAPPA_TOL=0.05 CV_TOL=0.1 DATA_DIR=$VSC_DATA/data julia --project=. hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl <L>
 #
-# Environment (all required): U, R, NMAX, DTAU, MAXD, DATA_DIR
+# Environment (all required): U, R, NMAX, DTAU, MAXD, DATA_DIR, and the phase classification thresholds KAPPA_TOL, CV_TOL:
+#   with CV = S_bstd/S_avg, a point is a Mott insulator (MI) if κ ≤ KAPPA_TOL and CV ≥ CV_TOL, a superfluid (SF) if
+#   κ > KAPPA_TOL and CV < CV_TOL, a Bose glass (BG) if κ > KAPPA_TOL and CV ≥ CV_TOL, and unclassified otherwise
+#   (κ ≤ KAPPA_TOL and CV < CV_TOL). CV = NaN (S_avg = 0) counts as large.
 # Output: the table on stdout, <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/observables.csv (all points)
-#   and plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png. The grid is set by the t<t>/mu<μ>.jld2 and
+#   and plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png, plus the phase diagram
+#   plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>_phases.png. The grid is set by the t<t>/mu<μ>.jld2 and
 #   mu<μ>_obs.csv names; grid points without (readable) observables are set to 0 and marked with a cross.
 
 length(ARGS) == 1 || error("usage: julia --project=. hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl <L>")
@@ -26,6 +30,8 @@ dtau_str = param("DTAU")
 maxD = parse(Int, param("MAXD"))
 run_tag = "U$(U_str)_r$(r_str)_nmax$(nmax)_dtau$(dtau_str)_D$(maxD)"
 data_root = param("DATA_DIR")
+κtol = parse(Float64, param("KAPPA_TOL"))
+cvtol = parse(Float64, param("CV_TOL"))
 folder = joinpath(data_root, "BoseHubbardCorrelated_NormalizedITE", run_tag, "L$(L)")
 
 using CairoMakie, Printf
@@ -92,14 +98,25 @@ for i in eachindex(ts), j in eachindex(μs)
     κs[i, j] = hi == lo ? 0.0 : (ρs[i, hi] - ρs[i, lo]) / (U * (μs[hi] - μs[lo]))
 end
 
+# Phase classification from κ and CV = S_bstd/S_avg: 1 = MI, 2 = SF, 3 = BG, 4 = unclassified, 0 = no result
+const phasenames = ("MI", "SF", "BG", "unclassified")
+function classify(κ, cv)
+    compressible = κ > κtol
+    largecv = isnan(cv) || cv >= cvtol   # S_avg = 0 (product state) counts as large
+    compressible ? (largecv ? 3 : 2) : (largecv ? 1 : 4)
+end
+phases = [hasdata[i, j] ? classify(κs[i, j], ratios[i, j]) : 0 for i in eachindex(ts), j in eachindex(μs)]
+
 println("Run tag $run_tag, L = $L ($folder)")
-println("    t/U      μ/U        ρ        κ   |⟨a⟩|²  ⟨Var S⟩      ⟨S⟩  Var_k S   std_k S   ratio  samples   steps   ϵ_conv   converged")
+println("    t/U      μ/U        ρ        κ   |⟨a⟩|²  ⟨Var S⟩      ⟨S⟩  Var_k S   std_k S   ratio  samples   steps   ϵ_conv   converged  phase")
 sort!(results; by = x -> (x.t, x.μ))
 for x in results
     i, j = index(x)
-    @printf("%7.4f  %7.4f  %7.4f  %7.3f  %7.4f  %7.4f  %7.4f  %7.4f  %8.4f  %6.3f  %7s  %6d  %7.1e   %s\n", ts[i], μs[j], ρs[i, j],
-            κs[i, j], φs[i, j], varSs[i, j], Savgs[i, j], Sinhoms[i, j], Sbstds[i, j], ratios[i, j], x.exact ? "exact" : string(x.n_samples), x.nsteps, x.ϵconv, x.converged)
+    @printf("%7.4f  %7.4f  %7.4f  %7.3f  %7.4f  %7.4f  %7.4f  %7.4f  %8.4f  %6.3f  %7s  %6d  %7.1e   %-9s  %s\n", ts[i], μs[j], ρs[i, j],
+            κs[i, j], φs[i, j], varSs[i, j], Savgs[i, j], Sinhoms[i, j], Sbstds[i, j], ratios[i, j], x.exact ? "exact" : string(x.n_samples), x.nsteps, x.ϵconv, x.converged,
+            phasenames[phases[i, j]])
 end
+println("Phases with κ_tol = $κtol, CV_tol = $cvtol: ", join(("$(n) $(count(==(k), phases))" for (k, n) in enumerate(phasenames)), ", "))
 nconv = count(!, (x.converged for x in results))
 nconv > 0 && println("$nconv of $(length(results)) points not converged (open circles in the plot)")
 nsamp = unique(x.n_samples for x in results if !x.exact)
@@ -112,12 +129,12 @@ end
 
 csv = joinpath(folder, "observables.csv")
 open(csv, "w") do io
-    println(io, "t_over_U,mu_over_U,rho,kappa,a2,varS_avg,S_avg,S_inhom,S_bstd,S_bstd_over_S_avg,n_samples,exact,nsteps,eps_conv,converged")
+    println(io, "t_over_U,mu_over_U,rho,kappa,a2,varS_avg,S_avg,S_inhom,S_bstd,S_bstd_over_S_avg,n_samples,exact,nsteps,eps_conv,converged,phase")
     for x in results
         i, j = index(x)
         println(io, "$(ts[i]),$(μs[j]),$(ρs[i, j]),$(κs[i, j]),$(φs[i, j]),$(varSs[i, j]),$(Savgs[i, j]),$(Sinhoms[i, j]),",
                 "$(Sbstds[i, j]),$(ratios[i, j]),$(x.n_samples),$(x.exact),",
-                "$(x.nsteps),$(x.ϵconv),$(x.converged)")
+                "$(x.nsteps),$(x.ϵconv),$(x.converged),$(phasenames[phases[i, j]])")
     end
 end
 println("Saved $csv")
@@ -148,3 +165,18 @@ mkpath("plots")
 file = joinpath("plots", "BoseHubbardCorrelated_NormalizedITE_$(run_tag)_L$(L).png")
 save(file, fig)
 println("Saved $file")
+
+# Phase diagram: MI / SF / BG / unclassified per point, white where there is no result
+phasecolors = [:white, :royalblue, :orange, :forestgreen, :gray70]   # no result, MI, SF, BG, unclassified
+figp = Figure(backgroundcolor = :white, fontsize = 30, size = (1300, 1000))
+axp = Axis(figp[1, 1]; xlabel = L"t/U", ylabel = L"μ/U",
+           title = L"$L=%$L$, $r=%$r$, $D=%$maxD$, $κ_\mathrm{tol}=%$κtol$, $\mathrm{CV}_\mathrm{tol}=%$cvtol$")
+heatmap!(axp, ts, μs, phases; colormap = cgrad(phasecolors, 5; categorical = true), colorrange = (-0.5, 4.5))
+isempty(unconv) || scatter!(axp, unconv; color = :transparent, strokecolor = :black, strokewidth = 2, markersize = 12)
+isempty(missingpts) || scatter!(axp, missingpts; marker = :xcross, color = :white, strokecolor = :black,
+                                strokewidth = 1.5, markersize = 22)
+Legend(figp[1, 2], [PolyElement(color = c, strokecolor = :black, strokewidth = 1) for c in phasecolors[2:end]],
+       ["Mott insulator", "Superfluid", "Bose glass", "unclassified"])
+filep = joinpath("plots", "BoseHubbardCorrelated_NormalizedITE_$(run_tag)_L$(L)_phases.png")
+save(filep, figp)
+println("Saved $filep")

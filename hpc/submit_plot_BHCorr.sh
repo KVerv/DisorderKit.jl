@@ -11,7 +11,8 @@
 # Run parameters (U, R, NMAX, DTAU, MAXD, DATA_DIR) and their defaults are set below; override them from the caller's
 # environment. They are written into the job script, hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl has no defaults.
 # Output: <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/observables.csv and
-#   plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png
+#   plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png (heatmaps) and ..._L<L>_phases.png (MI/SF/BG
+#   classification with the thresholds KAPPA_TOL and CV_TOL, see below)
 # Logs: logs/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/plot/
 
 set -euo pipefail
@@ -25,6 +26,13 @@ export NMAX="${NMAX:-4}"
 export DTAU="${DTAU:-0.05}"
 export MAXD="${MAXD:-16}"
 export DATA_DIR="${DATA_DIR:-${VSC_DATA:-.}/data}"
+
+# Phase classification thresholds for the phase-diagram plot (do not change the run tag):
+#   κ ≤ KAPPA_TOL → incompressible, CV = S_bstd/S_avg ≥ CV_TOL → large bond-to-bond entropy fluctuation
+#   Mott insulator: incompressible + large CV; superfluid: compressible + small CV; Bose glass: compressible + large CV
+#   e.g. KAPPA_TOL=0.02 CV_TOL=0.2 bash hpc/submit_plot_BHCorr.sh 6
+export KAPPA_TOL="${KAPPA_TOL:-0.05}"
+export CV_TOL="${CV_TOL:-0.6}"
 
 # Resources: the plot script only reads small CSV files
 WALLTIME="${WALLTIME:-0:15:00}"
@@ -45,7 +53,7 @@ module purge
 echo "PBS: \$PBS_JOBID"
 echo "Correlated Bose-Hubbard plot: L = $L, run tag $tag"
 echo "Job started at : \$(date)"
-export U=$U R=$R NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR="$DATA_DIR"
+export U=$U R=$R NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR="$DATA_DIR" KAPPA_TOL=$KAPPA_TOL CV_TOL=$CV_TOL
 $JULIA --project=. --threads=$PPN -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 $JULIA --project=. --threads=$PPN hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl $L
 echo "Job ended at : \$(date)"
