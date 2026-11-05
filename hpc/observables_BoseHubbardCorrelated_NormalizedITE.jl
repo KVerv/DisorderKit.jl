@@ -17,7 +17,7 @@
 #       state file, the observables file and the status: nostate, uptodate or compute
 # t and μ are used verbatim in the file names, as in hpc/BoseHubbardCorrelated_NormalizedITE.jl (formatted as %.4f).
 #
-# Environment (all required; defaults in hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh): U, R, NMAX,
+# Environment (all required; defaults in hpc/submit_obs_BHCorr.sh): U, R, DELTA, OMEGA, NMAX,
 #   DTAU, MAXD, DATA_DIR (the same as for the sweep, so the run tag matches), N_SAMPLES (for the entropy only: disorder
 #   words are enumerated exactly if ∏ᵢ qᵢ ≤ N_SAMPLES, qᵢ the number of sectors of site i, else N_SAMPLES words are sampled)
 #
@@ -51,10 +51,12 @@ L = parse(Int, L_str)
 param(k) = haskey(ENV, k) ? ENV[k] : error("environment variable $k not set; run parameters are set in hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh")
 U_str = param("U")
 r_str = param("R")
+Δ_str = param("DELTA")
+Ω_str = param("OMEGA")
 nmax = parse(Int, param("NMAX"))
 dtau_str = param("DTAU")
 maxD = parse(Int, param("MAXD"))
-run_tag = "U$(U_str)_r$(r_str)_nmax$(nmax)_dtau$(dtau_str)_D$(maxD)"
+run_tag = "U$(U_str)_r$(r_str)_Delta$(Δ_str)_Omega$(Ω_str)_nmax$(nmax)_dtau$(dtau_str)_D$(maxD)"
 data_root = param("DATA_DIR")
 n_samples = parse(Int, param("N_SAMPLES"))
 folder = joinpath(data_root, "BoseHubbardCorrelated_NormalizedITE", run_tag, "L$(L)", "t$(t_str)")

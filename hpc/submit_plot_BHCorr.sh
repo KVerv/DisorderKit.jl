@@ -5,13 +5,13 @@
 # hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh have finished, with the same run parameters as the sweep,
 # so the run tag matches:
 #   bash hpc/submit_plot_BoseHubbardCorrelated_NormalizedITE.sh 6
-#   R=0.5 MAXD=32 bash hpc/submit_plot_BoseHubbardCorrelated_NormalizedITE.sh 6
+#   R=0.5 DELTA=0.3 OMEGA=0.5 MAXD=32 bash hpc/submit_plot_BoseHubbardCorrelated_NormalizedITE.sh 6
 #   DRYRUN=1 bash hpc/submit_plot_BoseHubbardCorrelated_NormalizedITE.sh 6      # only print the job
 #
-# Run parameters (U, R, NMAX, DTAU, MAXD, DATA_DIR) and their defaults are set below; override them from the caller's
+# Run parameters (U, R, DELTA, OMEGA, NMAX, DTAU, MAXD, DATA_DIR) and their defaults are set below; override them from the caller's
 # environment. They are written into the job script, hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl has no defaults.
 # Output: <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/observables.csv and
-#   plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png (heatmaps) and ..._L<L>_phases.png (MI/SF/BG
+#   plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png (one figure: κ, CV, ρ and the MI/SF/BG
 #   classification with the thresholds KAPPA_TOL and CV_TOL, see below)
 # Logs: logs/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/plot/
 
@@ -22,6 +22,8 @@ L="${1:?usage: bash hpc/submit_plot_BoseHubbardCorrelated_NormalizedITE.sh <L>}"
 # Run parameters: as in hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh (they set the run tag)
 export U="${U:-1.0}"
 export R="${R:-0.0}"
+export DELTA="${DELTA:-0.0}"   # potential disorder: μ ± DELTA
+export OMEGA="${OMEGA:-0.0}"   # hopping disorder: t(1 ± OMEGA), 0 ≤ OMEGA ≤ 1
 export NMAX="${NMAX:-4}"
 export DTAU="${DTAU:-0.05}"
 export MAXD="${MAXD:-16}"
@@ -53,7 +55,7 @@ module purge
 echo "PBS: \$PBS_JOBID"
 echo "Correlated Bose-Hubbard plot: L = $L, run tag $tag"
 echo "Job started at : \$(date)"
-export U=$U R=$R NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR="$DATA_DIR" KAPPA_TOL=$KAPPA_TOL CV_TOL=$CV_TOL
+export U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR="$DATA_DIR" KAPPA_TOL=$KAPPA_TOL CV_TOL=$CV_TOL
 $JULIA --project=. --threads=$PPN -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 $JULIA --project=. --threads=$PPN hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl $L
 echo "Job ended at : \$(date)"

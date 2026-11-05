@@ -5,14 +5,14 @@
 # Run on the login node from the repo root, with the same run parameters as the sweep, so the run tag matches:
 #   bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 6
 #   N_SAMPLES=10000 bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 6   # more words where sampled
-#   R=0.5 MAXD=32 bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 6
+#   R=0.5 DELTA=0.3 OMEGA=0.5 MAXD=32 bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 6
 #   TS="0.06 0.10" MUS="0.2 0.4" bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 6   # only these points
 #   DRYRUN=1 bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 6      # only print what would be submitted
 #   FORCE=1 bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 6       # recompute every point with a state
 #
-# By default every point with a state t<t>/mu<μ>.jld2 under the L<L> folder is considered; TS and MUS (the strong values
+# By default every point with a state t<t>/mu<μ>.jld2 under the L<L> folder is considered; TS and MUS (the mean values
 # t/U and μ/U, formatted as %.4f) restrict them.
-# Run parameters (U, R, NMAX, DTAU, MAXD, DATA_DIR, N_SAMPLES) and their defaults are set below; override them from the
+# Run parameters (U, R, DELTA, OMEGA, NMAX, DTAU, MAXD, DATA_DIR, N_SAMPLES) and their defaults are set below; override them from the
 # caller's environment. They are written into every job script,
 # hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl has no defaults of its own.
 # Results: <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/t<t>/mu<μ>_obs.csv
@@ -27,6 +27,8 @@ L="${1:?usage: bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.s
 # the run tag)
 export U="${U:-1.0}"
 export R="${R:-0.0}"
+export DELTA="${DELTA:-0.0}"   # potential disorder: μ ± DELTA
+export OMEGA="${OMEGA:-0.0}"   # hopping disorder: t(1 ± OMEGA), 0 ≤ OMEGA ≤ 1
 export NMAX="${NMAX:-4}"
 export DTAU="${DTAU:-0.05}"
 export MAXD="${MAXD:-16}"
@@ -101,7 +103,7 @@ module purge
 echo "PBS: \$PBS_JOBID"
 echo "Correlated Bose-Hubbard observables: L = $L, t = $t, μ = $mu, run tag $tag, N_SAMPLES = $N_SAMPLES"
 echo "Job started at : \$(date)"
-export U=$U R=$R NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR="$DATA_DIR" N_SAMPLES=$N_SAMPLES
+export U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR="$DATA_DIR" N_SAMPLES=$N_SAMPLES
 $rmcmd
 $JULIA --project=. --threads=$PPN -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 $JULIA --project=. --threads=$PPN $script $L $t $mu

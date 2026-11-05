@@ -1,34 +1,35 @@
 # Phase diagram of a hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh run from the observables computed by
 # hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl (submitted with hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh):
-# it reads the per-point files t<t>/mu<μ>_obs.csv, computes the compressibility κ = dρ/dμ (along μ at fixed t) and plots
-# κ, the bond-averaged disorder-averaged entanglement entropy S̄ = (1/(L-1)) Σₖ S̄(k) (S_avg), the density ρ,
-# the quasi-condensate density |⟨a⟩|², the bond-to-bond fluctuation of the entropy S_bstd = 𝔼_w[std_k S_w(k)] and its
-# relative size S_bstd/S_avg (𝔼_w[std_k S_w(k)] / 𝔼_w[mean_k S_w(k)]) as heatmaps over (t/U, μ/U). t and μ are the strong values, the weak ones are t/3 and μ/3. No state is
-# loaded, so the script is fast and can run on the login node.
+# it reads the per-point files t<t>/mu<μ>_obs.csv, computes the compressibility κ = dρ/dμ (along μ at fixed t) and plots,
+# in one figure over (t/U, μ/U), κ, the coefficient of variation of the bond-averaged entropy
+# CV = S_bstd/S_avg = 𝔼_w[std_k S_w(k)] / 𝔼_w[mean_k S_w(k)], the density ρ and the MI/SF/BG phase classification.
+# t and μ are the mean values, the disorder values are t(1±Ω) and μ±Δ. No state is loaded, so the script is fast and
+# can run on the login node.
 #
 # Usage (from the repo root, with the same run parameters as the sweep, so the run tag matches):
-#   U=1.0 R=0.0 NMAX=4 DTAU=0.05 MAXD=16 KAPPA_TOL=0.05 CV_TOL=0.1 DATA_DIR=$VSC_DATA/data julia --project=. hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl <L>
+#   U=1.0 R=0.0 DELTA=0.2 OMEGA=0.5 NMAX=4 DTAU=0.05 MAXD=16 KAPPA_TOL=0.05 CV_TOL=0.1 DATA_DIR=$VSC_DATA/data julia --project=. hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl <L>
 #
-# Environment (all required): U, R, NMAX, DTAU, MAXD, DATA_DIR, and the phase classification thresholds KAPPA_TOL, CV_TOL:
+# Environment (all required): U, R, DELTA, OMEGA, NMAX, DTAU, MAXD, DATA_DIR, and the phase classification thresholds KAPPA_TOL, CV_TOL:
 #   with CV = S_bstd/S_avg, a point is a Mott insulator (MI) if κ ≤ KAPPA_TOL and CV ≥ CV_TOL, a superfluid (SF) if
 #   κ > KAPPA_TOL and CV < CV_TOL, a Bose glass (BG) if κ > KAPPA_TOL and CV ≥ CV_TOL, and unclassified otherwise
 #   (κ ≤ KAPPA_TOL and CV < CV_TOL). CV = NaN (S_avg = 0) counts as large.
 # Output: the table on stdout, <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/observables.csv (all points)
-#   and plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png, plus the phase diagram
-#   plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>_phases.png. The grid is set by the t<t>/mu<μ>.jld2 and
+#   and the figure plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png. The grid is set by the t<t>/mu<μ>.jld2 and
 #   mu<μ>_obs.csv names; grid points without (readable) observables are set to 0 and marked with a cross.
 
 length(ARGS) == 1 || error("usage: julia --project=. hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl <L>")
 L = parse(Int, ARGS[1])
 
 # Same run tag as BoseHubbardCorrelated_NormalizedITE.jl
-param(k) = haskey(ENV, k) ? ENV[k] : error("environment variable $k not set (U, R, NMAX, DTAU, MAXD, DATA_DIR as for the sweep)")
+param(k) = haskey(ENV, k) ? ENV[k] : error("environment variable $k not set (U, R, DELTA, OMEGA, NMAX, DTAU, MAXD, DATA_DIR as for the sweep)")
 U_str = param("U")
 r_str = param("R")
+Δ_str = param("DELTA")
+Ω_str = param("OMEGA")
 nmax = parse(Int, param("NMAX"))
 dtau_str = param("DTAU")
 maxD = parse(Int, param("MAXD"))
-run_tag = "U$(U_str)_r$(r_str)_nmax$(nmax)_dtau$(dtau_str)_D$(maxD)"
+run_tag = "U$(U_str)_r$(r_str)_Delta$(Δ_str)_Omega$(Ω_str)_nmax$(nmax)_dtau$(dtau_str)_D$(maxD)"
 data_root = param("DATA_DIR")
 κtol = parse(Float64, param("KAPPA_TOL"))
 cvtol = parse(Float64, param("CV_TOL"))
@@ -139,44 +140,39 @@ open(csv, "w") do io
 end
 println("Saved $csv")
 
-# Figure: six heatmaps over (t/U, μ/U) in a 2×3 grid (top: κ, ρ, |⟨a⟩|²; bottom: the entropy observables); unconverged points are marked with open circles, points without
-# a result with crosses
+# Figure: 2×2 panels over (t/U, μ/U): κ, CV = S_bstd/S_avg, ρ and the phase classification; unconverged points are
+# marked with open circles, points without a result with crosses
 set_theme!(theme_latexfonts())
-fig = Figure(backgroundcolor = :white, fontsize = 30, size = (3000, 1600))
-Label(fig[0, 1:6], L"$L=%$L$, $r=%$r$, $t' = t/3$, $μ' = μ/3$, $D=%$maxD$"; fontsize = 36)
+fig = Figure(backgroundcolor = :white, fontsize = 30, size = (2200, 1700))
+Label(fig[0, 1:4], L"$L=%$L$, $r=%$r$, $t(1\pm%$Ω_str)$, $μ\pm%$Δ_str$, $D=%$maxD$, $κ_\mathrm{tol}=%$κtol$, $\mathrm{CV}_\mathrm{tol}=%$cvtol$";
+      fontsize = 36)
 unconv = [(ts[i], μs[j]) for i in eachindex(ts), j in eachindex(μs) if hasdata[i, j] && !converged[i, j]]
-panels = [(κs, L"κ = dρ/dμ", :viridis), (ρs, L"ρ", :cividis), (φs, L"|\langle a \rangle|^2", :plasma),
-          (Savgs, L"\overline{S} = \frac{1}{L-1}\sum_k \overline{S}(k)", :magma),
-          (Sbstds, L"\mathbb{E}_w[\mathrm{std}_k S_w(k)]", :magma),
-          (ratios, L"\mathbb{E}_w[\mathrm{std}_k S_w(k)] / \overline{S}", :inferno)]
-for (k, (M, label, cmap)) in enumerate(panels)
-    row, col = fldmod1(k, 3)
+function markpoints!(ax, circlecolor)
+    isempty(unconv) || scatter!(ax, unconv; color = :transparent, strokecolor = circlecolor, strokewidth = 2, markersize = 12)
+    isempty(missingpts) || scatter!(ax, missingpts; marker = :xcross, color = :white, strokecolor = :black,
+                                    strokewidth = 1.5, markersize = 22)
+end
+panels = [(κs, L"κ = dρ/dμ", :viridis, (1, 1)),
+          (ratios, L"\mathrm{CV} = \mathbb{E}_w[\mathrm{std}_k S_w(k)] / \overline{S}", :inferno, (1, 2)),
+          (ρs, L"ρ", :cividis, (2, 1))]
+for (M, label, cmap, (row, col)) in panels
     ax = Axis(fig[row, 2col-1]; xlabel = L"t/U", ylabel = L"μ/U", title = label)
     finite = filter(isfinite, M[hasdata])
     colorrange = isempty(finite) || minimum(finite) == maximum(finite) ? (0, 1) : extrema(finite)
     hm = heatmap!(ax, ts, μs, M; colormap = cmap, colorrange, nan_color = :white)
-    isempty(unconv) || scatter!(ax, unconv; color = :transparent, strokecolor = :white, strokewidth = 2, markersize = 12)
-    isempty(missingpts) || scatter!(ax, missingpts; marker = :xcross, color = :white, strokecolor = :black,
-                                    strokewidth = 1.5, markersize = 22)
+    markpoints!(ax, :white)
     Colorbar(fig[row, 2col], hm)
 end
+
+# Phase classification: MI / SF / BG / unclassified per point, white where there is no result
+phasecolors = [:white, :royalblue, :orange, :forestgreen, :gray70]   # no result, MI, SF, BG, unclassified
+axp = Axis(fig[2, 3]; xlabel = L"t/U", ylabel = L"μ/U", title = L"\mathrm{phase}")
+heatmap!(axp, ts, μs, phases; colormap = cgrad(phasecolors, 5; categorical = true), colorrange = (-0.5, 4.5))
+markpoints!(axp, :black)
+Legend(fig[2, 4], [PolyElement(color = c, strokecolor = :black, strokewidth = 1) for c in phasecolors[2:end]],
+       ["MI", "SF", "BG", "uncl."])
 
 mkpath("plots")
 file = joinpath("plots", "BoseHubbardCorrelated_NormalizedITE_$(run_tag)_L$(L).png")
 save(file, fig)
 println("Saved $file")
-
-# Phase diagram: MI / SF / BG / unclassified per point, white where there is no result
-phasecolors = [:white, :royalblue, :orange, :forestgreen, :gray70]   # no result, MI, SF, BG, unclassified
-figp = Figure(backgroundcolor = :white, fontsize = 30, size = (1300, 1000))
-axp = Axis(figp[1, 1]; xlabel = L"t/U", ylabel = L"μ/U",
-           title = L"$L=%$L$, $r=%$r$, $D=%$maxD$, $κ_\mathrm{tol}=%$κtol$, $\mathrm{CV}_\mathrm{tol}=%$cvtol$")
-heatmap!(axp, ts, μs, phases; colormap = cgrad(phasecolors, 5; categorical = true), colorrange = (-0.5, 4.5))
-isempty(unconv) || scatter!(axp, unconv; color = :transparent, strokecolor = :black, strokewidth = 2, markersize = 12)
-isempty(missingpts) || scatter!(axp, missingpts; marker = :xcross, color = :white, strokecolor = :black,
-                                strokewidth = 1.5, markersize = 22)
-Legend(figp[1, 2], [PolyElement(color = c, strokecolor = :black, strokewidth = 1) for c in phasecolors[2:end]],
-       ["Mott insulator", "Superfluid", "Bose glass", "unclassified"])
-filep = joinpath("plots", "BoseHubbardCorrelated_NormalizedITE_$(run_tag)_L$(L)_phases.png")
-save(filep, figp)
-println("Saved $filep")

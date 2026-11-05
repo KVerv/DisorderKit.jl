@@ -179,20 +179,21 @@ The results are stored in `$DATA_DIR/BoseHubbard_NormalizedITE/benchmarks/<run t
 
 Ground states of
 
-    H_w = -Σ t_{wᵢ} (b†ᵢbᵢ₊₁ + h.c.) + U/2 Σ nᵢ(nᵢ-1) - Σ μ_{wᵢ} nᵢ,   t_{wᵢ} ∈ {t/3, t},  μ_{wᵢ} ∈ {μ/3, μ},
+    H_w = -Σ t_{wᵢ} (b†ᵢbᵢ₊₁ + h.c.) + U/2 Σ nᵢ(nᵢ-1) - Σ μ_{wᵢ} nᵢ,   t_{wᵢ} ∈ {t(1-Ω), t(1+Ω)},  μ_{wᵢ} ∈ {μ-Δ, μ+Δ},
 
 on an open chain of `L` sites, where the label wᵢ of site i sets both μᵢ and the hopping of bond (i, i+1). The hopping and
 the potential of a site are correlated by r ∈ (-1, 1):
 
 | sector | μᵢ | t_{i,i+1} | probability |
 |---|---|---|---|
-| 1 | μ/3 | t/3 | (1+r)/4 |
-| 2 | μ | t/3 | (1-r)/4 |
-| 3 | μ/3 | t | (1-r)/4 |
-| 4 | μ | t | (1+r)/4 |
+| 1 | μ-Δ | t(1-Ω) | (1+r)/4 |
+| 2 | μ+Δ | t(1-Ω) | (1-r)/4 |
+| 3 | μ-Δ | t(1+Ω) | (1-r)/4 |
+| 4 | μ+Δ | t(1+Ω) | (1+r)/4 |
 
-(the sector order of `random_bose_hubbard([t/3, t], [U], [μ/3, μ]; nmax)`). The last site has no bond, so
-`site_sectors` merges its sectors into μ/3 and μ with probability 1/2 each. One job per point (t, μ) of the phase
+(the sector order of `random_bose_hubbard([t(1-Ω), t(1+Ω)], [U], [μ-Δ, μ+Δ]; nmax)`). t and μ are the swept mean values,
+Δ (`DELTA`) and Ω (`OMEGA`, 0 ≤ Ω ≤ 1) are fixed per run. The last site has no bond, so
+`site_sectors` merges its sectors into μ-Δ and μ+Δ with probability 1/2 each. One job per point (t, μ) of the phase
 diagram; every job starts from the uniform superposition of all occupations and stores the final state and the per-step
 diagnostics only.
 
@@ -202,7 +203,7 @@ diagnostics only.
 | `sweep_BoseHubbardCorrelated_NormalizedITE.sh` | submits one PBS job per (t, μ) for a given L, skipping points that already have a result |
 | `observables_BoseHubbardCorrelated_NormalizedITE.jl` | one point (L, t, μ): computes ρ and \|⟨a⟩\|² exactly (`expectation_value`), S̄ and Var[S] per bond (enumerated or sampled words), their chain averages and the homogeneity `S_inhom` = Var_k[S̄(k)] from the stored state and writes them to `mu<μ>_obs.csv`; `--status` only reports whether that is needed |
 | `submit_observables_BoseHubbardCorrelated_NormalizedITE.sh` | submits one PBS job per (t, μ) with a state whose observables are missing, older than the state, or sampled with fewer than `N_SAMPLES` words |
-| `plot_BoseHubbardCorrelated_NormalizedITE.jl` | reads only the `mu<μ>_obs.csv` files, computes κ = dρ/dμ, prints the table, saves the combined `observables.csv` and plots κ, Var_k[S̄(k)], ρ and \|⟨a⟩\|² as four heatmaps over (t/U, μ/U) |
+| `plot_BoseHubbardCorrelated_NormalizedITE.jl` | reads only the `mu<μ>_obs.csv` files, computes κ = dρ/dμ, prints the table, saves the combined `observables.csv` and plots one figure with four panels over (t/U, μ/U): κ, the coefficient of variation CV = 𝔼_w[std_k S_w(k)]/S̄ of the bond-averaged entropy, ρ and the MI/SF/BG classification (`KAPPA_TOL`, `CV_TOL`) |
 | `submit_plot_BoseHubbardCorrelated_NormalizedITE.sh` | submits the plot script as one PBS job (`WALLTIME` 0:30:00, `MEM` 4GB, `PPN` 1) |
 
 ## Usage (from the repo root, on the login node)
@@ -210,23 +211,23 @@ diagnostics only.
     DRYRUN=1 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6     # show what would be submitted
     bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6              # submit t/U = 0.02, 0.06, ..., 0.30 × μ/U = 0, 0.2, ..., 1.6
     TS="0.05 0.1" MUS="0.2 0.4 0.6" bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6
-    R=0.5 MAXD=32 MAXITER=1000 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6
+    R=0.5 DELTA=0.3 OMEGA=0.5 MAXD=32 MAXITER=1000 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6
 
     # afterwards, with the same run parameters (they set the run tag): observables, one job per point ...
     DRYRUN=1 bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 6
     bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 6
     N_SAMPLES=10000 bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 6   # more words where sampled
-    R=0.5 MAXD=32 bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 6
+    R=0.5 DELTA=0.3 OMEGA=0.5 MAXD=32 bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 6
     # ... then, once those jobs have finished, the plot job
     bash hpc/submit_plot_BoseHubbardCorrelated_NormalizedITE.sh 6
-    R=0.5 MAXD=32 bash hpc/submit_plot_BoseHubbardCorrelated_NormalizedITE.sh 6
+    R=0.5 DELTA=0.3 OMEGA=0.5 MAXD=32 bash hpc/submit_plot_BoseHubbardCorrelated_NormalizedITE.sh 6
 
 Run parameters (environment, defaults set in the submit scripts; the Julia scripts have none and require them all):
-`U` (1.0), `R` (0.0, the correlation r), `NMAX` (4), `DTAU` (0.05), `MAXD` (16), `MAXITER` (500), `CONVTOL` (1e-8),
+`U` (1.0), `R` (0.0, the correlation r), `DELTA` (0.2, Δ), `OMEGA` (0.5, Ω), `NMAX` (4), `DTAU` (0.05), `MAXD` (16), `MAXITER` (500), `CONVTOL` (1e-8),
 `CROSS_WIDTH` (32), `DATA_DIR` ($VSC_DATA/data). Job resources as for the Bose-Hubbard sweep (`WALLTIME`, `MEM`, `PPN`,
 `JULIA_THREADS`, `BLAS_THREADS`, `CLUSTER`, `JULIA`); `benchmark_BoseHubbard_NormalizedITE.sh` at the same L, `NMAX`
 and `MAXD` gives a good estimate (4 instead of 2 sectors per site makes a step somewhat slower). Grid: `TS`, `MUS` (the
-strong values t/U and μ/U). Observables: ρ and \|⟨a⟩\|² = (1/L) Σᵢ ⟨aᵢ⟩² are exact disorder averages; `N_SAMPLES` applies to the entropy only (1000, disorder words are enumerated exactly if ∏ᵢ qᵢ ≤
+mean values t/U and μ/U). Observables: ρ and \|⟨a⟩\|² = (1/L) Σᵢ ⟨aᵢ⟩² are exact disorder averages; `N_SAMPLES` applies to the entropy only (1000, disorder words are enumerated exactly if ∏ᵢ qᵢ ≤
 `N_SAMPLES`, qᵢ the number of sectors of site i), job resources `WALLTIME` (1:00:00), `MEM` (8GB), `PPN` (4), and
 `TS`/`MUS` to restrict the points (default: every stored state); `FORCE=1` recomputes every point. A point is
 (re)computed only if its `mu<μ>_obs.csv` is missing, unreadable or of an older format (no `S_inhom`), older than the state (the point was rerun), or its
@@ -237,7 +238,7 @@ Bose-Hubbard plot script. Unconverged points are marked with open circles, grid 
 ## Data layout
 
     $DATA_DIR/BoseHubbardCorrelated_NormalizedITE/
-      U1.0_r0.0_nmax4_dtau0.05_D16/             run tag: U, r, nmax, Δτ, maxD
+      U1.0_r0.0_Delta0.2_Omega0.5_nmax4_dtau0.05_D16/   run tag: U, r, Δ, Ω, nmax, Δτ, maxD
         L6/
           t0.0200/
             mu0.0000.jld2
@@ -259,5 +260,5 @@ Bose-Hubbard plot script. Unconverged points are marked with open circles, grid 
 | `ψ` | final `FiniteDisorderMPS` |
 | `info` | per-step diagnostics (NamedTuple of arrays), e.g. `Es`, `ϵsconv`, `bond_dimensions`, `residual_max` |
 | `converged`, `nsteps` | whether `ϵ_conv ≤ convtol` was reached, and the number of steps |
-| `params` | `L, t, μ, U, r, nmax, ps, Δτ, maxD, maxiter, convtol, cross_width` (rebuild the model with `random_bose_hubbard([t/3, t], [U], [μ/3, μ]; nmax)`, `ps` the 4 sector probabilities) |
+| `params` | `L, t, μ, U, r, Δ, Ω, nmax, ps, Δτ, maxD, maxiter, convtol, cross_width` (rebuild the model with `random_bose_hubbard([t*(1-Ω), t*(1+Ω)], [U], [μ-Δ, μ+Δ]; nmax)`, `ps` the 4 sector probabilities) |
 | `meta` | wall time, timings (`TimerOutput` as a Dict), git commit and dirty flag, Julia version, host, threads, date |

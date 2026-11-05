@@ -5,12 +5,12 @@
 #   bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6                    # submit the default (t, μ) grid for L = 6
 #   DRYRUN=1 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6           # only print what would be submitted
 #   TS="0.05 0.1" MUS="0.2 0.4 0.6" bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6
-#   R=0.5 MAXD=32 MAXITER=1000 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6
+#   R=0.5 DELTA=0.3 OMEGA=0.5 MAXD=32 MAXITER=1000 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6
 #   MAXITER=4000 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6       # rerun the unconverged points with more steps
 #   FORCE=1 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6            # resubmit every point, also those that are done
 #   PPN=4 JULIA_THREADS=1 BLAS_THREADS=4 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6
 #
-# Run parameters (U, R, NMAX, DTAU, MAXD, MAXITER, CONVTOL, CROSS_WIDTH, DATA_DIR) and their defaults are set below;
+# Run parameters (U, R, DELTA, OMEGA, NMAX, DTAU, MAXD, MAXITER, CONVTOL, CROSS_WIDTH, DATA_DIR) and their defaults are set below;
 # override them from the caller's environment. They are written into every job script,
 # hpc/BoseHubbardCorrelated_NormalizedITE.jl has no defaults of its own.
 # A point is only submitted if it has no stored state (run), or if its stored state is not converged for this CONVTOL
@@ -29,13 +29,15 @@ set -euo pipefail
 
 L="${1:?usage: bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh <L>}"
 
-# (t/U, μ/U) grid of the strong values (the weak ones are t/3 and μ/3), formatted as %.4f in the file names
+# (t/U, μ/U) grid of the mean values (disorder values t(1±OMEGA) and μ±DELTA), formatted as %.4f in the file names
 TS="${TS:-$(LC_ALL=C seq 0.02 0.02 0.30)}"
 MUS="${MUS:-$(LC_ALL=C seq 0 0.1 1.6)}"
 
-# Run parameters (U, R, NMAX, DTAU, MAXD set the run tag)
+# Run parameters (U, R, DELTA, OMEGA, NMAX, DTAU, MAXD set the run tag)
 export U="${U:-1.0}"
 export R="${R:-0.0}"   # correlation of hopping and potential: P = (1±R)/4
+export DELTA="${DELTA:-0.0}"   # potential disorder: μ ± DELTA
+export OMEGA="${OMEGA:-0.0}"   # hopping disorder: t(1 ± OMEGA), 0 ≤ OMEGA ≤ 1
 export NMAX="${NMAX:-4}"
 export DTAU="${DTAU:-0.05}"
 export MAXD="${MAXD:-16}"
@@ -91,9 +93,9 @@ for t in $TS; do
 cd \$PBS_O_WORKDIR
 module purge
 echo "PBS: \$PBS_JOBID"
-echo "Correlated Bose-Hubbard normalized ITE: L = $L, t = $t, μ = $mu, r = $R"
+echo "Correlated Bose-Hubbard normalized ITE: L = $L, t = $t, μ = $mu, r = $R, Δ = $DELTA, Ω = $OMEGA"
 echo "Job started at : \$(date)"
-export U=$U R=$R NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD
+export U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD
 export MAXITER=$MAXITER CONVTOL=$CONVTOL CROSS_WIDTH=$CROSS_WIDTH DATA_DIR="$DATA_DIR"
 export BLAS_THREADS=$BLAS_THREADS
 $JULIA --project=. --threads=$JULIA_THREADS -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
