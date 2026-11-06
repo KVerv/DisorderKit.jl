@@ -37,11 +37,11 @@ export DATA_DIR="${DATA_DIR:-${VSC_DATA:-.}/data}"
 export N_SAMPLES="${N_SAMPLES:-1000}"   # disorder words are enumerated exactly if ∏ᵢ qᵢ ≤ N_SAMPLES, else sampled
 # Sites excluded at each end for S_bstd = 𝔼_w[std_k S_w(k)] over the bulk bonds k = N_EDGE+1..L-N_EDGE-1 (needs
 # L ≥ 2 N_EDGE + 3; 0 = all bonds). Points whose observables were computed with another N_EDGE are recomputed.
-export N_EDGE="${N_EDGE:-1}"
+export N_EDGE="${N_EDGE:-2}"
 
 # Resources per job
 WALLTIME="${WALLTIME:-0:15:00}"
-MEM="${MEM:-8GB}"
+MEM="${MEM:-6GB}"
 PPN="${PPN:-4}"
 CLUSTER="${CLUSTER:-skiddo}"
 JULIA="${JULIA:-$HOME/.juliaup/bin/julia +1.12.6}"
