@@ -2,7 +2,8 @@
 # hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl (submitted with hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh):
 # it reads the per-point files t<t>/mu<μ>_obs.csv, computes the compressibility κ = dρ/dμ (along μ at fixed t) and plots,
 # in one figure over (t/U, μ/U), κ, the coefficient of variation of the bond-averaged entropy
-# CV = S_bstd/S_avg = 𝔼_w[std_k S_w(k)] / 𝔼_w[mean_k S_w(k)], the density ρ and the MI/SF/BG phase classification.
+# CV = S_bstd/S_avg = 𝔼_w[std_k S_w(k)] / 𝔼_w[mean_k S_w(k)], the quasicondensate density |⟨a⟩|², the density ρ,
+# the bond-averaged entropy std S_bstd = 𝔼_w[std_k S_w(k)] and the MI/SF/BG phase classification.
 # t and μ are the mean values, the disorder values are t(1±Ω) and μ±Δ. No state is loaded, so the script is fast and
 # can run on the login node.
 #
@@ -140,11 +141,11 @@ open(csv, "w") do io
 end
 println("Saved $csv")
 
-# Figure: 2×2 panels over (t/U, μ/U): κ, CV = S_bstd/S_avg, ρ and the phase classification; unconverged points are
-# marked with open circles, points without a result with crosses
+# Figure: 2×3 panels over (t/U, μ/U): κ, CV = S_bstd/S_avg, |⟨a⟩|² (top), ρ, S_bstd and the phase classification
+# (bottom); unconverged points are marked with open circles, points without a result with crosses
 set_theme!(theme_latexfonts())
-fig = Figure(backgroundcolor = :white, fontsize = 30, size = (2200, 1700))
-Label(fig[0, 1:4], L"$L=%$L$, $r=%$r$, $t(1\pm%$Ω_str)$, $μ\pm%$Δ_str$, $D=%$maxD$, $κ_\mathrm{tol}=%$κtol$, $\mathrm{CV}_\mathrm{tol}=%$cvtol$";
+fig = Figure(backgroundcolor = :white, fontsize = 30, size = (3200, 1700))
+Label(fig[0, 1:6], L"$L=%$L$, $r=%$r$, $t(1\pm%$Ω_str)$, $μ\pm%$Δ_str$, $D=%$maxD$, $κ_\mathrm{tol}=%$κtol$, $\mathrm{CV}_\mathrm{tol}=%$cvtol$";
       fontsize = 36)
 unconv = [(ts[i], μs[j]) for i in eachindex(ts), j in eachindex(μs) if hasdata[i, j] && !converged[i, j]]
 function markpoints!(ax, circlecolor)
@@ -154,7 +155,9 @@ function markpoints!(ax, circlecolor)
 end
 panels = [(κs, L"κ = dρ/dμ", :viridis, (1, 1)),
           (ratios, L"\mathrm{CV} = \mathbb{E}_w[\mathrm{std}_k S_w(k)] / \overline{S}", :inferno, (1, 2)),
-          (ρs, L"ρ", :cividis, (2, 1))]
+          (φs, L"|\langle a\rangle|^2", :plasma, (1, 3)),
+          (ρs, L"ρ", :cividis, (2, 1)),
+          (Sbstds, L"\mathbb{E}_w[\mathrm{std}_k S_w(k)]", :magma, (2, 2))]
 for (M, label, cmap, (row, col)) in panels
     ax = Axis(fig[row, 2col-1]; xlabel = L"t/U", ylabel = L"μ/U", title = label)
     finite = filter(isfinite, M[hasdata])
@@ -166,10 +169,10 @@ end
 
 # Phase classification: MI / SF / BG / unclassified per point, white where there is no result
 phasecolors = [:white, :royalblue, :orange, :forestgreen, :gray70]   # no result, MI, SF, BG, unclassified
-axp = Axis(fig[2, 3]; xlabel = L"t/U", ylabel = L"μ/U", title = L"\mathrm{phase}")
+axp = Axis(fig[2, 5]; xlabel = L"t/U", ylabel = L"μ/U", title = L"\mathrm{phase}")
 heatmap!(axp, ts, μs, phases; colormap = cgrad(phasecolors, 5; categorical = true), colorrange = (-0.5, 4.5))
 markpoints!(axp, :black)
-Legend(fig[2, 4], [PolyElement(color = c, strokecolor = :black, strokewidth = 1) for c in phasecolors[2:end]],
+Legend(fig[2, 6], [PolyElement(color = c, strokecolor = :black, strokewidth = 1) for c in phasecolors[2:end]],
        ["MI", "SF", "BG", "uncl."])
 
 mkpath("plots")
