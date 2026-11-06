@@ -203,7 +203,7 @@ diagnostics only.
 | `sweep_BoseHubbardCorrelated_NormalizedITE.sh` | submits one PBS job per (t, μ) for a given L, skipping points that already have a result |
 | `observables_BoseHubbardCorrelated_NormalizedITE.jl` | one point (L, t, μ): computes ρ and \|⟨a⟩\|² exactly (`expectation_value`), S̄ and Var[S] per bond (enumerated or sampled words), their chain averages and the homogeneity `S_inhom` = Var_k[S̄(k)] from the stored state and writes them to `mu<μ>_obs.csv`; `--status` only reports whether that is needed |
 | `submit_observables_BoseHubbardCorrelated_NormalizedITE.sh` | submits one PBS job per (t, μ) with a state whose observables are missing, older than the state, or sampled with fewer than `N_SAMPLES` words |
-| `plot_BoseHubbardCorrelated_NormalizedITE.jl` | reads only the `mu<μ>_obs.csv` files, computes κ = dρ/dμ, prints the table, saves the combined `observables.csv` and plots one figure with four panels over (t/U, μ/U): κ, the coefficient of variation CV = 𝔼_w[std_k S_w(k)]/S̄ of the bond-averaged entropy, ρ and the MI/SF/BG classification (`KAPPA_TOL`, `CV_TOL`) |
+| `plot_BoseHubbardCorrelated_NormalizedITE.jl` | reads only the `mu<μ>_obs.csv` files, computes κ = dρ/dμ, prints the table, saves the combined `observables.csv` and plots one figure with six panels over (t/U, μ/U): κ, the coefficient of variation CV = 𝔼_w[std_k S_w(k)]/S̄ of the bond-averaged entropy, the quasicondensate density \|⟨a⟩\|², ρ, the bond-averaged std 𝔼_w[std_k S_w(k)] and the MI/SF/BG classification from κ and \|⟨a⟩\|² (`KAPPA_TOL`, `A2_TOL`) |
 | `submit_plot_BoseHubbardCorrelated_NormalizedITE.sh` | submits the plot script as one PBS job (`WALLTIME` 0:30:00, `MEM` 4GB, `PPN` 1) |
 
 ## Usage (from the repo root, on the login node)
