@@ -444,17 +444,25 @@ function average_entanglement_entropy(ρ::FiniteDisorderMPS, k::Int; kwargs...)
     return Ss[k], Ss_err[k], Ss_var[k]
 end
 
-# Per sample w: the mean S̄_w and standard deviation σ_w of S_w(k) across the bonds k = 1..L-1. Returns the averages over
-# n_samples sampled words of S̄_w and σ_w, with their standard errors: (𝔼[S̄_w], err, 𝔼[σ_w], err). As in
-# average_entanglement_entropy, if there are at most n_samples words they are all enumerated (exact, zero errors)
+# Per sample w: the mean S̄_w and standard deviation σ_w of S_w(k) across the bonds k ∈ bonds (nothing: all bonds
+# k = 1..L-1). Returns the averages over n_samples sampled words of S̄_w and σ_w, with their standard errors:
+# (𝔼[S̄_w], err, 𝔼[σ_w], err). As in average_entanglement_entropy, if there are at most n_samples words they are all
+# enumerated (exact, zero errors)
 function bond_averaged_entanglement_entropy(ρ::FiniteDisorderMPS; n_samples::Int = 1000,
-                                            rng::AbstractRNG = Random.default_rng(), charges = nothing)
+                                            rng::AbstractRNG = Random.default_rng(), charges = nothing,
+                                            bonds = nothing)
+    if !isnothing(bonds)
+        L = length(ρ.ps)
+        all(k -> 1 <= k <= L-1, bonds) || throw(ArgumentError("bonds $bonds outside 1:$(L-1)"))
+        length(bonds) >= 2 || throw(ArgumentError("at least two bonds are needed for a standard deviation, got $bonds"))
+    end
+    entropies(word) = (S_w = conditional_entanglement_entropy(ρ, word; charges); isnothing(bonds) ? S_w : S_w[bonds])
     if prod(float.(length.(ρ.ps))) <= n_samples
         S_mean, S_std = 0.0, 0.0
         for word in ProgressBar(Iterators.product(eachindex.(ρ.ps)...))
             w = prod(ρ.ps[i][p] for (i, p) in enumerate(word))
             iszero(w) && continue
-            S_w = conditional_entanglement_entropy(ρ, collect(word); charges)
+            S_w = entropies(collect(word))
             S_mean += w * mean(S_w)
             S_std += w * std(S_w)
         end
@@ -464,7 +472,7 @@ function bond_averaged_entanglement_entropy(ρ::FiniteDisorderMPS; n_samples::In
     S_means = zeros(Float64, n_samples)
     S_stds = zeros(Float64, n_samples)
     for n in ProgressBar(1:n_samples)
-        S_w = conditional_entanglement_entropy(ρ, sample_word(rng, ρ.ps); charges)
+        S_w = entropies(sample_word(rng, ρ.ps))
         S_means[n] = mean(S_w)
         S_stds[n] = std(S_w)
     end

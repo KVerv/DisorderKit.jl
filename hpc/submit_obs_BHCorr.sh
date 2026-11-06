@@ -12,7 +12,8 @@
 #
 # By default every point with a state t<t>/mu<μ>.jld2 under the L<L> folder is considered; TS and MUS (the mean values
 # t/U and μ/U, formatted as %.4f) restrict them.
-# Run parameters (U, R, DELTA, OMEGA, NMAX, DTAU, MAXD, DATA_DIR, N_SAMPLES) and their defaults are set below; override them from the
+#   N_EDGE=2 bash hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh 8   # S_bstd without 2 sites at each end
+# Run parameters (U, R, DELTA, OMEGA, NMAX, DTAU, MAXD, DATA_DIR, N_SAMPLES, N_EDGE) and their defaults are set below; override them from the
 # caller's environment. They are written into every job script,
 # hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl has no defaults of its own.
 # Results: <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/t<t>/mu<μ>_obs.csv
@@ -34,6 +35,9 @@ export DTAU="${DTAU:-0.05}"
 export MAXD="${MAXD:-16}"
 export DATA_DIR="${DATA_DIR:-${VSC_DATA:-.}/data}"
 export N_SAMPLES="${N_SAMPLES:-1000}"   # disorder words are enumerated exactly if ∏ᵢ qᵢ ≤ N_SAMPLES, else sampled
+# Sites excluded at each end for S_bstd = 𝔼_w[std_k S_w(k)] over the bulk bonds k = N_EDGE+1..L-N_EDGE-1 (needs
+# L ≥ 2 N_EDGE + 3; 0 = all bonds). Points whose observables were computed with another N_EDGE are recomputed.
+export N_EDGE="${N_EDGE:-1}"
 
 # Resources per job
 WALLTIME="${WALLTIME:-0:15:00}"
@@ -101,9 +105,9 @@ for p in "${points[@]}"; do
 cd \$PBS_O_WORKDIR
 module purge
 echo "PBS: \$PBS_JOBID"
-echo "Correlated Bose-Hubbard observables: L = $L, t = $t, μ = $mu, run tag $tag, N_SAMPLES = $N_SAMPLES"
+echo "Correlated Bose-Hubbard observables: L = $L, t = $t, μ = $mu, run tag $tag, N_SAMPLES = $N_SAMPLES, N_EDGE = $N_EDGE"
 echo "Job started at : \$(date)"
-export U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR="$DATA_DIR" N_SAMPLES=$N_SAMPLES
+export U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR="$DATA_DIR" N_SAMPLES=$N_SAMPLES N_EDGE=$N_EDGE
 $rmcmd
 $JULIA --project=. --threads=$PPN -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 $JULIA --project=. --threads=$PPN $script $L $t $mu
@@ -126,4 +130,4 @@ EOF
     submitted=$((submitted + 1))
 done
 
-echo "L = $L, N_SAMPLES = $N_SAMPLES: $submitted job(s) $([ "${DRYRUN:-0}" = "1" ] && echo "to submit" || echo "submitted"), $uptodate up to date, $nostate without a state"
+echo "L = $L, N_SAMPLES = $N_SAMPLES, N_EDGE = $N_EDGE: $submitted job(s) $([ "${DRYRUN:-0}" = "1" ] && echo "to submit" || echo "submitted"), $uptodate up to date, $nostate without a state"

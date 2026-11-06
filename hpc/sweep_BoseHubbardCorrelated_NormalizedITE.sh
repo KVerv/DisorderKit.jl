@@ -42,7 +42,7 @@ export NMAX="${NMAX:-4}"
 export DTAU="${DTAU:-0.05}"
 export MAXD="${MAXD:-16}"
 export MAXITER="${MAXITER:-2000}"
-export CONVTOL="${CONVTOL:-1e-8}"
+export CONVTOL="${CONVTOL:-1e-6}"
 export CROSS_WIDTH="${CROSS_WIDTH:-32}"
 export DATA_DIR="${DATA_DIR:-${VSC_DATA:-.}/data}"
 
