@@ -6,3 +6,6 @@ data
 logs
 disorder_itebd
 docs
+__pycache__/
+*.pyc
+hpc/condor/condor.local.env

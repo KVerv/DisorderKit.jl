@@ -24,15 +24,17 @@
 #   DTAU, MAXD, DATA_DIR (the same as for the sweep, so the run tag matches), N_SAMPLES (for the entropy only: disorder
 #   words are enumerated exactly if ∏ᵢ qᵢ ≤ N_SAMPLES, qᵢ the number of sectors of site i, else N_SAMPLES words are sampled),
 #   N_EDGE (sites excluded at each end for S_bstd)
+# Optional: OBS_VERSION, a version stamp of this script (the condor scripts pass `git hash-object` of it), stored in
+#   the obs_version column, so observables computed with an older version of the script are recomputed
 #
 # Input:  <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/t<t>/mu<μ>.jld2
 # Output: <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/t<t>/mu<μ>_obs.csv, columns
-#   t_over_U, mu_over_U, rho, a2, varS_avg, S_avg, S_inhom, S_bstd, S_bstd_err, n_edge, n_samples, exact, nsteps, eps_conv, converged, S_1..S_{L-1},
+#   t_over_U, mu_over_U, rho, a2, varS_avg, S_avg, S_inhom, S_bstd, S_bstd_err, n_edge, obs_version, n_samples, exact, nsteps, eps_conv, converged, S_1..S_{L-1},
 #   varS_1..varS_{L-1} (n_samples and exact refer to the entropy)
 #
 # The observables are (re)computed only if (status compute)
 #   - there is no readable observables file, or it is of an older format (no S_bstd or n_edge column), or
-#   - its n_edge differs from N_EDGE, or
+#   - its n_edge differs from N_EDGE, or OBS_VERSION is set and its obs_version differs, or
 #   - the state is newer than the observables file (the point was rerun), or
 #   - the stored words were sampled (exact = false) and N_SAMPLES is larger than the stored n_samples.
 # Exactly enumerated points are never recomputed for a larger N_SAMPLES.
@@ -65,6 +67,7 @@ run_tag = "U$(U_str)_r$(r_str)_Delta$(Δ_str)_Omega$(Ω_str)_nmax$(nmax)_dtau$(d
 data_root = param("DATA_DIR")
 n_samples = parse(Int, param("N_SAMPLES"))
 n_edge = parse(Int, param("N_EDGE"))
+obs_version = get(ENV, "OBS_VERSION", "")
 n_edge >= 0 || error("N_EDGE = $n_edge must be ≥ 0")
 L >= 2n_edge + 3 || error("N_EDGE = $n_edge leaves fewer than 2 bulk bonds for L = $L (need L ≥ 2 N_EDGE + 3)")
 bulk_bonds = n_edge+1:L-n_edge-1
@@ -82,11 +85,12 @@ function read_row(file)
     return Dict(String(h) => String(v) for (h, v) in zip(header, row))
 end
 
-function status(statefile, obsfile, n_samples, n_edge)
+function status(statefile, obsfile, n_samples, n_edge, obs_version)
     isfile(statefile) || return "nostate"
     row = read_row(obsfile)
     (isnothing(row) || !all(k -> haskey(row, k), ("n_samples", "exact", "S_inhom", "S_bstd", "n_edge"))) && return "compute"
     tryparse(Int, row["n_edge"]) == n_edge || return "compute"
+    isempty(obs_version) || get(row, "obs_version", "") == obs_version || return "compute"
     mtime(statefile) > mtime(obsfile) && return "compute"
     stored = tryparse(Int, row["n_samples"])
     exact = tryparse(Bool, row["exact"])
@@ -94,7 +98,7 @@ function status(statefile, obsfile, n_samples, n_edge)
     return !exact && n_samples > stored ? "compute" : "uptodate"
 end
 
-st = status(statefile, obsfile, n_samples, n_edge)
+st = status(statefile, obsfile, n_samples, n_edge, obs_version)
 if status_only
     println(run_tag)
     println(statefile)
@@ -139,10 +143,10 @@ S_avg = mean(S[bulk_bonds])
 S_inhom = mean(abs2, S[bulk_bonds] .- S_avg)
 
 # Write to a temporary file and move it in place, so an interrupted job never leaves a partial result
-header = ["t_over_U", "mu_over_U", "rho", "a2", "varS_avg", "S_avg", "S_inhom", "S_bstd", "S_bstd_err", "n_edge", "n_samples", "exact", "nsteps", "eps_conv",
+header = ["t_over_U", "mu_over_U", "rho", "a2", "varS_avg", "S_avg", "S_inhom", "S_bstd", "S_bstd_err", "n_edge", "obs_version", "n_samples", "exact", "nsteps", "eps_conv",
           "converged",
           ("S_$k" for k in eachindex(S))..., ("varS_$k" for k in eachindex(S_var))...]
-row = Any[parse(Float64, t_str) / U, parse(Float64, μ_str) / U, ρ, φ, varS, S_avg, S_inhom, S_bstd, S_bstd_err, n_edge, n_samples, exact, nsteps, ϵconv, converged,
+row = Any[parse(Float64, t_str) / U, parse(Float64, μ_str) / U, ρ, φ, varS, S_avg, S_inhom, S_bstd, S_bstd_err, n_edge, obs_version, n_samples, exact, nsteps, ϵconv, converged,
        S..., S_var...]
 tmp = obsfile * ".tmp"
 open(tmp, "w") do io

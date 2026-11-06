@@ -4,109 +4,144 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Condor Sweeps</title>
+<script>
+  // Theme before first paint: "auto" (OS), "light" or "dark", remembered per browser
+  try { const t = localStorage.getItem("theme"); if (t === '"light"' || t === '"dark"') document.documentElement.dataset.theme = JSON.parse(t); } catch {}
+</script>
 <style>
 :root {
-  --bg: #f4f4f2; --surface: #fcfcfb; --surface-2: #f0efec; --ink: #0b0b0b; --ink-2: #52514e; --ink-3: #8a8983;
+  color-scheme: light;
+  --bg: #f4f4f2; --surface: #fcfcfb; --surface-2: #f0efec; --surface-3: #e8e7e1; --field: #ffffff;
+  --ink: #0b0b0b; --ink-2: #52514e; --ink-3: #8a8983;
   --line: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,0.10);
-  --accent: #2a78d6; --accent-ink: #ffffff;
+  --shadow: 0 1px 2px rgba(11,11,11,.04), 0 4px 16px rgba(11,11,11,.04);
+  --header: rgba(252,252,251,.85);
+  --accent: #2a78d6; --accent-ink: #ffffff; --accent-soft: rgba(42,120,214,.12);
   --s-none: #e8e7e1; --s-idle: #9ec5f2; --s-running: #2a78d6; --s-held: #d03b3b; --s-failed: #d03b3b;
   --s-unconverged: #fab219; --s-done: #0ca30c;
   --on-none: #52514e; --on-idle: #0b0b0b; --on-running: #ffffff; --on-held: #ffffff; --on-failed: #ffffff;
   --on-unconverged: #0b0b0b; --on-done: #ffffff;
-  --danger: #d03b3b; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --danger: #d03b3b; --warn: #fab219; --good: #0ca30c;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
-    --bg: #121211; --surface: #1a1a19; --surface-2: #232321; --ink: #f0efec; --ink-2: #c3c2b7; --ink-3: #8a8983;
-    --line: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10); --accent: #3987e5;
-    --s-none: #2c2c2a; --s-idle: #2f5d93; --s-running: #3987e5; --on-none: #c3c2b7; --on-idle: #f0efec;
+    --bg: #0f0f0e; --surface: #1a1a19; --surface-2: #232321; --surface-3: #2c2c2a; --field: #141413;
+    --ink: #f0efec; --ink-2: #c3c2b7; --ink-3: #8a8983;
+    --line: rgba(255,255,255,.08); --axis: #383835; --ring: rgba(255,255,255,0.10);
+    --shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 8px 24px rgba(0,0,0,.35);
+    --header: rgba(20,20,19,.82);
+    --accent: #3987e5; --accent-soft: rgba(57,135,229,.18);
+    --s-none: #2c2c2a; --s-idle: #2f5d93; --s-running: #3987e5; --on-none: #8a8983; --on-idle: #f0efec;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #121211; --surface: #1a1a19; --surface-2: #232321; --ink: #f0efec; --ink-2: #c3c2b7; --ink-3: #8a8983;
-  --line: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10); --accent: #3987e5;
-  --s-none: #2c2c2a; --s-idle: #2f5d93; --s-running: #3987e5; --on-none: #c3c2b7; --on-idle: #f0efec;
+  --bg: #0f0f0e; --surface: #1a1a19; --surface-2: #232321; --surface-3: #2c2c2a; --field: #141413;
+  --ink: #f0efec; --ink-2: #c3c2b7; --ink-3: #8a8983;
+  --line: rgba(255,255,255,.08); --axis: #383835; --ring: rgba(255,255,255,0.10);
+  --shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 8px 24px rgba(0,0,0,.35);
+  --header: rgba(20,20,19,.82);
+  --accent: #3987e5; --accent-soft: rgba(57,135,229,.18);
+  --s-none: #2c2c2a; --s-idle: #2f5d93; --s-running: #3987e5; --on-none: #8a8983; --on-idle: #f0efec;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
 button, input, select { font: inherit; color: inherit; }
-header { display: flex; align-items: center; gap: 12px; padding: 10px 20px; background: var(--surface); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-header h1 { font-size: 16px; margin: 0 8px 0 0; font-weight: 600; }
-select, input[type=text], input[type=number] { background: var(--surface); border: 1px solid var(--axis); border-radius: 6px; padding: 5px 8px; min-width: 0; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 6px; border: 2px solid var(--bg); }
+* { scrollbar-color: var(--surface-3) transparent; }
+header { position: sticky; top: 0; z-index: 15; display: flex; align-items: center; gap: 12px; padding: 10px 20px; background: var(--header); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+header h1 { font-size: 16px; margin: 0 8px 0 0; font-weight: 650; letter-spacing: -.01em; display: flex; align-items: center; gap: 8px; }
+header h1 .logo { width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(135deg, var(--s-done) 0 50%, var(--accent) 50% 100%); }
+select, input[type=text], input[type=number] { background: var(--field); border: 1px solid var(--axis); border-radius: 7px; padding: 5px 8px; min-width: 0; }
+select:hover, input:hover { border-color: var(--ink-3); }
 select { max-width: 520px; }
 .spacer { flex: 1; }
 .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); }
-.dot.ok { background: var(--s-done); } .dot.bad { background: var(--danger); }
-.btn { border: 1px solid var(--axis); background: var(--surface); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
-.btn:hover:not(:disabled) { background: var(--surface-2); }
-.btn:disabled { opacity: .45; cursor: default; }
+.dot.ok { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 25%, transparent); } .dot.bad { background: var(--danger); }
+.seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
+.seg button { border: 0; background: none; padding: 3px 9px; border-radius: 6px; cursor: pointer; font-size: 12px; color: var(--ink-2); }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.btn { border: 1px solid var(--axis); background: var(--surface-2); border-radius: 7px; padding: 6px 12px; cursor: pointer; white-space: nowrap; transition: background .12s, border-color .12s; }
+.btn:hover:not(:disabled) { background: var(--surface-3); }
+.btn:disabled { opacity: .4; cursor: default; }
 .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-.btn.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
-.btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
-.btn.small { padding: 3px 8px; font-size: 12px; }
-main { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; padding: 16px 20px 120px; }
-@media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
-.card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); margin: 0 0 10px; font-weight: 600; }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.1); background: var(--accent); }
+.btn.danger { color: var(--danger); background: transparent; border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+.btn.small { padding: 3px 9px; font-size: 12px; }
+.btn .count { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px; border-radius: 9px; background: rgba(255,255,255,.25); font-size: 11px; font-variant-numeric: tabular-nums; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) 390px; gap: 16px; padding: 16px 20px 120px; max-width: 1600px; margin: 0 auto; }
+@media (max-width: 1050px) { main { grid-template-columns: 1fr; } }
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; box-shadow: var(--shadow); }
+.card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); margin: 0 0 12px; font-weight: 650; display: flex; align-items: center; gap: 8px; }
 .tagline { font-family: var(--mono); font-size: 12px; color: var(--ink-2); word-break: break-all; }
-.banner { margin: 12px 20px 0; padding: 10px 14px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); display: none; }
+.banner { margin: 12px auto 0; max-width: 1560px; padding: 10px 14px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); display: none; }
 /* summary */
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-.chip { display: inline-flex; align-items: center; gap: 8px; padding: 4px 10px 4px 4px; border-radius: 999px; background: var(--surface-2); font-size: 13px; }
-.chip .sw { width: 20px; height: 20px; border-radius: 5px; display: inline-grid; place-items: center; font-size: 12px; font-weight: 700; }
+.chip { display: inline-flex; align-items: center; gap: 8px; padding: 4px 11px 4px 4px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); font-size: 13px; }
+.chip .sw { width: 20px; height: 20px; border-radius: 6px; display: inline-grid; place-items: center; font-size: 12px; font-weight: 700; position: relative; }
 .chip b { font-variant-numeric: tabular-nums; }
 .progress { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; display: flex; gap: 2px; margin: 4px 0 6px; }
 .progress span { height: 100%; }
 .progress-label { font-size: 12px; color: var(--ink-2); display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.stats { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); margin-top: 6px; }
+.stats b { color: var(--ink); font-variant-numeric: tabular-nums; }
 /* grid */
 .gridwrap { margin-top: 14px; overflow-x: auto; }
 .grid { display: grid; gap: 2px; align-items: center; justify-items: center; width: max-content; }
-.cell { border-radius: 4px; display: grid; place-items: center; font-weight: 700; cursor: pointer; position: relative; border: none; padding: 0; }
+.cell { border-radius: 4px; display: grid; place-items: center; font-weight: 700; cursor: pointer; position: relative; border: none; padding: 0; transition: transform .08s; }
+.cell:hover { transform: scale(1.08); z-index: 2; }
 .cell:hover, .cell.sel { outline: 2px solid var(--ink); outline-offset: 1px; z-index: 1; }
 .cell.none { background: var(--s-none); color: var(--on-none); }
 .cell.idle { background: var(--s-idle); color: var(--on-idle); }
 .cell.running { background: var(--s-running); color: var(--on-running); animation: pulse 1.6s ease-in-out infinite; }
 .cell.held { background: var(--s-held); color: var(--on-held); }
-.cell.failed { background: var(--s-failed); color: var(--on-failed); background-image: repeating-linear-gradient(45deg, transparent 0 4px, rgba(0,0,0,.18) 4px 6px); }
+.cell.failed { background: var(--s-failed); color: var(--on-failed); background-image: repeating-linear-gradient(45deg, transparent 0 4px, rgba(0,0,0,.2) 4px 6px); }
 .cell.unconverged { background: var(--s-unconverged); color: var(--on-unconverged); }
 .cell.done { background: var(--s-done); color: var(--on-done); }
 .cell .obs { position: absolute; top: 2px; right: 2px; width: 6px; height: 6px; border-radius: 50%; }
 .cell .obs.done { background: currentColor; }
 .cell .obs.idle, .cell .obs.running { border: 1.5px solid currentColor; }
+.cell .obs.outdated { background: var(--warn); box-shadow: 0 0 0 1.5px var(--surface); }
 .cell .obs.held, .cell .obs.failed { background: var(--danger); box-shadow: 0 0 0 1.5px var(--surface); }
+.cell .remote { position: absolute; bottom: 2px; left: 2px; width: 6px; height: 2px; border-radius: 1px; background: currentColor; opacity: .75; }
 @keyframes pulse { 50% { filter: brightness(1.25); } }
-@media (prefers-reduced-motion: reduce) { .cell.running { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .cell.running { animation: none; } .cell { transition: none; } }
 .tick { font-size: 11px; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.axislabel { font-size: 12px; color: var(--ink-2); }
+.axislabel { font-size: 12px; color: var(--ink-3); }
 .empty { color: var(--ink-2); padding: 30px 0; text-align: center; }
-.tip { position: fixed; pointer-events: none; z-index: 20; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 6px 20px rgba(0,0,0,.18); border-radius: 8px; padding: 8px 10px; font-size: 12px; max-width: 320px; display: none; }
-.tip .h { font-weight: 600; margin-bottom: 4px; }
-.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 12.5px; }
-.kv dt { color: var(--ink-2); } .kv dd { margin: 0; font-variant-numeric: tabular-nums; word-break: break-word; }
+.tip { position: fixed; pointer-events: none; z-index: 20; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 10px 30px rgba(0,0,0,.3); border-radius: 10px; padding: 9px 11px; font-size: 12px; max-width: 340px; display: none; }
+.tip .h { font-weight: 650; margin-bottom: 4px; display: flex; gap: 6px; align-items: center; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 12.5px; margin: 0; }
+.kv dt { color: var(--ink-3); } .kv dd { margin: 0; font-variant-numeric: tabular-nums; word-break: break-word; }
+/* plot */
+.plot img { width: 100%; height: auto; border-radius: 8px; background: #ffffff; display: block; }
+.plot .placeholder { border: 1px dashed var(--axis); border-radius: 8px; padding: 28px; text-align: center; color: var(--ink-2); }
 /* side */
-aside { display: flex; flex-direction: column; gap: 16px; }
-.action { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
-.action:first-of-type { border-top: none; }
+.action { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.action:first-of-type { border-top: none; padding-top: 0; }
 .action .desc { grid-column: 1 / -1; font-size: 12px; color: var(--ink-2); }
 .action .name { font-weight: 600; }
+.step { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700; margin-right: 6px; }
 details { border-top: 1px solid var(--line); padding: 6px 0; }
 details:first-of-type { border-top: none; }
 summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 .fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 6px 0 4px; }
-.fields.two { grid-template-columns: repeat(2, 1fr); }
 .fields label { display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; color: var(--ink-2); }
 .fields label.wide { grid-column: 1 / -1; }
 .fields input { width: 100%; }
 .check { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); grid-column: 1 / -1; }
-.hint { font-size: 12px; color: var(--ink-2); margin: 4px 0 0; }
-pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--surface-2); border-radius: 6px; padding: 8px; max-height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 8px 0 0; }
+.hint { font-size: 12px; color: var(--ink-3); margin: 4px 0 0; }
+pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field); border: 1px solid var(--line); border-radius: 8px; padding: 8px; max-height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 10px 0 0; }
 /* task drawer */
-.drawer { position: fixed; left: 0; right: 0; bottom: 0; background: var(--surface); border-top: 1px solid var(--line); box-shadow: 0 -6px 20px rgba(0,0,0,.12); z-index: 10; display: none; }
+.drawer { position: fixed; left: 0; right: 0; bottom: 0; background: var(--surface); border-top: 1px solid var(--line); box-shadow: 0 -10px 30px rgba(0,0,0,.25); z-index: 10; display: none; }
 .drawer .bar { display: flex; align-items: center; gap: 10px; padding: 8px 20px; }
-.drawer pre { margin: 0; padding: 8px 20px 12px; height: 240px; overflow: auto; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+.drawer pre { margin: 0; padding: 8px 20px 12px; height: 240px; overflow: auto; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-all; background: var(--field); border-top: 1px solid var(--line); }
 .drawer.min pre { display: none; }
 .spin { width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: rot .8s linear infinite; display: inline-block; }
 @keyframes rot { to { transform: rotate(360deg); } }
@@ -115,43 +150,53 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--surface
 </head>
 <body>
 <header>
-  <h1>Condor sweeps</h1>
-  <select id="sweepSel" title="Sweeps found on the access point"></select>
+  <h1><span class="logo"></span>Condor sweeps</h1>
+  <select id="sweepSel" title="Sweeps on the laptop, on the access point or in the queue"></select>
   <span class="tagline" id="tagNow"></span>
   <span class="spacer"></span>
   <span class="badge" id="updated"></span>
   <button class="btn small" id="refreshBtn" title="Query the cluster now">Refresh</button>
+  <span class="seg" id="themeSeg" role="group" aria-label="Theme">
+    <button data-theme="auto" title="Follow the system">Auto</button><button data-theme="light">Light</button><button data-theme="dark">Dark</button>
+  </span>
   <span class="badge"><span class="dot" id="connDot"></span><span id="connText">connecting…</span></span>
 </header>
 <div class="banner" id="banner"></div>
 
 <main>
-  <section class="card" id="gridCard">
-    <h2>Sweep · Correlated Bose-Hubbard, <span id="Lnow"></span></h2>
-    <div class="chips" id="chips"></div>
-    <div class="progress" id="progress"></div>
-    <div class="progress-label" id="progressLabel"></div>
-    <div class="gridwrap"><div id="grid"></div></div>
-  </section>
+  <div class="col">
+    <section class="card" id="gridCard">
+      <h2>Sweep · correlated Bose-Hubbard, <span id="Lnow"></span></h2>
+      <div class="chips" id="chips"></div>
+      <div class="progress" id="progress"></div>
+      <div class="progress-label" id="progressLabel"></div>
+      <div class="stats" id="stats"></div>
+      <div class="gridwrap"><div id="grid"></div></div>
+    </section>
+    <section class="card plot">
+      <h2>Phase diagram <span class="muted" id="plotTime" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h2>
+      <div id="plotBox"></div>
+    </section>
+  </div>
 
-  <aside>
+  <aside class="col">
     <section class="card">
       <h2>Actions</h2>
-      <div class="action"><span class="name">Submit / continue sweep</span>
+      <div class="action"><span class="name"><span class="step">1</span>Submit / continue sweep</span>
         <span><button class="btn small" data-act="preview">Preview</button> <button class="btn primary" data-act="submit">Submit</button></span>
-        <span class="desc">Pulls the latest code on the access point, then submits every grid point that has no result yet. Points that are done or already queued are skipped. To rerun unconverged points, raise MAXITER first.</span></div>
+        <span class="desc">Pulls the latest code on the access point, then submits every grid point without a result on the laptop or the access point. Each job runs the simulation and its observables. Points that are done or already queued are skipped; to rerun unconverged points, raise MAXITER first.</span></div>
+      <div class="action"><span class="name"><span class="step">2</span>Gather data</span>
+        <button class="btn primary" data-act="gather">Gather<span class="count" id="gatherCount">0</span></button>
+        <span class="desc" id="gatherDesc">Copies finished results to the laptop, then deletes them and their logs on the access point. A file is only deleted after it was copied completely.</span></div>
+      <div class="action"><span class="name"><span class="step">3</span>Phase-diagram plot</span>
+        <button class="btn" data-act="plot">Plot</button>
+        <span class="desc">Runs the plot script on the laptop's data (κ, CV, |⟨a⟩|², ρ, S_bstd, phases), using KAPPA_TOL and CV_TOL below.</span></div>
+      <div class="action"><span class="name">Recompute observables</span>
+        <button class="btn" data-act="recompute_obs">Recompute<span class="count" id="obsCount" style="background:var(--surface-3)">0</span></button>
+        <span class="desc">For points whose observables are missing or outdated (changed observables script, or another N_EDGE). Uploads only those states and runs observables-only jobs; the simulation is not rerun. Gather afterwards.</span></div>
       <div class="action"><span class="name">Remove held jobs</span>
         <button class="btn" data-act="remove_held">Remove held</button>
-        <span class="desc">Removes the held jobs of this sweep. Read their log first (click a red point), then press Submit to run them again.</span></div>
-      <div class="action"><span class="name">Observables</span>
-        <button class="btn" data-act="observables">Compute</button>
-        <span class="desc">Submits one observables job for every stored state whose observables are missing or outdated (N_SAMPLES, N_EDGE below).</span></div>
-      <div class="action"><span class="name">Phase-diagram plot</span>
-        <button class="btn" data-act="plot">Plot</button>
-        <span class="desc">Runs the plot script on the access point (κ, CV, |⟨a⟩|², ρ, S_bstd, phases), using KAPPA_TOL and CV_TOL below.</span></div>
-      <div class="action"><span class="name">Gather data</span>
-        <button class="btn primary" data-act="gather">Gather</button>
-        <span class="desc" id="gatherDesc">Copies this sweep's states, observables and plot from the access point to the data/ and plots/ folders on this laptop (only new or changed files).</span></div>
+        <span class="desc">Read their log first (click a red point), then press Submit to run them again.</span></div>
       <div class="action"><span class="name">Cancel sweep</span>
         <button class="btn danger" data-act="remove_all">Remove all jobs</button>
         <span class="desc">Removes every queued, running or held job of this sweep. Stored results are kept.</span></div>
@@ -160,9 +205,9 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--surface
     <section class="card" id="pointCard" style="display:none">
       <h2>Point</h2>
       <dl class="kv" id="pointKv"></dl>
-      <div style="margin-top:10px; display:flex; gap:8px">
-        <button class="btn small" id="logIte">Simulation log</button>
-        <button class="btn small" id="logObs">Observables log</button>
+      <div style="margin-top:12px; display:flex; gap:8px">
+        <button class="btn small" id="logIte">Job log</button>
+        <button class="btn small" id="logObs">Observables-job log</button>
       </div>
       <pre class="log" id="pointLog" style="display:none"></pre>
     </section>
@@ -198,14 +243,6 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--surface
           <label>CROSS_WIDTH <input type="text" id="CROSS_WIDTH" value="32"></label>
           <label class="check"><input type="checkbox" id="FORCE"> FORCE: resubmit every point, also finished ones</label>
         </div></details>
-      <details><summary>Resources per job</summary>
-        <div class="fields">
-          <label>CPUs (sim) <input type="text" id="PPN" value="8"></label>
-          <label>CPUs (obs) <input type="text" id="OBS_PPN" value="4"></label>
-          <label>Memory <input type="text" id="MEM" value="6 G"></label>
-          <label class="wide">Extra requirements <input type="text" id="REQUIREMENTS" placeholder='e.g. cpu_performance > 7'></label>
-          <label class="check"><input type="checkbox" id="NICE" checked> nice_user: only use idle machines</label>
-        </div></details>
       <details><summary>Observables &amp; plot</summary>
         <div class="fields">
           <label>N_SAMPLES <input type="text" id="N_SAMPLES" value="1000"></label>
@@ -213,6 +250,14 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--surface
           <span></span>
           <label>KAPPA_TOL <input type="text" id="KAPPA_TOL" value="0.05"></label>
           <label>CV_TOL <input type="text" id="CV_TOL" value="0.6"></label>
+        </div></details>
+      <details><summary>Resources per job</summary>
+        <div class="fields">
+          <label>CPUs (sweep) <input type="text" id="PPN" value="8"></label>
+          <label>CPUs (obs-only) <input type="text" id="OBS_PPN" value="4"></label>
+          <label>Memory <input type="text" id="MEM" value="6 G"></label>
+          <label class="wide">Extra requirements <input type="text" id="REQUIREMENTS" placeholder='e.g. cpu_performance > 7'></label>
+          <label class="check"><input type="checkbox" id="NICE" checked> nice_user: only use idle machines</label>
         </div></details>
     </section>
   </aside>
@@ -239,7 +284,8 @@ const STATES = [
   ["held", "Held", "!"], ["failed", "Failed", "✕"], ["none", "Not submitted", ""]];
 const LABEL = Object.fromEntries(STATES.map(s => [s[0], s[1]]));
 const GLYPH = Object.fromEntries(STATES.map(s => [s[0], s[2]]));
-const OBS_LABEL = { done: "computed", idle: "queued", running: "running", held: "held", failed: "failed", none: "not computed" };
+const OBS_LABEL = { done: "computed", outdated: "outdated (other script version or N_EDGE)", idle: "queued", running: "running",
+  held: "held", failed: "failed", none: "not computed" };
 const FIELDS = ["L", "t0", "t1", "tstep", "m0", "m1", "mstep", "U", "R", "DELTA", "OMEGA", "NMAX", "DTAU", "MAXD",
   "MAXITER", "CONVTOL", "CROSS_WIDTH", "PPN", "OBS_PPN", "MEM", "REQUIREMENTS", "N_SAMPLES", "N_EDGE", "KAPPA_TOL", "CV_TOL"];
 const CHECKS = ["FORCE", "NICE"];
@@ -247,7 +293,16 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
-let status = null, selected = null, sweeps = [], task = null, taskSeen = 0, polling = null, loading = false;
+let status = null, selected = null, sweeps = [], task = null, taskSeen = 0, loading = false;
+
+// ---- theme
+function setTheme(t) {
+  if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+  store.set("theme", t);
+  document.querySelectorAll("#themeSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.theme === t)));
+}
+document.querySelectorAll("#themeSeg button").forEach(b => b.onclick = () => setTheme(b.dataset.theme));
+setTheme(store.get("theme", "auto"));
 
 // ---- parameters
 function form() {
@@ -272,12 +327,8 @@ function seq(a, b, s) {
   return Array.from({ length: Math.min(n, 400) }, (_, i) => (a + i * s).toFixed(4));
 }
 function current() { const f = form(); return { tag: tagOf(f), L: parseInt(f.L, 10), f }; }
-function saveForm() {
-  const c = current();
-  store.set("form", c.f);
-  store.set(`sweep:${c.tag}:L${c.L}`, c.f);
-}
-function plannedGrid(f) { const ts = seq(f.t0, f.t1, f.tstep), ms = seq(f.m0, f.m1, f.mstep); return { ts, ms }; }
+function saveForm() { const c = current(); store.set("form", c.f); store.set(`sweep:${c.tag}:L${c.L}`, c.f); }
+function plannedGrid(f) { return { ts: seq(f.t0, f.t1, f.tstep), ms: seq(f.m0, f.m1, f.mstep) }; }
 
 // ---- data
 async function api(path, opts) {
@@ -292,16 +343,17 @@ async function loadInfo() {
   try {
     const i = await api("/api/info");
     $("connDot").className = "dot " + (i.connected ? "ok" : "bad");
-    $("connText").textContent = `${i.host}:${i.remote_dir}` + (i.julia ? ` · Julia ${i.julia}` : "");
+    $("connText").textContent = (i.connected ? "connected" : "disconnected") + (i.julia ? ` · Julia ${i.julia}` : "");
+    $("connText").title = i.host;
     const issues = [];
     if (!i.connected) issues.push("No connection to the access point: restart the dashboard (python3 hpc/condor/dashboard/server.py).");
     else {
-      if (!i.repo) issues.push(`No repo in ~/${i.remote_dir} on the access point: clone it there first (see hpc/condor/README.md).`);
+      if (!i.repo) issues.push("No repo in the configured folder on the access point: clone it there first (see hpc/condor/README.md).");
       if (!i.julia) issues.push("Julia (juliaup, Manifest version) not found on the access point: see the one-time setup in hpc/condor/README.md.");
       if (!i.condor) issues.push("condor_q not found on the access point: jobs cannot be queried.");
     }
     banner(issues.join("  "));
-    $("gatherDesc").textContent = `Copies this sweep's states, observables and plot from the access point to ${i.gather_dest}/data and /plots (only new or changed files).`;
+    $("gatherDesc").textContent = `Copies finished results to ${i.gather_dest}/data, then deletes them and their logs on the access point. A file is only deleted after it was copied completely; results of points still in the queue wait.`;
   } catch (e) { $("connDot").className = "dot bad"; $("connText").textContent = "offline"; banner("Dashboard server not reachable: " + e.message); }
 }
 async function loadSweeps() {
@@ -310,7 +362,8 @@ async function loadSweeps() {
 }
 function renderSweepSel() {
   const c = current(), sel = $("sweepSel"), key = `${c.tag}|${c.L}`;
-  const opts = sweeps.map(s => [`${s.tag}|${s.L}`, `L=${s.L} · ${s.tag} · ${s.n_states} states${s.queued ? ` · ${s.queued} in queue` : ""}`]);
+  const opts = sweeps.map(s => [`${s.tag}|${s.L}`, `L=${s.L} · ${s.tag} · ${s.n_states} on laptop` +
+    (s.on_remote ? ` · ${s.on_remote} to gather` : "") + (s.queued ? ` · ${s.queued} in queue` : "")]);
   if (!opts.some(o => o[0] === key)) opts.unshift([key, `L=${c.L} · ${c.tag} · new sweep (from the parameters)`]);
   sel.innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
   sel.value = key;
@@ -321,7 +374,7 @@ async function refresh(fresh) {
   const c = current();
   $("updated").innerHTML = '<span class="spin"></span> updating…';
   try {
-    status = await api(`/api/status?tag=${encodeURIComponent(c.tag)}&L=${c.L}${fresh ? "&fresh=1" : ""}`);
+    status = await api(`/api/status?tag=${encodeURIComponent(c.tag)}&L=${c.L}&n_edge=${encodeURIComponent(c.f.N_EDGE)}${fresh ? "&fresh=1" : ""}`);
     $("updated").textContent = "updated " + new Date(status.time * 1000).toLocaleTimeString();
     if (!$("banner").textContent.startsWith("No ")) banner("");
   } catch (e) {
@@ -335,7 +388,7 @@ async function refresh(fresh) {
 function pointsShown() {
   const c = current(), map = new Map();
   const { ts, ms } = plannedGrid(c.f);
-  for (const t of ts) for (const mu of ms) map.set(`${t}|${mu}`, { t, mu, state: "none", obs: "none" });
+  for (const t of ts) for (const mu of ms) map.set(`${t}|${mu}`, { t, mu, state: "none", obs: "none", where: [] });
   if (status && status.tag === c.tag && status.L === c.L)
     for (const p of status.points) map.set(`${p.t}|${p.mu}`, p);
   return [...map.values()];
@@ -349,29 +402,47 @@ function render() {
   $("gridCount").textContent = `${ts.length} × ${ms.length} = ${ts.length * ms.length} points`;
   const counts = {}; for (const p of pts) counts[p.state] = (counts[p.state] || 0) + 1;
   const obsDone = pts.filter(p => p.obs === "done").length;
-  // chips (they are also the legend)
+  const obsTodo = pts.filter(p => p.has_state && ["none", "outdated", "failed"].includes(p.obs) && !["idle", "running", "held"].includes(p.state)).length;
+  const mine = status && status.tag === c.tag && status.L === c.L;
+  const toGather = mine ? status.to_gather : 0, onLaptop = mine ? status.on_laptop : 0;
   $("chips").innerHTML = STATES.map(([k, l, g]) =>
-    `<span class="chip"><span class="sw cell ${k}" style="animation:none">${g}</span>${l} <b>${counts[k] || 0}</b></span>`).join("") +
-    `<span class="chip"><span class="sw" style="background:var(--surface);position:relative"><span class="cell" style="width:14px;height:14px;background:var(--s-done);color:#fff;position:relative"><span class="obs done" style="position:absolute;top:1px;right:1px;width:5px;height:5px;border-radius:50%;background:currentColor"></span></span></span>Observables <b>${obsDone}</b></span>`;
+    `<span class="chip"><span class="sw cell ${k}" style="animation:none">${g}</span>${l} <b>${counts[k] || 0}</b></span>`).join("");
   const n = pts.length || 1;
   const order = ["done", "unconverged", "running", "idle", "held", "failed"];
   $("progress").innerHTML = order.filter(k => counts[k]).map(k =>
     `<span style="width:${100 * counts[k] / n}%;background:var(--s-${k})" title="${LABEL[k]}: ${counts[k]}"></span>`).join("");
   const finished = (counts.done || 0) + (counts.unconverged || 0);
   $("progressLabel").innerHTML = `<span>${finished} of ${pts.length} points finished (${counts.done || 0} converged)</span>` +
-    `<span>${status && status.clusters && status.clusters.length ? "condor clusters " + status.clusters.join(", ") : "no jobs in the queue"}</span>`;
+    `<span>${mine && status.clusters.length ? "condor clusters " + status.clusters.join(", ") : "no jobs in the queue"}</span>`;
+  $("stats").innerHTML = `<span>On the laptop <b>${onLaptop}</b></span><span>Waiting on the access point <b>${toGather}</b></span>` +
+    `<span>Observables computed <b>${obsDone}</b>${obsTodo ? ` · missing/outdated <b>${obsTodo}</b>` : ""}</span>` +
+    `<span class="muted">corner dot: observables (amber = outdated) · bottom bar: still on the access point</span>`;
+  $("gatherCount").textContent = toGather;
+  $("obsCount").textContent = obsTodo;
   renderGrid(pts);
-  // buttons
+  renderPlot(c);
   const busy = task && !task.done;
   document.querySelectorAll("[data-act]").forEach(b => b.disabled = busy);
   if (!busy) {
-    document.querySelector('[data-act="remove_held"]').disabled = !counts.held;
-    document.querySelector('[data-act="observables"]').disabled = !finished;
-    document.querySelector('[data-act="plot"]').disabled = !obsDone;
-    document.querySelector('[data-act="remove_all"]').disabled = !((counts.idle || 0) + (counts.running || 0) + (counts.held || 0));
-    document.querySelector('[data-act="gather"]').disabled = !finished;
+    const q = (k) => document.querySelector(`[data-act="${k}"]`);
+    q("remove_held").disabled = !counts.held;
+    q("recompute_obs").disabled = !obsTodo;
+    q("plot").disabled = !onLaptop;
+    q("remove_all").disabled = !((counts.idle || 0) + (counts.running || 0) + (counts.held || 0));
+    q("gather").disabled = !toGather;
   }
   if (selected) showPoint(pts.find(p => p.t === selected.t && p.mu === selected.mu) || selected, false);
+}
+let plotKey = "";
+function renderPlot(c) {
+  const mt = status && status.tag === c.tag && status.L === c.L ? status.plot_mtime : null;
+  const key = `${c.tag}|${c.L}|${mt}`;
+  if (key === plotKey) return;
+  plotKey = key;
+  $("plotTime").textContent = mt ? "· made " + new Date(mt * 1000).toLocaleString() : "";
+  $("plotBox").innerHTML = mt
+    ? `<img alt="Phase diagram of ${esc(c.tag)}, L = ${c.L}" src="/api/plot?tag=${encodeURIComponent(c.tag)}&L=${c.L}&v=${mt}">`
+    : `<div class="placeholder">No plot yet. Gather the data, then press <b>Plot</b>.</div>`;
 }
 function renderGrid(pts) {
   const tset = [...new Set(pts.map(p => p.t))].sort((a, b) => a - b);
@@ -379,7 +450,7 @@ function renderGrid(pts) {
   const g = $("grid");
   if (!tset.length) { g.innerHTML = '<div class="empty">No points: set the sweep grid in Parameters.</div>'; return; }
   const avail = $("gridCard").clientWidth - 32 - 70;
-  const fitH = Math.floor((window.innerHeight - 330) / (mset.length + 1)) - 2;   // whole grid visible without scrolling
+  const fitH = Math.floor((window.innerHeight - 360) / (mset.length + 1)) - 2;   // whole grid visible without scrolling
   const size = Math.max(14, Math.min(44, Math.floor(avail / tset.length) - 2, Math.max(fitH, 22)));
   const every = Math.ceil(42 / (size + 2));
   const byKey = new Map(pts.map(p => [`${p.t}|${p.mu}`, p]));
@@ -391,8 +462,9 @@ function renderGrid(pts) {
       if (!p) { html += `<span></span>`; continue; }
       const sel = selected && selected.t === t && selected.mu === mu ? " sel" : "";
       const glyph = size >= 18 ? GLYPH[p.state] : "";
-      const obs = p.obs && p.obs !== "none" && size >= 14 ? `<span class="obs ${p.obs}"></span>` : "";
-      html += `<button class="cell ${p.state}${sel}" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.42)}px" data-t="${t}" data-mu="${mu}" aria-label="t=${t} μ=${mu}: ${LABEL[p.state]}">${glyph}${obs}</button>`;
+      const obs = p.obs && p.obs !== "none" ? `<span class="obs ${p.obs}"></span>` : "";
+      const rem = p.on_remote && !["idle", "running", "held"].includes(p.state) ? `<span class="remote"></span>` : "";
+      html += `<button class="cell ${p.state}${sel}" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.42)}px" data-t="${t}" data-mu="${mu}" aria-label="t=${t} μ=${mu}: ${LABEL[p.state]}">${glyph}${obs}${rem}</button>`;
     }
   });
   html += `<span></span>` + tset.map((t, i) => `<span class="tick">${i % every === 0 ? (+t).toFixed(2) : ""}</span>`).join("");
@@ -412,7 +484,8 @@ function kv(p) {
   if (p.nsteps !== undefined && p.nsteps !== null) rows.push(["Steps", `${p.nsteps} of max ${p.maxiter ?? "?"}`]);
   if (p.job) rows.push(["Job", `${p.job.id}${p.job.host ? " on " + p.job.host.replace(/^slot\d+(_\d+)?@/, "") : ""}${p.job.since && ["idle", "running", "held"].includes(p.state) ? ` · ${since(p.job.since)}` : ""}`]);
   rows.push(["Observables", OBS_LABEL[p.obs] + (p.n_edge !== null && p.n_edge !== undefined && p.obs === "done" ? ` (N_EDGE ${p.n_edge})` : "")]);
-  if (p.mtime) rows.push(["Stored", new Date(p.mtime * 1000).toLocaleString()]);
+  if (p.where && p.where.length) rows.push(["Stored on", p.where.join(" and ")]);
+  if (p.mtime) rows.push(["Computed", new Date(p.mtime * 1000).toLocaleString()]);
   return rows;
 }
 const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -442,7 +515,8 @@ $("grid").addEventListener("mousemove", (e) => {
   if (!el) { tip.style.display = "none"; return; }
   const p = pointsShown().find(q => q.t === el.dataset.t && q.mu === el.dataset.mu);
   if (!p) return;
-  tip.innerHTML = `<div class="h">${LABEL[p.state]}</div><dl class="kv">` + kv(p).slice(2).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("") +
+  tip.innerHTML = `<div class="h"><span class="cell ${p.state}" style="width:14px;height:14px;font-size:9px;animation:none">${GLYPH[p.state]}</span>${LABEL[p.state]}</div><dl class="kv">` +
+    kv(p).slice(2).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("") +
     `</dl><div class="muted" style="margin-top:4px">t/U ${p.t} · μ/U ${p.mu} · click for details</div>`;
   tip.style.display = "block";
   const x = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8), y = Math.min(e.clientY + 14, window.innerHeight - tip.offsetHeight - 8);
@@ -462,27 +536,26 @@ $("logObs").onclick = () => showLog("obs");
 // ---- actions
 function params(action, extra = {}) {
   const c = current(), f = c.f, { ts, ms } = plannedGrid(f);
-  const p = { tag: c.tag, L: String(c.L), U: f.U, R: f.R, DELTA: f.DELTA, OMEGA: f.OMEGA, NMAX: f.NMAX, DTAU: f.DTAU, MAXD: f.MAXD };
+  const p = { tag: c.tag, L: String(c.L), U: f.U, R: f.R, DELTA: f.DELTA, OMEGA: f.OMEGA, NMAX: f.NMAX, DTAU: f.DTAU, MAXD: f.MAXD,
+    N_EDGE: f.N_EDGE };
   if (action === "submit" || action === "preview")
     Object.assign(p, { TS: ts.join(" "), MUS: ms.join(" "), MAXITER: f.MAXITER, CONVTOL: f.CONVTOL, CROSS_WIDTH: f.CROSS_WIDTH,
-      PPN: f.PPN, MEM: f.MEM, REQUIREMENTS: f.REQUIREMENTS, NICE: f.NICE ? "TRUE" : "FALSE", FORCE: f.FORCE ? "1" : "0" });
-  if (action === "observables")
-    Object.assign(p, { N_SAMPLES: f.N_SAMPLES, N_EDGE: f.N_EDGE, PPN: f.OBS_PPN, MEM: f.MEM, REQUIREMENTS: f.REQUIREMENTS, NICE: f.NICE ? "TRUE" : "FALSE" });
+      N_SAMPLES: f.N_SAMPLES, PPN: f.PPN, MEM: f.MEM, REQUIREMENTS: f.REQUIREMENTS, NICE: f.NICE ? "TRUE" : "FALSE", FORCE: f.FORCE ? "1" : "0" });
+  if (action === "recompute_obs")
+    Object.assign(p, { N_SAMPLES: f.N_SAMPLES, PPN: f.OBS_PPN, MEM: f.MEM, REQUIREMENTS: f.REQUIREMENTS, NICE: f.NICE ? "TRUE" : "FALSE" });
   if (action === "plot") Object.assign(p, { KAPPA_TOL: f.KAPPA_TOL, CV_TOL: f.CV_TOL });
-  if (action === "preview") p.DRYRUN = "1";
   return Object.assign(p, extra);
 }
-const TITLES = { submit: "Submit sweep", preview: "Preview (dry run)", remove_held: "Remove held jobs", observables: "Observables",
-  plot: "Plot", gather: "Gather data", remove_all: "Remove all jobs" };
+const TITLES = { submit: "Submit sweep", preview: "Preview (dry run)", remove_held: "Remove held jobs", recompute_obs: "Recompute observables",
+  plot: "Plot (on the laptop)", gather: "Gather data", remove_all: "Remove all jobs" };
 async function runAction(action, extra = {}) {
   const c = current();
   if (action === "remove_all" && !confirm(`Remove every queued, running and held job of\n${c.tag}, L = ${c.L}?`)) return;
   if (action === "submit" && $("FORCE").checked && !confirm("FORCE is on: every point is resubmitted, also the finished ones. Continue?")) return;
   saveForm();
-  const act = action === "preview" ? "submit" : action;
   try {
     const r = await api("/api/action", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: act, params: params(action, extra) }) });
+      body: JSON.stringify({ action, params: params(action, extra) }) });
     task = { id: r.id, action, done: false, extra };
     taskSeen = 0; $("taskLog").textContent = "";
     openDrawer(); pollTask(); render();
@@ -521,8 +594,8 @@ FIELDS.concat(CHECKS).forEach(k => $(k).addEventListener("change", onParamsChang
 $("sweepSel").onchange = () => {
   const [tag, L] = $("sweepSel").value.split("|");
   const saved = store.get(`sweep:${tag}:L${L}`, null);
-  const f = Object.assign(form(), saved || {}, parseTag(tag) || {}, { L });
-  setForm(f); selected = null; $("pointCard").style.display = "none";
+  setForm(Object.assign(form(), saved || {}, parseTag(tag) || {}, { L }));
+  selected = null; $("pointCard").style.display = "none";
   onParamsChanged();
 };
 $("refreshBtn").onclick = () => { refresh(true); loadSweeps(); loadInfo(); };

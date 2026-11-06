@@ -4,12 +4,12 @@
 # Usage (from the repo root):
 #   julia --project=. hpc/condor/sweep_status.jl --list          all sweeps: [{tag, L, n_states, n_obs, mtime}]
 #   julia --project=. hpc/condor/sweep_status.jl <tag> <L>       one sweep:
-#     {tag, L, points: [{t, mu, state, error, converged, eps, nsteps, maxiter, convtol, mtime, obs, n_edge}],
+#     {tag, L, points: [{t, mu, state, error, converged, eps, nsteps, maxiter, convtol, mtime, obs, n_edge, obs_version}],
 #      planned: [[t, mu], ...]}
 # t and mu are the strings of the file names (%.4f). `state` is true if t<t>/mu<μ>.jld2 exists; `error` is set if it
 # cannot be read. `converged` is the stored flag (final ϵ_conv ≤ CONVTOL of that run). `obs` is true if mu<μ>_obs.csv
-# exists, `n_edge` its N_EDGE. `planned` are the points of every points file the condor scripts wrote for this sweep
-# (logs/.../<tag>/L<L>/condor/points_*.txt), so submitted points without a state are part of the grid too.
+# exists, `n_edge` its N_EDGE and `obs_version` the version stamp of the observables script. `planned` are the points
+# of every points file the condor scripts wrote for this sweep (logs/.../<tag>/L<L>/condor/points_*.txt), so submitted points without a state are part of the grid too.
 
 const ROOT = joinpath("data", "BoseHubbardCorrelated_NormalizedITE")
 const LOGROOT = joinpath("logs", "BoseHubbardCorrelated_NormalizedITE")
@@ -39,12 +39,14 @@ function list_sweeps()
     return out
 end
 
-function read_obs_n_edge(file)
+# n_edge and obs_version of an observables file (nothing if missing)
+function read_obs(file)
     lines = filter(!isempty, readlines(file))
-    length(lines) >= 2 || return nothing
+    length(lines) >= 2 || return nothing, nothing
     header, row = split(lines[1], ','), split(lines[2], ',')
-    k = findfirst(==("n_edge"), header)
-    return isnothing(k) || k > length(row) ? nothing : tryparse(Int, row[k])
+    col(name) = (k = findfirst(==(name), header); isnothing(k) || k > length(row) ? nothing : String(row[k]))
+    n_edge = col("n_edge")
+    return isnothing(n_edge) ? nothing : tryparse(Int, n_edge), col("obs_version")
 end
 
 function sweep_status(tag, L)
@@ -72,7 +74,7 @@ function sweep_status(tag, L)
         end
         obsfile = replace(file, r"\.jld2$" => "_obs.csv")
         p["obs"] = isfile(obsfile)
-        p["n_edge"] = p["obs"] ? read_obs_n_edge(obsfile) : nothing
+        p["n_edge"], p["obs_version"] = p["obs"] ? read_obs(obsfile) : (nothing, nothing)
         push!(points, p)
     end
     planned = Set{Tuple{String, String}}()

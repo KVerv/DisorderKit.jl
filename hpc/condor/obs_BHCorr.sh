@@ -1,8 +1,10 @@
 #!/bin/bash
 #
 # HTCondor version of hpc/submit_obs_BHCorr.sh: one hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl job per
-# point (t, μ) that has a stored state and whose observables are missing or outdated, all in one condor cluster. Run on
-# the access point (the access point) from the repo root, with the same run parameters as the sweep, so the run tag matches:
+# point (t, μ) that has a stored state and whose observables are missing or outdated, all in one condor cluster. The
+# sweep jobs already compute the observables; this is for recomputing them (other N_EDGE or N_SAMPLES, or a changed
+# observables script) without rerunning the ITE. Run on the access point from the repo root (normally through the
+# dashboard, which first uploads the needed states), with the same run parameters as the sweep:
 #   bash hpc/condor/obs_BHCorr.sh 6
 #   DRYRUN=1 bash hpc/condor/obs_BHCorr.sh 6                  # only print the points and the submit file
 #   N_SAMPLES=10000 bash hpc/condor/obs_BHCorr.sh 6           # more words where sampled
@@ -10,9 +12,11 @@
 #   R=0.5 DELTA=0.3 OMEGA=0.5 MAXD=32 bash hpc/condor/obs_BHCorr.sh 6
 #   TS="0.06 0.10" MUS="0.2 0.4" bash hpc/condor/obs_BHCorr.sh 6   # only these points
 #   FORCE=1 bash hpc/condor/obs_BHCorr.sh 6                   # recompute every point with a state
+#   POINTS="0.1000 0.3000,0.1200 0.3000" bash hpc/condor/obs_BHCorr.sh 6   # only these points
 #
 # Which points are submitted is decided by hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl --status (nostate,
-# uptodate or compute, see its header). Every job gets Project.toml, Manifest.toml, src/, the script and the point's
+# uptodate or compute, see its header; OBS_VERSION = git hash-object of the script, so a changed script recomputes).
+# Every job gets Project.toml, Manifest.toml, src/, the script and the point's
 # state t<t>/mu<μ>.jld2; its mu<μ>_obs.csv is transferred back next to the state under data/.
 # Logs, the points file and the submit file: logs/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/condor/obs/
 # Plot afterwards: bash hpc/condor/plot_BHCorr.sh <L>
@@ -34,6 +38,7 @@ export DATA_DIR=data
 export N_SAMPLES="${N_SAMPLES:-1000}"   # disorder words are enumerated exactly if ∏ᵢ qᵢ ≤ N_SAMPLES, else sampled
 # Sites excluded at each end for S_avg, S_inhom and S_bstd (bulk bonds k = N_EDGE+1..L-N_EDGE-1, needs L ≥ 2 N_EDGE + 3)
 export N_EDGE="${N_EDGE:-2}"
+[ "$L" -ge $((2 * N_EDGE + 3)) ] || { echo "N_EDGE = $N_EDGE leaves fewer than 2 bulk bonds for L = $L (need L ≥ 2 N_EDGE + 3)"; exit 1; }
 
 # Resources per job
 PPN="${PPN:-4}"
@@ -42,10 +47,11 @@ MEM="${MEM:-6 G}"
 DISK="${DISK:-2 G}"
 REQUIREMENTS="${REQUIREMENTS:-}"
 NICE="${NICE:-TRUE}"
-UG_NAME="${UG_NAME:-<login>}"
+UG_NAME="${UG_NAME:-$USER}"
 JULIA="${JULIA:-$HOME/.juliaup/bin/julia +$(sed -n 's/^julia_version = "\(.*\)"/\1/p' Manifest.toml)}"   # Julia on the access point (juliaup, Manifest version)
 
 script=hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl
+export OBS_VERSION=$(git hash-object "$script" 2> /dev/null || echo "")
 
 # Run tag and L folder (t and μ are irrelevant for them)
 mapfile -t paths < <($JULIA --startup-file=no $script --status "$L" 0 0)
@@ -54,9 +60,15 @@ folder="$DATA_DIR/BoseHubbardCorrelated_NormalizedITE/$tag/L$L"
 logdir="logs/BoseHubbardCorrelated_NormalizedITE/$tag/L$L/condor/obs"
 [ -d "$folder" ] || { echo "no results in $folder"; exit 1; }
 
-# Candidate points (t, μ): from TS × MUS if given, else every stored state
+# Candidate points (t, μ): POINTS if given, else TS × MUS if given, else every stored state
 candidates=()
-if [ -n "${TS:-}" ] || [ -n "${MUS:-}" ]; then
+if [ -n "${POINTS:-}" ]; then
+    IFS=',' read -ra pairs <<< "$POINTS"
+    for p in "${pairs[@]}"; do
+        read -r t mu <<< "$p"
+        [ -n "${mu:-}" ] && candidates+=("$(LC_ALL=C printf "%.4f %.4f" "$t" "$mu")")
+    done
+elif [ -n "${TS:-}" ] || [ -n "${MUS:-}" ]; then
     for t in ${TS:-$(ls "$folder" | sed -n 's/^t\(-\{0,1\}[0-9.]*\)$/\1/p')}; do
         t=$(LC_ALL=C printf "%.4f" "$t")
         for mu in ${MUS:-$(ls "$folder/t$t" 2> /dev/null | sed -n 's/^mu\(-\{0,1\}[0-9.]*\)\.jld2$/\1/p')}; do
@@ -127,7 +139,7 @@ UG_NAME = $UG_NAME
 executable          = hpc/condor/run_julia.sh
 transfer_executable = TRUE
 arguments           = "$script $L \$(t) \$(mu)"
-environment         = "HOME=/tmp/\$(UG_NAME) JULIA_THREADS=$JULIA_THREADS U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR=$DATA_DIR N_SAMPLES=$N_SAMPLES N_EDGE=$N_EDGE"
+environment         = "HOME=/tmp/\$(UG_NAME) JULIA_THREADS=$JULIA_THREADS U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR=$DATA_DIR N_SAMPLES=$N_SAMPLES N_EDGE=$N_EDGE OBS_VERSION=$OBS_VERSION"
 
 should_transfer_files   = TRUE
 preserve_relative_paths = TRUE

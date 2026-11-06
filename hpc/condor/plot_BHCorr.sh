@@ -2,7 +2,7 @@
 #
 # Phase-diagram plot of a correlated Bose-Hubbard run on the HTCondor pool: runs
 # hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl (κ, table, combined CSV and heatmaps from the mu<μ>_obs.csv files) for
-# a given L. Run on the access point (the access point) from the repo root after the jobs of hpc/condor/obs_BHCorr.sh have
+# a given L. Run on the access point from the repo root after the jobs of hpc/condor/obs_BHCorr.sh have
 # finished, with the same run parameters as the sweep, so the run tag matches:
 #   bash hpc/condor/plot_BHCorr.sh 6                          # directly on the access point (only reads small CSVs)
 #   KAPPA_TOL=0.02 CV_TOL=0.2 bash hpc/condor/plot_BHCorr.sh 6
@@ -38,7 +38,7 @@ fi
 
 MEM="${MEM:-4 G}"
 NICE="${NICE:-TRUE}"
-UG_NAME="${UG_NAME:-<login>}"
+UG_NAME="${UG_NAME:-$USER}"
 
 # Run tag (via the simulation script's --path mode, t and μ are irrelevant for it) and the observables files
 mapfile -t paths < <($JULIA --startup-file=no hpc/BoseHubbardCorrelated_NormalizedITE.jl --path "$L" 0 0)

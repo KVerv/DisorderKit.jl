@@ -206,7 +206,7 @@ diagnostics only.
 | `plot_BoseHubbardCorrelated_NormalizedITE.jl` | reads only the `mu<μ>_obs.csv` files, computes κ = dρ/dμ, prints the table, saves the combined `observables.csv` and plots one figure with six panels over (t/U, μ/U): κ, the coefficient of variation CV = 𝔼_w[std_k S_w(k)]/S̄ of the bond-averaged entropy (both over the bulk bonds, `N_EDGE`), the quasicondensate density \|⟨a⟩\|², ρ, the bond-averaged std 𝔼_w[std_k S_w(k)] and the MI/SF/BG classification from κ and CV (`KAPPA_TOL`, `CV_TOL`) |
 | `submit_plot_BoseHubbardCorrelated_NormalizedITE.sh` | submits the plot script as one PBS job (`WALLTIME` 0:30:00, `MEM` 4GB, `PPN` 1) |
 
-On the QuantumGhent HTCondor pool (access point the access point) use the condor versions of the sweep, observables and plot
+On an HTCondor pool use the condor versions of the sweep, observables and plot
 scripts instead: see [condor/README.md](condor/README.md).
 
 ## Usage (from the repo root, on the login node)
