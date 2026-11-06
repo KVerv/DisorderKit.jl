@@ -3,25 +3,37 @@
 # Executable of the HTCondor jobs of hpc/condor/*.sh: runs one Julia script of this repo in the job sandbox, which holds
 # the transferred Project.toml, Manifest.toml, src/ and the script (at their relative paths, preserve_relative_paths).
 #   run_julia.sh <script.jl> <args...>
-# Environment (set by the submit file): HOME (/tmp/<UGent login>: Julia keeps its depot in $HOME/.julia, so packages
-# installed by an earlier job on the same machine are reused), JULIA_THREADS (default 1), and the script's own variables.
+# Environment (set by the submit file): HOME (/tmp/<UGent login>), JULIA_THREADS (default 1), and the script's own variables.
+#
+# Julia: the version the Manifest was resolved with (julia_version in Manifest.toml; override with JULIA_VERSION), run
+# through juliaup. The first job on a machine installs juliaup and that version in $HOME/.juliaup; later jobs reuse it
+# (and the package depot $HOME/.julia). Jobs on the same machine install one at a time (flock on $HOME/.juliaup.lock).
 # Only Pkg.instantiate() is run, no Pkg.precompile(): the script's `using` precompiles just the packages it needs.
 
 set -euo pipefail
 
-JULIA="${JULIA:-/usr/local/bin/julia}"
-
 echo "Host: $(hostname), started at $(date)"
 echo "Sandbox: $(pwd)"
 echo "Arguments: $*"
-version=$($JULIA --startup-file=no -e 'print(VERSION)')
-echo "Julia $version ($JULIA), HOME = $HOME"
-manifest=$(sed -n 's/^julia_version = "\(.*\)"/\1/p' Manifest.toml)
-if [ "${version%.*}" != "${manifest%.*}" ]; then
-    echo "WARNING: node Julia $version, Manifest.toml was resolved with Julia $manifest" >&2
-fi
 
+manifest=$(sed -n 's/^julia_version = "\(.*\)"/\1/p' Manifest.toml)
+version="${JULIA_VERSION:-$manifest}"
+juliaup="$HOME/.juliaup/bin/juliaup"
 mkdir -p "$HOME"
-$JULIA --project=. --startup-file=no -e 'using Pkg; Pkg.instantiate()'
-$JULIA --project=. --startup-file=no --threads="${JULIA_THREADS:-1}" "$@"
+(
+    flock 9
+    if [ ! -x "$juliaup" ]; then
+        echo "Installing juliaup in $HOME/.juliaup"
+        curl -fsSL https://install.julialang.org | sh -s -- --yes --add-to-path=no --default-channel "$version"
+    fi
+    if ! "$juliaup" status | grep -q " $version "; then
+        echo "Installing Julia $version"
+        "$juliaup" add "$version"
+    fi
+) 9> "$HOME/.juliaup.lock"
+JULIA=("$HOME/.juliaup/bin/julia" "+$version")
+echo "Julia $("${JULIA[@]}" --startup-file=no -e 'print(VERSION)') (juliaup), HOME = $HOME"
+
+"${JULIA[@]}" --project=. --startup-file=no -e 'using Pkg; Pkg.instantiate()'
+"${JULIA[@]}" --project=. --startup-file=no --threads="${JULIA_THREADS:-1}" "$@"
 echo "Ended at $(date)"

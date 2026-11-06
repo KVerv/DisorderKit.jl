@@ -52,7 +52,7 @@ DISK="${DISK:-2 G}"
 REQUIREMENTS="${REQUIREMENTS:-}"         # extra requirements, e.g. "cpu_performance > 7"
 NICE="${NICE:-TRUE}"                     # nice_user: only use idle slots
 UG_NAME="${UG_NAME:-<login>}"           # UGent login: HOME=/tmp/$UG_NAME on the execute node
-JULIA="${JULIA:-julia}"                  # Julia on the access point, for --status (project instantiated there)
+JULIA="${JULIA:-$HOME/.juliaup/bin/julia +$(sed -n 's/^julia_version = "\(.*\)"/\1/p' Manifest.toml)}"   # Julia on the access point (juliaup, Manifest version)
 
 script=hpc/BoseHubbardCorrelated_NormalizedITE.jl
 points=()

@@ -14,9 +14,10 @@ General condor notes of the group: `docs/condor_notes-main/`.
 ## How it works
 
 The pool has no shared filesystem. Every job gets `Project.toml`, `Manifest.toml`, `src/`, its Julia script and (for
-observables) its state file, runs in a sandbox on the execute node with `/usr/local/bin/julia` (`requirements =
-has_julia`, `HOME=/tmp/<UGent login>`, so the Julia depot `/tmp/<login>/.julia` is reused by later jobs on the same
-machine), and only its result file is transferred back. `DATA_DIR` is always the relative path `data`, so with
+observables) its state file, runs in a sandbox on the execute node and only its result file is transferred back.
+Julia is the version the Manifest was resolved with (1.12.6), through juliaup: the first job on a machine installs
+juliaup and that version in `/tmp/<UGent login>/.juliaup` (`HOME=/tmp/<login>`); later jobs on that machine reuse it
+and the package depot `/tmp/<login>/.julia`. `DATA_DIR` is always the relative path `data`, so with
 `preserve_relative_paths` a result lands at the same path in the repo on the access point:
 
     data/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/t<t>/mu<μ>.jld2        (sweep)
@@ -29,16 +30,15 @@ the same as on the VSC (`--status` of the Julia scripts).
 ## One-time setup on the access point
 
     ssh -p <port> <login>@<access point>
+    curl -fsSL https://install.julialang.org | sh -s -- --yes   # juliaup in ~/.juliaup (the access point' own Julia is 1.11)
+    source ~/.bashrc
+    juliaup add 1.12.6
     git clone https://github.com/KVerv/DisorderKit.jl.git && cd DisorderKit.jl
-    julia --project=. -e 'using Pkg; Pkg.instantiate()'     # for the --status checks and the plot on the access point
+    julia +1.12.6 --project=. -e 'using Pkg; Pkg.instantiate()'   # for the --status checks and the plot on the access point
 
-Check the pool and the node Julia (the Manifest is resolved with Julia 1.12.6; `run_julia.sh` warns in the job's
-`.err` if the node Julia is another minor version):
+The scripts call `~/.juliaup/bin/julia +<Manifest version>` on the access point (override with `JULIA=...`). Check the pool:
 
     condor_status -constraint has_julia -af:h machine cpus memory cpu_performance | sort -u
-    condor_submit -interactive request_cpus=1 request_memory=2G     # then: /usr/local/bin/julia --version
-
-If `julia` is not on the PATH of the access point, set `JULIA=/path/to/julia` for the scripts below.
 
 ## Workflow (on the access point, from the repo root)
 
@@ -77,5 +77,6 @@ Parameters (environment) are those of the PBS scripts: `TS`, `MUS`, `U`, `R`, `D
 
 A job that crashes does not produce its result file, and condor then puts it on hold ("failed to transfer output").
 Read its `.err` in the logs folder, fix the cause, `condor_rm` the held jobs and run the script again: the point has no
-result, so it is submitted again. The first job on a machine installs the packages in `/tmp/<login>/.julia` and is
-therefore slower; jobs on the same machine at the same time wait for each other's precompilation.
+result, so it is submitted again. The first job on a machine installs juliaup, Julia and the packages in
+`/tmp/<login>` and is therefore slower; jobs on the same machine at the same time wait for each other (a lock for the
+Julia install, Julia's own locks for precompilation).

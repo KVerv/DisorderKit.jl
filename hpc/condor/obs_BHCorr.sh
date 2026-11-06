@@ -43,7 +43,7 @@ DISK="${DISK:-2 G}"
 REQUIREMENTS="${REQUIREMENTS:-}"
 NICE="${NICE:-TRUE}"
 UG_NAME="${UG_NAME:-<login>}"
-JULIA="${JULIA:-julia}"
+JULIA="${JULIA:-$HOME/.juliaup/bin/julia +$(sed -n 's/^julia_version = "\(.*\)"/\1/p' Manifest.toml)}"   # Julia on the access point (juliaup, Manifest version)
 
 script=hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl
 

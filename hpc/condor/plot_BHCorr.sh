@@ -28,7 +28,7 @@ export MAXD="${MAXD:-16}"
 export DATA_DIR=data
 export KAPPA_TOL="${KAPPA_TOL:-0.05}"
 export CV_TOL="${CV_TOL:-0.6}"
-JULIA="${JULIA:-julia}"
+JULIA="${JULIA:-$HOME/.juliaup/bin/julia +$(sed -n 's/^julia_version = "\(.*\)"/\1/p' Manifest.toml)}"   # Julia on the access point (juliaup, Manifest version)
 
 script=hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl
 
