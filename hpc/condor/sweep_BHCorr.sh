@@ -12,8 +12,9 @@
 #   PPN=4 REQUIREMENTS="cpu_performance > 7" bash hpc/condor/sweep_BHCorr.sh 6
 #
 # Which points are submitted is decided as in the PBS sweep, by hpc/BoseHubbardCorrelated_NormalizedITE.jl --status
-# (run: no state, rerun: unconverged and MAXITER/CONVTOL improved, uptodate: skipped). Points that are still queued or
-# running are not detected: do not run the sweep again before the previous cluster has finished (condor_q).
+# (run: no state, rerun: unconverged and MAXITER/CONVTOL improved, uptodate: skipped). Points that still have a job in
+# the queue (idle, running or held) are skipped too, so running the sweep again never submits a point twice. The jobs
+# carry the attributes BHC_stage = "ite", BHC_tag, BHC_L, BHC_t and BHC_mu (used for this and by the dashboard).
 #
 # The pool has no shared filesystem: every job gets Project.toml, Manifest.toml, src/ and the script, runs them with
 # hpc/condor/run_julia.sh on the node Julia, and only its state file is transferred back, to the same relative path
@@ -55,16 +56,30 @@ UG_NAME="${UG_NAME:-<login>}"           # UGent login: HOME=/tmp/$UG_NAME on the
 JULIA="${JULIA:-$HOME/.juliaup/bin/julia +$(sed -n 's/^julia_version = "\(.*\)"/\1/p' Manifest.toml)}"   # Julia on the access point (juliaup, Manifest version)
 
 script=hpc/BoseHubbardCorrelated_NormalizedITE.jl
+mapfile -t paths < <($JULIA --startup-file=no $script --path "$L" 0 0)
+tag="${paths[0]}"
+
+# Points of this sweep that still have a job in the queue ("t mu" per line)
+active=""
+if command -v condor_q > /dev/null 2>&1; then
+    active=$(condor_q "$USER" -constraint "BHC_stage =?= \"ite\" && BHC_tag =?= \"$tag\" && BHC_L =?= $L" \
+             -af BHC_t BHC_mu 2> /dev/null || true)
+fi
+
 points=()
 rerun=0
 skipped=0
-tag=""
+queued=0
 for t in $TS; do
     t=$(LC_ALL=C printf "%.4f" "$t")
     for mu in $MUS; do
         mu=$(LC_ALL=C printf "%.4f" "$mu")
+        if [ -n "$active" ] && grep -qx "$t $mu" <<< "$active"; then
+            echo "queued L=$L t=$t μ=$mu (job in the queue)"
+            queued=$((queued + 1))
+            continue
+        fi
         mapfile -t st < <($JULIA --project=. --startup-file=no $script --status "$L" "$t" "$mu")
-        tag="${st[0]}"
         if [ "${st[2]}" = "uptodate" ] && [ "${FORCE:-0}" != "1" ]; then
             echo "skip   L=$L t=$t μ=$mu (${st[3]})"
             skipped=$((skipped + 1))
@@ -78,7 +93,7 @@ for t in $TS; do
     done
 done
 if [ "${#points[@]}" = "0" ]; then
-    echo "L = $L: nothing to submit, $skipped skipped (done)"
+    echo "L = $L: nothing to submit, $skipped skipped (done), $queued already queued"
     exit 0
 fi
 
@@ -111,6 +126,13 @@ request_disk   = $DISK
 requirements   = $reqs
 rank           = cpu_performance
 
+# Labels for matching jobs to sweep points (hpc/condor/*.sh, dashboard)
++BHC_stage = "ite"
++BHC_tag   = "$tag"
++BHC_L     = $L
++BHC_t     = "\$(t)"
++BHC_mu    = "\$(mu)"
+
 output = $logdir/\$(JOBNAME)_t\$(t)_mu\$(mu)_\$(Cluster).out
 error  = $logdir/\$(JOBNAME)_t\$(t)_mu\$(mu)_\$(Cluster).err
 log    = $logdir/\$(Cluster).log
@@ -122,11 +144,11 @@ EOF
 if [ "${DRYRUN:-0}" = "1" ]; then
     printf '%s\n' "${points[@]}" | sed 's/^/point  /'
     echo "$submit" | sed 's/^/       | /'
-    echo "L = $L: ${#points[@]} job(s) to submit ($rerun rerun), $skipped skipped (done)"
+    echo "L = $L: ${#points[@]} job(s) to submit ($rerun rerun), $skipped skipped (done), $queued already queued"
 else
     mkdir -p "$logdir"
     printf '%s\n' "${points[@]}" > "$pointsfile"
     echo "$submit" > "$submitfile"
     condor_submit "$submitfile"
-    echo "L = $L: ${#points[@]} job(s) submitted ($rerun rerun), $skipped skipped (done); submit file $submitfile"
+    echo "L = $L: ${#points[@]} job(s) submitted ($rerun rerun), $skipped skipped (done), $queued already queued; submit file $submitfile"
 fi

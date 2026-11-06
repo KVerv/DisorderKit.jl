@@ -72,11 +72,24 @@ else
     done
 fi
 
+# Points of this sweep that still have an observables job in the queue ("t mu" per line): skipped
+active=""
+if command -v condor_q > /dev/null 2>&1; then
+    active=$(condor_q "$USER" -constraint "BHC_stage =?= \"obs\" && BHC_tag =?= \"$tag\" && BHC_L =?= $L" \
+             -af BHC_t BHC_mu 2> /dev/null || true)
+fi
+
 points=()
 uptodate=0
+queued=0
 nostate=0
 for p in "${candidates[@]}"; do
     read -r t mu <<< "$p"
+    if [ -n "$active" ] && grep -qx "$t $mu" <<< "$active"; then
+        echo "queued L=$L t=$t μ=$mu (job in the queue)"
+        queued=$((queued + 1))
+        continue
+    fi
     mapfile -t paths < <($JULIA --startup-file=no $script --status "$L" "$t" "$mu")
     obs="${paths[2]}"
     st="${paths[3]}"
@@ -96,7 +109,7 @@ for p in "${candidates[@]}"; do
     points+=("$t $mu")
 done
 if [ "${#points[@]}" = "0" ]; then
-    echo "L = $L: nothing to submit, $uptodate up to date, $nostate without a state"
+    echo "L = $L: nothing to submit, $uptodate up to date, $queued already queued, $nostate without a state"
     exit 0
 fi
 
@@ -129,6 +142,13 @@ request_disk   = $DISK
 requirements   = $reqs
 rank           = cpu_performance
 
+# Labels for matching jobs to sweep points (hpc/condor/*.sh, dashboard)
++BHC_stage = "obs"
++BHC_tag   = "$tag"
++BHC_L     = $L
++BHC_t     = "\$(t)"
++BHC_mu    = "\$(mu)"
+
 output = $logdir/\$(JOBNAME)_t\$(t)_mu\$(mu)_\$(Cluster).out
 error  = $logdir/\$(JOBNAME)_t\$(t)_mu\$(mu)_\$(Cluster).err
 log    = $logdir/\$(Cluster).log
@@ -140,11 +160,11 @@ EOF
 if [ "${DRYRUN:-0}" = "1" ]; then
     printf '%s\n' "${points[@]}" | sed 's/^/point  /'
     echo "$submit" | sed 's/^/       | /'
-    echo "L = $L, N_SAMPLES = $N_SAMPLES, N_EDGE = $N_EDGE: ${#points[@]} job(s) to submit, $uptodate up to date, $nostate without a state"
+    echo "L = $L, N_SAMPLES = $N_SAMPLES, N_EDGE = $N_EDGE: ${#points[@]} job(s) to submit, $uptodate up to date, $queued already queued, $nostate without a state"
 else
     mkdir -p "$logdir"
     printf '%s\n' "${points[@]}" > "$pointsfile"
     echo "$submit" > "$submitfile"
     condor_submit "$submitfile"
-    echo "L = $L, N_SAMPLES = $N_SAMPLES, N_EDGE = $N_EDGE: ${#points[@]} job(s) submitted, $uptodate up to date, $nostate without a state; submit file $submitfile"
+    echo "L = $L, N_SAMPLES = $N_SAMPLES, N_EDGE = $N_EDGE: ${#points[@]} job(s) submitted, $uptodate up to date, $queued already queued, $nostate without a state; submit file $submitfile"
 fi

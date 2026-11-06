@@ -73,6 +73,11 @@ request_disk   = 4 G
 requirements   = has_julia
 rank           = cpu_performance
 
+# Labels for matching jobs to sweep points (hpc/condor/*.sh, dashboard)
++BHC_stage = "plot"
++BHC_tag   = "$tag"
++BHC_L     = $L
+
 output = $logdir/\$(JOBNAME)_\$(Cluster).out
 error  = $logdir/\$(JOBNAME)_\$(Cluster).err
 log    = $logdir/\$(Cluster).log

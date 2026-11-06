@@ -11,6 +11,29 @@ General condor notes of the group: `docs/condor_notes-main/`.
 | `plot_BHCorr.sh <L>` | the phase-diagram plot, directly on the access point (or `CONDOR=1`: as one job) |
 | `run_julia.sh` | the job executable: `Pkg.instantiate()` and run the script with the node Julia |
 
+## Dashboard (recommended)
+
+On the laptop, from the repo root (UGent network or VPN):
+
+    python3 hpc/condor/dashboard/server.py
+
+It asks for the the access point password once (the ssh connection is kept open for 12 h) and opens `http://localhost:8765`.
+Nothing to install (Python standard library); the one-time setup on the access point below is still needed. The page shows:
+
+- a **grid** of the sweep (columns t/U, rows μ/U), one square per point: ✓ done (converged), ~ unconverged,
+  ▶ running, … queued, ! held, ✕ failed (job ended without a result), grey not submitted; a dot in the corner when the
+  observables exist. Hover for ϵ_conv, steps, machine and run time; click for details and the job's log;
+- counts, a progress bar and the condor clusters; it refreshes every 20 s;
+- **buttons**: *Submit* (pulls the latest code on the access point — warns if the laptop has uncommitted or unpushed changes —
+  and runs `sweep_BHCorr.sh` with the parameters of the form; *Preview* is the dry run), *Remove held*, *Observables*,
+  *Plot*, *Gather* (rsync of the sweep's data and plot to this repo's `data/` and `plots/`), *Remove all jobs*.
+
+The parameters (grid, model, convergence, resources, observables, plot) are in the form on the right and remembered per
+sweep; the model parameters set the run tag, so changing them switches to another sweep. Existing sweeps (on the access point
+or in the queue) are in the selector at the top; `http://localhost:8765/?tag=<run tag>&L=<L>` opens one directly.
+Submitting twice is harmless: points that are done or still in the queue are skipped. Closing the dashboard does not
+affect the jobs. Options: `--help` (host, port, user, remote dir, http port).
+
 ## How it works
 
 The pool has no shared filesystem. Every job gets `Project.toml`, `Manifest.toml`, `src/`, its Julia script and (for
