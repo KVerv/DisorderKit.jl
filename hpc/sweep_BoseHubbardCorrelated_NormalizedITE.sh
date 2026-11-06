@@ -47,8 +47,8 @@ export CROSS_WIDTH="${CROSS_WIDTH:-32}"
 export DATA_DIR="${DATA_DIR:-${VSC_DATA:-.}/data}"
 
 # Resources per job
-WALLTIME="${WALLTIME:-2:00:00}"
-MEM="${MEM:-8GB}"
+WALLTIME="${WALLTIME:-1:00:00}"
+MEM="${MEM:-6GB}"
 NODES=1
 PPN="${PPN:-8}"   # CPUs per node
 JULIA_THREADS="${JULIA_THREADS:-1}"   # Julia runs with --threads=$JULIA_THREADS

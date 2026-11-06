@@ -4,6 +4,7 @@
 # where the label wᵢ of site i sets both μᵢ and the hopping of bond (i, i+1). The hopping and the potential of a site are
 # correlated by r ∈ (-1, 1): P = (1+r)/4 if both are high or both low, (1-r)/4 otherwise. The last site has no bond, so
 # its sectors are merged into μ-Δ and μ+Δ with probability 1/2 each (DisorderKit.site_sectors).
+# For Δ = 0 and/or Ω = 0 the identical sectors are merged: 2 sectors (p = 1/2) if one of them is 0, 1 if both are.
 # H conserves the particle number, so the evolution starts from the uniform superposition of all occupations.
 # Stores the final state and the per-step diagnostics; no observables, those are computed from the stored states by
 # hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl.
@@ -101,10 +102,18 @@ convtol = parse(Float64, param("CONVTOL"))
 cross_width = parse(Int, param("CROSS_WIDTH"))
 d = nmax + 1
 
-# Sectors of random_bose_hubbard(ts, Us, μs) run over Iterators.product(μs, Us, ts), μ fastest:
-#   1 = (μ-Δ, t(1-Ω)), 2 = (μ+Δ, t(1-Ω)), 3 = (μ-Δ, t(1+Ω)), 4 = (μ+Δ, t(1+Ω))
-Hs = DisorderKit.random_bose_hubbard([t*(1-Ω), t*(1+Ω)], [U], [μ-Δ, μ+Δ]; nmax)
-ps = [(1+r)/4, (1-r)/4, (1-r)/4, (1+r)/4]
+# Joint probabilities P[a, b] of μ_a ∈ (μ-Δ, μ+Δ) and t_b ∈ (t(1-Ω), t(1+Ω)), correlated by r
+P = [(1+r)/4 (1-r)/4; (1-r)/4 (1+r)/4]
+# Identical values (Δ = 0 or Ω = 0) are merged into one with the marginal probability: 4 sectors for Δ, Ω > 0,
+# 2 if one of them is 0 and 1 (clean chain) if both are
+μs = iszero(Δ) ? [μ] : [μ-Δ, μ+Δ]
+iszero(Δ) && (P = sum(P; dims = 1))
+tvals = iszero(Ω) ? [t] : [t*(1-Ω), t*(1+Ω)]
+iszero(Ω) && (P = sum(P; dims = 2))
+# Sectors of random_bose_hubbard(ts, Us, μs) run over Iterators.product(μs, Us, ts), μ fastest (column-major order of P);
+# for Δ, Ω > 0: 1 = (μ-Δ, t(1-Ω)), 2 = (μ+Δ, t(1-Ω)), 3 = (μ-Δ, t(1+Ω)), 4 = (μ+Δ, t(1+Ω))
+Hs = DisorderKit.random_bose_hubbard(tvals, [U], μs; nmax)
+ps = vec(P)
 
 # Uniform superposition of 0..nmax bosons on every site and in every sector: every conditional state is normalized
 function uniform_state(Hs, ps, L, d)
