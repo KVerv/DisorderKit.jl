@@ -79,3 +79,25 @@ function mpo_fidelity(O1::AbstractMPOTensor, O2::AbstractMPOTensor)
     return norm(overlap12) / sqrt(norm(overlap11) * norm(overlap22))
 end
 
+
+# svd_trunc with the default algorithm (LAPACK divide-and-conquer, gesdd), falling back to the slower but more robust
+# QR iteration (gesvd) when gesdd does not converge (LAPACKException). A matrix with NaN/Inf entries is not retried:
+# that is an upstream problem, reported as such
+function robust_svd_trunc(A::AbstractTensorMap; kwargs...)
+    return svd_with_fallback(A) do alg
+        isnothing(alg) ? svd_trunc(A; kwargs...) : svd_trunc(A; alg, kwargs...)
+    end
+end
+
+# f(nothing) runs the SVD with the default algorithm, f(alg) with alg; see robust_svd_trunc
+function svd_with_fallback(f, A::AbstractTensorMap)
+    try
+        return f(nothing)
+    catch e
+        e isa LinearAlgebra.LAPACKException || rethrow()
+        all(((_, b),) -> all(isfinite, b), blocks(A)) ||
+            throw(DomainError(A, "SVD of a matrix with non-finite entries (NaN or Inf)"))
+        @warn "gesdd did not converge ($(sprint(showerror, e))), retrying the SVD with QR iteration" maxlog = 10
+        return f(LAPACK_QRIteration())
+    end
+end

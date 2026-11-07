@@ -295,7 +295,7 @@ function reconstruct_filter(H::Vector{<:AbstractMatrix}, K::Vector{<:Vector{<:Ab
     trunc = truncrank(max_rank) & truncerror(; rtol = tail_tol) & trunctol(; rtol = 1e-12, p = Inf)
     @timeit to "svd_cuts" cuts = map(H) do b
         Hb = shifted(b)
-        U, S, Vh, ϵ = svd_trunc(Hb; trunc = trunc)
+        U, S, Vh, ϵ = robust_svd_trunc(Hb; trunc = trunc)
         (left = inv(S) * U', right = Vh', met = ϵ <= tail_tol * LinearAlgebra.norm(Hb))   # H⁺ = Vh' S⁻¹ U'
     end
 

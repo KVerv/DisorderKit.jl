@@ -88,8 +88,19 @@ if status_only
 end
 
 # ---- Simulation
-using TensorKit, DisorderKit, TimerOutputs, JLD2, Dates, LinearAlgebra
+using TensorKit, DisorderKit, TimerOutputs, JLD2, Dates, LinearAlgebra, Logging
 BLAS.set_num_threads(parse(Int, get(ENV, "BLAS_THREADS", string(Threads.nthreads()))))   # default: as many as Julia threads
+
+# Log messages start with the time (HH:MM:SS), so the condor dashboard can show how long a job is in its current step
+struct TimestampLogger <: AbstractLogger
+    inner::AbstractLogger
+end
+Logging.handle_message(l::TimestampLogger, level, message, args...; kwargs...) =
+    Logging.handle_message(l.inner, level, "$(Dates.format(now(), "HH:MM:SS")) $message", args...; kwargs...)
+Logging.shouldlog(l::TimestampLogger, args...) = Logging.shouldlog(l.inner, args...)
+Logging.min_enabled_level(l::TimestampLogger) = Logging.min_enabled_level(l.inner)
+Logging.catch_exceptions(l::TimestampLogger) = Logging.catch_exceptions(l.inner)
+global_logger(TimestampLogger(global_logger()))
 
 U, r = parse(Float64, U_str), parse(Float64, r_str)
 -1 < r < 1 || error("R = $r must lie in (-1, 1): SRC requires strictly positive disorder probabilities")

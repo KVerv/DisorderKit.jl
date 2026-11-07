@@ -44,7 +44,10 @@ MODEL = "BoseHubbardCorrelated_NormalizedITE"
 OBS_SCRIPT = "hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl"
 PLOT_SCRIPT = "hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl"
 JOB_ATTRS = ("ClusterId,ProcId,JobStatus,BHC_stage,BHC_tag,BHC_L,BHC_t,BHC_mu,RemoteHost,LastRemoteHost,"
-             "HoldReason,EnteredCurrentStatus,QDate,CompletionDate,ExitCode,RemoveReason")
+             "HoldReason,EnteredCurrentStatus,QDate,CompletionDate,ExitCode,RemoveReason,"
+             "RemoteUserCpu,RemoteSysCpu,JobCurrentStartDate,RequestCpus,RequestMemory,ResidentSetSize,ResidentSetSize_RAW")
+STALL_AFTER = 30 * 60   # s: a running job that used less than STALL_CPU cores on average after this long is flagged
+STALL_CPU = 0.05
 GATHER_MIN_AGE = 2  # minutes: younger result files may still be written by condor
 
 RE_TAG = re.compile(r"^[A-Za-z0-9._+-]+$")
@@ -169,10 +172,86 @@ def stream(argv, emit, **kw):
 QUEUE_STATE = {1: "idle", 2: "running", 4: "running", 5: "held", 6: "running", 7: "idle"}
 
 
-def job_info(j):
-    return {"id": f"{j.get('ClusterId')}.{j.get('ProcId')}", "status": j.get("JobStatus"),
+def job_info(j, now=None):
+    info = {"id": f"{j.get('ClusterId')}.{j.get('ProcId')}", "status": j.get("JobStatus"),
             "host": j.get("RemoteHost") or j.get("LastRemoteHost"), "since": j.get("EnteredCurrentStatus"),
             "hold_reason": j.get("HoldReason"), "exit_code": j.get("ExitCode"), "remove_reason": j.get("RemoveReason")}
+    start = j.get("JobCurrentStartDate")
+    if j.get("JobStatus") == 2 and start:
+        # CPU use of the current run: average number of busy cores (condor updates RemoteUserCpu every few minutes)
+        wall = max((now or time.time()) - start, 1)
+        cpu = (j.get("RemoteUserCpu") or 0) + (j.get("RemoteSysCpu") or 0)
+        info.update(start=start, wall=wall, cpus=j.get("RequestCpus"), cores_used=cpu / wall,
+                    stalled=wall > STALL_AFTER and cpu / wall < STALL_CPU)
+    req = j.get("RequestMemory")
+    if isinstance(req, (int, float)) and req > 0:
+        # ResidentSetSize: peak of the job (KB, rounded up by condor), ResidentSetSize_RAW: current (KB). condor's
+        # MemoryUsage is the expression (ResidentSetSize + 1023) / 1024, which condor_q -json does not evaluate
+        peak = j.get("ResidentSetSize")
+        info.update(mem_req=req, mem_peak=(peak + 1023) // 1024 if isinstance(peak, (int, float)) else None)
+        if info["mem_peak"] is not None:
+            info["mem_frac"] = info["mem_peak"] / req
+        rss = j.get("ResidentSetSize_RAW")
+        if j.get("JobStatus") == 2 and isinstance(rss, (int, float)):
+            info["mem_now"] = rss / 1024
+    return info
+
+
+# ---- progress of running jobs, from their live stdout/stderr (condor_tail)
+
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+RE_MARK = re.compile(r"^== (\d\d:\d\d:\d\d) (?:setup: (.*)|julia (\S+).*)$")    # run_julia.sh's phase markers
+RE_INFO = re.compile(r"^\[ Info: (?:(\d\d:\d\d:\d\d) )?(.*?)\s*$")               # ITE log lines (time stamp optional)
+RE_ITER = re.compile(r"^Iteration (\d+), cap = (\d+)")
+RE_DE = re.compile(r"^Convergence error: \(E, dE\) = \(([^,]+), ([^)]+)\)")
+ITE_STEPS = ("Partition function", "Normalization filter", "Compress", "Convergence error", "Finalize")
+
+
+def parse_progress(out, err):
+    """Phase of a job from its stdout (run_julia.sh markers) and its ITE step from its stderr (log lines).
+    Jobs started before the markers existed: "Julia x (juliaup)" without a later julia marker means Pkg.instantiate."""
+    out, err = ANSI.sub("", out or ""), ANSI.sub("", err or "")
+    res = {"phase": "starting", "phase_since": None, "script": None, "iteration": None, "cap": None, "step": None,
+           "step_since": None, "E": None, "dE": None, "error": None}
+    for line in out.splitlines():
+        m = RE_MARK.match(line)
+        if m:
+            res["phase_since"] = m[1]
+            if m[2] is not None:
+                res["phase"], res["script"] = "setup: " + m[2], None
+            else:
+                res["script"] = m[3]
+                res["phase"] = "observables" if "observables" in m[3] else "ITE"
+        elif line.startswith("Julia ") and "(juliaup)" in line:
+            res["phase"], res["phase_since"] = "setup: Pkg.instantiate", None
+        elif res["phase"] == "starting" and "juliaup" in line.lower():
+            res["phase"] = "setup: julia install"
+    for line in err.splitlines():
+        if line.startswith("ERROR:"):
+            res["error"] = line
+        m = RE_INFO.match(line)
+        if not m:
+            continue
+        stamp, msg = m[1], m[2]
+        it = RE_ITER.match(msg)
+        if it:
+            res.update(iteration=int(it[1]), cap=int(it[2]), step="Iteration start", step_since=stamp)
+            continue
+        name = next((x for x in ITE_STEPS if msg.startswith(x)), None)
+        if name is None:
+            continue
+        res["step"], res["step_since"] = name, stamp
+        de = RE_DE.match(msg)
+        if de:
+            try:
+                res["E"], res["dE"] = float(de[1]), float(de[2])
+            except ValueError:
+                pass
+    if res["phase"] != "ITE" and res["phase"] != "observables":
+        res.update(iteration=None, cap=None, step=None, step_since=None)
+    tail = [x for x in err.splitlines() if x.strip()][-12:]
+    res["tail"] = "\n".join(tail)
+    return res
 
 
 def merge(remote, local, queue, history, obs_version="", n_edge=None):
@@ -253,6 +332,32 @@ def merge(remote, local, queue, history, obs_version="", n_edge=None):
         out.append(rec)
     out.sort(key=lambda x: (float(x["t"]), float(x["mu"])))
     return out
+
+
+def parse_progress_dump(text):
+    """Output of Dashboard.progress's remote loop: @@JOB <id> <stage> <t> <mu>, @@OUT <stdout>, @@ERR <stderr>."""
+    jobs, cur, part = [], None, None
+    for line in text.splitlines():
+        if line.startswith("@@JOB ") or line == "@@END":
+            if cur:
+                jobs.append(cur)
+            cur, part = None, None
+            if line != "@@END":
+                parts = line.split()
+                cur = {"id": parts[1], "stage": parts[2] if len(parts) > 2 else None,
+                       "t": parts[3] if len(parts) > 3 else None, "mu": parts[4] if len(parts) > 4 else None,
+                       "out": [], "err": []}
+        elif cur is not None and line in ("@@OUT", "@@ERR"):
+            part = cur["out"] if line == "@@OUT" else cur["err"]
+        elif part is not None:
+            part.append(line)
+    if cur:
+        jobs.append(cur)
+    res = []
+    for j in jobs:
+        out, err = "\n".join(j.pop("out")), "\n".join(j.pop("err"))
+        res.append({**j, **parse_progress(out, err)})
+    return res
 
 
 def needs_run(p, maxiter, convtol, force=False):
@@ -376,6 +481,7 @@ class Dashboard:
                "to_gather": sum(1 for p in points if p["on_remote"] and p["state"] not in ("idle", "running", "held")
                                 and p["obs"] not in ("idle", "running", "held")),
                "on_laptop": sum(1 for p in points if "laptop" in p["where"]),
+               "stalled": sum(1 for p in points if p["state"] == "running" and (p["job"] or {}).get("stalled")),
                "plot_mtime": os.path.getmtime(plot) if os.path.isfile(plot) else None}
         with self.lock:
             self.cache[key] = (time.time(), res)
@@ -419,11 +525,35 @@ class Dashboard:
         L = int(L)
         d = f"logs/{MODEL}/{tag}/L{L}/condor" + ("/obs" if stage == "obs" else "")
         prefix = f"BHC_obs_L{L}" if stage == "obs" else f"BHC_L{L}"
-        cmd = (f"f=$(ls -t {d}/{prefix}_t{t}_mu{mu}_*.err 2>/dev/null | head -1); "
+        # A running job's files on the access point stay empty until it ends: show its live output instead
+        c = shlex.quote(f'{self.condor_constraint(tag, L)} && BHC_stage =?= "{"obs" if stage == "obs" else "ite"}" && '
+                        f'BHC_t =?= "{t}" && BHC_mu =?= "{mu}" && JobStatus == 2')
+        cmd = (f"id=$(condor_q \"$USER\" -constraint {c} -format '%d.' ClusterId -format '%d\\n' ProcId 2>/dev/null | head -1); "
+               f"if [ -n \"$id\" ]; then echo \"== job $id is running: live stdout (condor_tail)\"; "
+               f"timeout 30 condor_tail -maxbytes 8000 $id 2>&1 | tail -n 60; echo; echo \"== live stderr\"; "
+               f"timeout 30 condor_tail -stderr -maxbytes 12000 $id 2>&1 | tail -n 60; exit 0; fi; "
+               f"f=$(ls -t {d}/{prefix}_t{t}_mu{mu}_*.err 2>/dev/null | head -1); "
                f"if [ -z \"$f\" ]; then echo 'No log files for this point on the access point (gathered points have no logs left).'; exit 0; fi; "
                f"o=\"${{f%.err}}.out\"; echo \"== $o\"; tail -n 60 \"$o\" 2>/dev/null; echo; echo \"== $f\"; tail -n 60 \"$f\"")
         rc, out, err = self.remote.run(cmd, timeout=60)
         return out + err
+
+    def progress(self, tag, L, t=None, mu=None):
+        """Phase and ITE step of the running jobs of a sweep (or of one point), from their live output."""
+        if not RE_TAG.match(tag) or (t is not None and not (RE_POINT.match(t) and RE_POINT.match(mu))):
+            raise ValueError("bad point")
+        L = int(L)
+        c = self.condor_constraint(tag, L) + " && JobStatus == 2"
+        if t is not None:
+            c += f' && BHC_t =?= "{t}" && BHC_mu =?= "{mu}"'
+        cmd = (f"condor_q \"$USER\" -constraint {shlex.quote(c)} -af ClusterId ProcId BHC_stage BHC_t BHC_mu 2>/dev/null | "
+               "while read c p st t mu; do echo \"@@JOB $c.$p $st $t $mu\"; echo @@OUT; "
+               "timeout 30 condor_tail -maxbytes 20000 $c.$p 2>&1 < /dev/null; echo; echo @@ERR; "
+               "timeout 30 condor_tail -stderr -maxbytes 20000 $c.$p 2>&1 < /dev/null; echo; done; echo @@END")
+        rc, out, err = self.remote.run(cmd, timeout=300)
+        if rc == 255 and not self.args.local:
+            raise ConnectionError(err.strip() or "ssh connection lost")
+        return {"time": time.time(), "jobs": parse_progress_dump(out)}
 
     def plot_file(self, tag, L):
         if not RE_TAG.match(tag):
@@ -686,6 +816,8 @@ def make_handler(dash):
                     return self._send(200, dash.status(q["tag"], q["L"], n_edge, q.get("fresh") == "1"))
                 if u.path == "/api/log":
                     return self._send(200, {"text": dash.log(q["tag"], q["L"], q["t"], q["mu"], q.get("stage", "ite"))})
+                if u.path == "/api/progress":
+                    return self._send(200, dash.progress(q["tag"], q["L"], q.get("t"), q.get("mu")))
                 if u.path == "/api/plot":
                     path = dash.plot_file(q["tag"], q["L"])
                     if not os.path.isfile(path):
@@ -758,6 +890,50 @@ def selftest():
     assert needs_run(recs[("0.5000", "0.2000")], 2000, 1e-6, force=True) == "run"
     assert sections("@@A\n1\n2\n@@B\n@@END\n") == {"A": "1\n2", "B": "", "END": ""}
     assert parse_json_section("warning\n[1,2]\n", None) == [1, 2]
+    # progress: a job of the old run_julia.sh (no markers) hanging in Pkg.instantiate
+    old_out = "Host: x\nWelcome to Julia!\nNow installing Juliaup\nJulia was successfully installed\nJulia 1.12.6 (juliaup), HOME = /tmp/k"
+    pr = parse_progress(old_out, "info: downloading installer\n   Configure Default Julia version set to '1.12.6'.")
+    assert pr["phase"] == "setup: Pkg.instantiate" and pr["phase_since"] is None and pr["iteration"] is None, pr
+    # old format in the ITE (no time stamps), colored log lines
+    pr = parse_progress(old_out + "\n== 09:32:05 julia hpc/BoseHubbardCorrelated_NormalizedITE.jl 10 0.0600 1.3000\n",
+                        "[ Info: Iteration 3, cap = 16\n[ Info: \x1b[36mPartition function\x1b[39m\n"
+                        "[ Info: \x1b[35mCompress\x1b[39m\n")
+    assert (pr["phase"], pr["phase_since"], pr["iteration"], pr["cap"], pr["step"], pr["step_since"]) == \
+        ("ITE", "09:32:05", 3, 16, "Compress", None), pr
+    # new format: markers and time stamps
+    new_out = ("== 10:00:00 setup: waiting for the setup lock\n== 10:00:00 setup: julia install\nJulia 1.12.6 (juliaup)\n"
+               "== 10:00:05 setup: Pkg.instantiate (attempt 1 of 3)\n")
+    pr = parse_progress(new_out, "  Installed X\n")
+    assert (pr["phase"], pr["phase_since"]) == ("setup: Pkg.instantiate (attempt 1 of 3)", "10:00:05"), pr
+    ite_err = ("[ Info: 10:09:00 Iteration 1, cap = 4\n[ Info: 10:09:01 Partition function\n"
+               "[ Info: 10:09:40 Convergence error: (E, dE) = (-0.28, 0.25)\n[ Info: 10:09:40 Finalize\n"
+               "[ Info: 10:09:41 Iteration 2, cap = 4\n[ Info: 10:09:41 Normalization filter\n")
+    pr = parse_progress(new_out + "== 10:09:00 julia hpc/BoseHubbardCorrelated_NormalizedITE.jl 6 0.1 0.5\n", ite_err)
+    assert (pr["phase"], pr["iteration"], pr["step"], pr["step_since"], pr["dE"]) == \
+        ("ITE", 2, "Normalization filter", "10:09:41", 0.25), pr
+    pr = parse_progress(new_out + "== 10:09:00 julia hpc/BoseHubbardCorrelated_NormalizedITE.jl 6 0.1 0.5\n"
+                        "== 11:00:00 julia hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl 6 0.1 0.5\n", ite_err)
+    assert (pr["phase"], pr["phase_since"], pr["iteration"]) == ("observables", "11:00:00", 2), pr
+    dump = ("@@JOB 7.1 ite 0.1000 0.5000\n@@OUT\n" + old_out + "\n\n@@ERR\n\n"
+            "@@JOB 7.2 ite 0.2000 0.5000\n@@OUT\n" + new_out + "\n@@ERR\n" + ite_err + "\n@@END\n")
+    jobs = parse_progress_dump(dump)
+    assert [(j["id"], j["t"], j["phase"]) for j in jobs] == [("7.1", "0.1000", "setup: Pkg.instantiate"),
+                                                              ("7.2", "0.2000", "setup: Pkg.instantiate (attempt 1 of 3)")]
+    # stall flag: 27 s CPU in 19 h
+    ji = job_info({"ClusterId": 1, "ProcId": 0, "JobStatus": 2, "JobCurrentStartDate": 1000, "RemoteUserCpu": 20,
+                   "RemoteSysCpu": 7, "RequestCpus": 8}, now=1000 + 19 * 3600)
+    assert ji["stalled"] and ji["cpus"] == 8
+    ji = job_info({"ClusterId": 1, "ProcId": 0, "JobStatus": 2, "JobCurrentStartDate": 1000, "RemoteUserCpu": 3600 * 7,
+                   "RequestCpus": 8}, now=1000 + 3600)
+    assert not ji["stalled"] and abs(ji["cores_used"] - 7) < 1e-9
+    # memory: an out-of-memory hold (peak above the request) and a running job
+    ji = job_info({"ClusterId": 1, "ProcId": 0, "JobStatus": 5, "RequestMemory": 6144, "ResidentSetSize": 7500000,
+                   "ResidentSetSize_RAW": 6227456})
+    assert ji["mem_frac"] > 1 and "mem_now" not in ji
+    ji = job_info({"ClusterId": 1, "ProcId": 0, "JobStatus": 2, "JobCurrentStartDate": 1000, "RequestMemory": 8192,
+                   "ResidentSetSize": 2500000, "ResidentSetSize_RAW": 2171020}, now=2000)
+    assert ji["mem_peak"] == 2442 and abs(ji["mem_frac"] - 2442 / 8192) < 1e-12 and abs(ji["mem_now"] - 2171020 / 1024) < 1e-9
+    assert "mem_req" not in job_info({"ClusterId": 1, "ProcId": 0, "JobStatus": 1})
     print("selftest ok")
 
 

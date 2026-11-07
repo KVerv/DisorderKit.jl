@@ -311,7 +311,7 @@ end
 #   - leverage ‖V[j, :]‖² < 1: e_j is not in the row space, column j is a combination of the others, residual 0
 #   - leverage ‖V[j, :]‖² = 1: column j is needed for the span, residual 1/‖Σ⁻¹ V[j, :]'‖ (= 1/‖R^{-†}[:, j]‖ at full rank)
 function loo_residuals(R::AbstractTensorMap, rank::Int; leverage_tol::Real = 1e-8)
-    _, Σ, Vh = svd_trunc(R; trunc = truncrank(max(rank, 1)))
+    _, Σ, Vh = robust_svd_trunc(R; trunc = truncrank(max(rank, 1)))
     V = copy(convert(Array, Vh)')                                 # K × r
     σ = diag(convert(Array, Σ))
     return [sum(abs2, v) > 1 - leverage_tol ? 1 / LinearAlgebra.norm(v ./ σ) : 0.0 for v in eachrow(V)]
@@ -358,7 +358,7 @@ end
 function trimmed_basis(basis::SketchBasis)
     r = max(basis.rank, 1)
     r == basis_size(basis) && return basis.Q
-    U, = svd_trunc(basis.R; trunc = truncrank(r))
+    U, = robust_svd_trunc(basis.R; trunc = truncrank(r))
     return basis.Q * U
 end
 
@@ -446,7 +446,7 @@ function round_cores!(cores::Vector, max_rank::Int, tol::Real)
     budget = tol * total / sqrt(max(1, length(cores) - 1))
     errors = zeros(length(cores) - 1)
     for i in 1:length(cores)-1
-        U, Σ, Vh, errors[i] = svd_trunc(cores[i]; trunc = truncrank(max_rank) & truncerror(; atol = budget))
+        U, Σ, Vh, errors[i] = robust_svd_trunc(cores[i]; trunc = truncrank(max_rank) & truncerror(; atol = budget))
         cores[i] = U
         cores[i+1] = absorb_left(Σ * Vh, cores[i+1])
     end

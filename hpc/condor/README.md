@@ -10,7 +10,7 @@ scripts are the same as on the PBS cluster; only the submission differs.
 | `sweep_BHCorr.sh <L>` | one job per (t, μ): the ITE and then the observables of the new state; both files come back |
 | `obs_BHCorr.sh <L>` | observables-only jobs, to recompute observables without rerunning the ITE |
 | `plot_BHCorr.sh <L>` | the phase-diagram plot on the access point (manual use; the dashboard plots on the laptop) |
-| `run_julia.sh` | the job executable: installs Julia (juliaup) on the node once, `Pkg.instantiate()`, runs the scripts |
+| `run_julia.sh` | the job executable: installs Julia (juliaup) and the packages (`Pkg.instantiate()`, with a timeout and retries), runs the scripts |
 | `sweep_status.jl` | the state of every point of a sweep as JSON (used by the dashboard) |
 | `condor.local.env.example` | template for the connection settings (the real `condor.local.env` is gitignored) |
 
@@ -30,7 +30,11 @@ The page shows:
 - a **grid** of the sweep (columns t/U, rows μ/U), one square per point: ✓ done (converged), ~ unconverged,
   ▶ running, … queued, ! held, ✕ failed (job ended without a result), grey not submitted. A dot in the corner shows the
   observables (amber: outdated), a bar at the bottom that the result is still on the access point. Hover for ϵ_conv,
-  steps, machine and run time; click for details and the job's log;
+  steps, machine and run time; click for details and the job's log (live output for a running job). A running point
+  shows its CPU use and current step (setup phase, or ITE iteration and step with the time it entered it); an amber
+  corner marks a running job that used almost no CPU for more than 30 minutes (stuck);
+- **Running jobs**: *Check running jobs* reads the live output of all running jobs (condor_tail) and lists their
+  runtime, CPU use, phase/step and how long they are in it, longest first;
 - counts, a progress bar, what is on the laptop and what still waits on the access point; it refreshes every 20 s;
 - the **phase diagram** of the sweep once it is plotted;
 - a theme switch (Auto / Light / Dark).
@@ -62,8 +66,12 @@ Closing the dashboard does not affect the jobs. `--help` lists the options.
 
 The pool has no shared filesystem. Every job gets `Project.toml`, `Manifest.toml`, `src/` and its Julia scripts, runs in
 a sandbox on the execute node and only its result files are transferred back. Julia is the version the Manifest was
-resolved with, through juliaup: the first job on a machine installs juliaup and that version in `/tmp/<login>/.juliaup`
-(`HOME=/tmp/<login>`); later jobs on that machine reuse it and the package depot `/tmp/<login>/.julia`. `DATA_DIR` is
+resolved with, through juliaup, installed in `/tmp/<login>/.juliaup` with the package depot `/tmp/<login>/.julia`
+(`HOME=/tmp/<login>`). On this pool `/tmp` is private to every job (`MOUNT_UNDER_SCRATCH`), so every job installs Julia
+and the packages from scratch (about 8 minutes). `Pkg.instantiate()` sometimes hangs without output (a stalled
+download), so `run_julia.sh` limits every attempt to `SETUP_TIMEOUT` seconds (1800) and retries it up to
+`SETUP_ATTEMPTS` times (3) before the job fails. The dashboard shows the phase of every running job (setup or the ITE
+step, see below). `DATA_DIR` is
 always the relative path `data`, so with `preserve_relative_paths` a result lands at the same path in the repo on the
 access point:
 

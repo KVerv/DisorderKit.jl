@@ -8,8 +8,14 @@
 #
 # Julia: the version the Manifest was resolved with (julia_version in Manifest.toml; override with JULIA_VERSION), run
 # through juliaup. The first job on a machine installs juliaup and that version in $HOME/.juliaup; later jobs reuse it
-# (and the package depot $HOME/.julia). Jobs on the same machine install one at a time (flock on $HOME/.juliaup.lock).
-# Only Pkg.instantiate() is run, no Pkg.precompile(): the script's `using` precompiles just the packages it needs.
+# (and the package depot $HOME/.julia). On the UGent pool /tmp is private to every job (MOUNT_UNDER_SCRATCH), so every
+# job installs from scratch (about 8 minutes); on a pool with a shared /tmp, jobs on the same machine set up one at a time
+# (flock on $HOME/.juliaup.lock). Pkg.instantiate() sometimes hangs forever without output (a stalled download; Pkg has
+# no timeout), so every attempt is limited to SETUP_TIMEOUT seconds (default 1800) and retried up to SETUP_ATTEMPTS
+# times (default 3); then the job fails with a clear message. Only Pkg.instantiate() is run, no Pkg.precompile(): the
+# script's `using` precompiles just the packages it needs.
+# Progress markers on stdout (read by the dashboard through condor_tail): "== HH:MM:SS setup: <phase>" and
+# "== HH:MM:SS julia <script> <args>" before every script.
 
 set -euo pipefail
 
@@ -20,9 +26,12 @@ echo "Arguments: $*"
 manifest=$(sed -n 's/^julia_version = "\(.*\)"/\1/p' Manifest.toml)
 version="${JULIA_VERSION:-$manifest}"
 juliaup="$HOME/.juliaup/bin/juliaup"
+JULIA=("$HOME/.juliaup/bin/julia" "+$version")
 mkdir -p "$HOME"
+echo "== $(date +%T) setup: waiting for the setup lock"
 (
     flock 9
+    echo "== $(date +%T) setup: julia install"
     if [ ! -x "$juliaup" ]; then
         echo "Installing juliaup in $HOME/.juliaup"
         curl -fsSL https://install.julialang.org | sh -s -- --yes --add-to-path=no --default-channel "$version"
@@ -31,11 +40,18 @@ mkdir -p "$HOME"
         echo "Installing Julia $version"
         "$juliaup" add "$version"
     fi
+    echo "Julia $("${JULIA[@]}" --startup-file=no -e 'print(VERSION)') (juliaup), HOME = $HOME"
+    attempts="${SETUP_ATTEMPTS:-3}"
+    for ((i = 1; i <= attempts; i++)); do
+        echo "== $(date +%T) setup: Pkg.instantiate (attempt $i of $attempts)"
+        rc=0
+        timeout "${SETUP_TIMEOUT:-1800}" "${JULIA[@]}" --project=. --startup-file=no -e 'using Pkg; Pkg.instantiate()' || rc=$?
+        [ "$rc" = "124" ] || exit "$rc"
+        echo "Pkg.instantiate() did not finish within ${SETUP_TIMEOUT:-1800} s on $(hostname) (attempt $i of $attempts)" | tee /dev/stderr
+    done
+    echo "Pkg.instantiate() hung $attempts times: giving up" | tee /dev/stderr
+    exit 1
 ) 9> "$HOME/.juliaup.lock"
-JULIA=("$HOME/.juliaup/bin/julia" "+$version")
-echo "Julia $("${JULIA[@]}" --startup-file=no -e 'print(VERSION)') (juliaup), HOME = $HOME"
-
-"${JULIA[@]}" --project=. --startup-file=no -e 'using Pkg; Pkg.instantiate()'
 cmd=()
 for a in "$@" ::; do
     if [ "$a" = "::" ]; then

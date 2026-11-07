@@ -91,6 +91,7 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) 390px; gap: 16px; pa
 .progress-label { font-size: 12px; color: var(--ink-2); display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .stats { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); margin-top: 6px; }
 .stats b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.stats .warnText, .stats .warnText b { color: var(--warn); }
 /* grid */
 .gridwrap { margin-top: 14px; overflow-x: auto; }
 .grid { display: grid; gap: 2px; align-items: center; justify-items: center; width: max-content; }
@@ -109,6 +110,7 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) 390px; gap: 16px; pa
 .cell .obs.idle, .cell .obs.running { border: 1.5px solid currentColor; }
 .cell .obs.outdated { background: var(--warn); box-shadow: 0 0 0 1.5px var(--surface); }
 .cell .obs.held, .cell .obs.failed { background: var(--danger); box-shadow: 0 0 0 1.5px var(--surface); }
+.cell .stall { position: absolute; bottom: 1px; right: 1px; width: 0; height: 0; border-left: 7px solid transparent; border-bottom: 7px solid var(--warn); }
 .cell .remote { position: absolute; bottom: 2px; left: 2px; width: 6px; height: 2px; border-radius: 1px; background: currentColor; opacity: .75; }
 @keyframes pulse { 50% { filter: brightness(1.25); } }
 @media (prefers-reduced-motion: reduce) { .cell.running { animation: none; } .cell { transition: none; } }
@@ -146,6 +148,14 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
 .spin { width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: rot .8s linear infinite; display: inline-block; }
 @keyframes rot { to { transform: rotate(360deg); } }
 .muted { color: var(--ink-2); font-size: 12px; }
+/* running jobs */
+.jobs { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 10px; }
+.jobs th { text-align: left; font-weight: 600; color: var(--ink-3); font-size: 11.5px; padding: 4px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.jobs td { padding: 5px 8px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; vertical-align: top; }
+.jobs tr[data-t] { cursor: pointer; }
+.jobs tr[data-t]:hover td { background: var(--surface-2); }
+.jobs .warn { color: var(--warn); font-weight: 600; }
+.jobswrap { overflow-x: auto; }
 </style>
 </head>
 <body>
@@ -172,6 +182,12 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
       <div class="progress-label" id="progressLabel"></div>
       <div class="stats" id="stats"></div>
       <div class="gridwrap"><div id="grid"></div></div>
+    </section>
+    <section class="card" id="jobsCard">
+      <h2>Running jobs <span class="spacer"></span><span class="muted" id="jobsTime" style="text-transform:none;letter-spacing:0;font-weight:400"></span>
+        <button class="btn small" id="jobsBtn" style="text-transform:none;letter-spacing:0">Check running jobs</button></h2>
+      <p class="hint" style="margin:0">Reads the live output of every running job (condor_tail): setup phase, ITE iteration and step, and how long it is in it. A warning marker on a running point means it used almost no CPU for more than 30 minutes (stuck).</p>
+      <div class="jobswrap" id="jobsBox"></div>
     </section>
     <section class="card plot">
       <h2>Phase diagram <span class="muted" id="plotTime" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h2>
@@ -294,6 +310,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
 let status = null, selected = null, sweeps = [], task = null, taskSeen = 0, loading = false;
+let progress = new Map(), progressTime = null;   // live phase/step of running jobs, by "t|mu" (from /api/progress)
 
 // ---- theme
 function setTheme(t) {
@@ -382,6 +399,9 @@ async function refresh(fresh) {
     banner(e.message);
   } finally { loading = false; }
   render();
+  // keep the step of the selected running point current
+  const sp = selected && pointsShown().find(p => p.t === selected.t && p.mu === selected.mu);
+  if (sp && sp.state === "running") loadPointProgress(sp);
 }
 
 // ---- rendering
@@ -416,7 +436,8 @@ function render() {
     `<span>${mine && status.clusters.length ? "condor clusters " + status.clusters.join(", ") : "no jobs in the queue"}</span>`;
   $("stats").innerHTML = `<span>On the laptop <b>${onLaptop}</b></span><span>Waiting on the access point <b>${toGather}</b></span>` +
     `<span>Observables computed <b>${obsDone}</b>${obsTodo ? ` · missing/outdated <b>${obsTodo}</b>` : ""}</span>` +
-    `<span class="muted">corner dot: observables (amber = outdated) · bottom bar: still on the access point</span>`;
+    (mine && status.stalled ? `<span class="warnText">Running but no CPU use (stuck?) <b>${status.stalled}</b></span>` : "") +
+    `<span class="muted">corner dot: observables (amber = outdated) · bottom bar: still on the access point · amber corner: stuck?</span>`;
   $("gatherCount").textContent = toGather;
   $("obsCount").textContent = obsTodo;
   renderGrid(pts);
@@ -464,7 +485,9 @@ function renderGrid(pts) {
       const glyph = size >= 18 ? GLYPH[p.state] : "";
       const obs = p.obs && p.obs !== "none" ? `<span class="obs ${p.obs}"></span>` : "";
       const rem = p.on_remote && !["idle", "running", "held"].includes(p.state) ? `<span class="remote"></span>` : "";
-      html += `<button class="cell ${p.state}${sel}" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.42)}px" data-t="${t}" data-mu="${mu}" aria-label="t=${t} μ=${mu}: ${LABEL[p.state]}">${glyph}${obs}${rem}</button>`;
+      const stalled = p.state === "running" && p.job && p.job.stalled;
+      const stall = stalled ? `<span class="stall"></span>` : "";
+      html += `<button class="cell ${p.state}${sel}" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.42)}px" data-t="${t}" data-mu="${mu}" aria-label="t=${t} μ=${mu}: ${LABEL[p.state]}${stalled ? " (no CPU use)" : ""}">${glyph}${obs}${rem}${stall}</button>`;
     }
   });
   html += `<span></span>` + tset.map((t, i) => `<span class="tick">${i % every === 0 ? (+t).toFixed(2) : ""}</span>`).join("");
@@ -477,12 +500,60 @@ function since(s) {
   const m = Math.round((Date.now() / 1000 - s) / 60);
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
 }
+// minutes since a HH:MM:SS time stamp of today (of the execute node, same time zone), or since yesterday if in the future
+function agoHms(hms) {
+  if (!hms) return null;
+  const [h, m, sec] = hms.split(":").map(Number), d = new Date();
+  d.setHours(h, m, sec, 0);
+  let s = (Date.now() - d.getTime()) / 1000;
+  if (s < -300) s += 86400;
+  return Math.max(0, s);
+}
+function dur(s) {
+  if (s === null || s === undefined) return "";
+  const m = Math.round(s / 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+function stepText(pr) {
+  if (!pr) return "";
+  const parts = [];
+  if (pr.phase === "ITE" || pr.phase === "observables") {
+    if (pr.phase === "observables") parts.push("observables" + (pr.iteration ? ` (ITE ended after iteration ${pr.iteration})` : ""));
+    else if (pr.iteration) parts.push(`iteration ${pr.iteration} (cap ${pr.cap})`, pr.step === "Iteration start" ? "starting" : pr.step);
+    else parts.push("ITE starting (loading packages, building the evolution operator)");
+  } else parts.push(pr.phase);
+  const since = pr.phase === "ITE" && pr.step_since ? pr.step_since : pr.phase_since;
+  if (since) parts.push(`since ${since} (${dur(agoHms(since))})`);
+  if (pr.phase === "ITE" && pr.dE !== null && pr.dE !== undefined) parts.push(`last dE ${fmt(pr.dE)}`);
+  if (pr.error) parts.push(pr.error);
+  return parts.join(" · ");
+}
+const gb = (mb) => `${(mb / 1024).toFixed(1)} GB`;
+function memText(job) {
+  if (!job || !job.mem_req) return "";
+  const parts = [];
+  if (job.mem_now !== undefined) parts.push(`${gb(job.mem_now)} now`);
+  if (job.mem_peak !== null && job.mem_peak !== undefined) {
+    parts.push(`peak ${gb(job.mem_peak)} of ${gb(job.mem_req)} requested (${Math.round(100 * job.mem_frac)} %)`);
+    if (job.mem_frac > 1) parts.push("over the limit");
+    else if (job.mem_frac >= 0.9) parts.push("close to the limit");
+  } else parts.push(`${gb(job.mem_req)} requested`);
+  return parts.join(" · ");
+}
 function kv(p) {
   const rows = [["Point", `t/U = ${p.t}, μ/U = ${p.mu}`], ["State", LABEL[p.state]]];
   if (p.reason) rows.push(["Why", p.reason]);
   if (p.eps !== undefined && p.eps !== null) rows.push(["ϵ_conv", `${fmt(p.eps)} (tol ${fmt(p.convtol, 0)})`]);
   if (p.nsteps !== undefined && p.nsteps !== null) rows.push(["Steps", `${p.nsteps} of max ${p.maxiter ?? "?"}`]);
   if (p.job) rows.push(["Job", `${p.job.id}${p.job.host ? " on " + p.job.host.replace(/^slot\d+(_\d+)?@/, "") : ""}${p.job.since && ["idle", "running", "held"].includes(p.state) ? ` · ${since(p.job.since)}` : ""}`]);
+  if (p.state === "running" && p.job && p.job.wall) {
+    rows.push(["CPU", `${p.job.cores_used.toFixed(2)} of ${p.job.cpus ?? "?"} cores on average over ${dur(p.job.wall)}` +
+      (p.job.stalled ? " · almost no CPU use: probably stuck" : "")]);
+    if (memText(p.job)) rows.push(["Memory", memText(p.job)]);
+    const pr = progress.get(`${p.t}|${p.mu}`);
+    rows.push(["Current step", pr ? stepText(pr) : "not read yet (click the point, or Check running jobs)"]);
+  }
+  if (p.job && ["held", "failed"].includes(p.state) && memText(p.job)) rows.push(["Memory", memText(p.job)]);
   rows.push(["Observables", OBS_LABEL[p.obs] + (p.n_edge !== null && p.n_edge !== undefined && p.obs === "done" ? ` (N_EDGE ${p.n_edge})` : "")]);
   if (p.where && p.where.length) rows.push(["Stored on", p.where.join(" and ")]);
   if (p.mtime) rows.push(["Computed", new Date(p.mtime * 1000).toLocaleString()]);
@@ -527,6 +598,63 @@ $("grid").addEventListener("click", (e) => {
   const el = e.target.closest(".cell");
   if (!el) return;
   const p = pointsShown().find(q => q.t === el.dataset.t && q.mu === el.dataset.mu);
+  $("pointLog").style.display = "none";
+  if (p) showPoint(p, true);
+  if (p && p.state === "running") loadPointProgress(p);
+});
+async function loadPointProgress(p) {
+  const c = current(), key = `${p.t}|${p.mu}`;
+  if (!progress.has(key)) { progress.set(key, { phase: "loading…" }); render(); }
+  try {
+    const r = await api(`/api/progress?tag=${encodeURIComponent(c.tag)}&L=${c.L}&t=${p.t}&mu=${p.mu}`);
+    const j = r.jobs.find(x => x.stage === "ite") || r.jobs[0];
+    if (j) progress.set(`${p.t}|${p.mu}`, j); else progress.delete(`${p.t}|${p.mu}`);
+    if (selected && selected.t === p.t && selected.mu === p.mu) render();
+  } catch (e) { progress.set(`${p.t}|${p.mu}`, { phase: "progress unavailable: " + e.message }); render(); }
+}
+async function loadAllProgress() {
+  const c = current(), btn = $("jobsBtn");
+  btn.disabled = true; $("jobsTime").innerHTML = '<span class="spin"></span> reading the live output…';
+  try {
+    const r = await api(`/api/progress?tag=${encodeURIComponent(c.tag)}&L=${c.L}`);
+    progress = new Map(r.jobs.filter(j => j.stage === "ite").map(j => [`${j.t}|${j.mu}`, j]));
+    progressTime = r.time;
+    renderJobs(r.jobs);
+    $("jobsTime").textContent = `${r.jobs.length} running · read ${new Date(r.time * 1000).toLocaleTimeString()}`;
+    render();
+  } catch (e) { $("jobsTime").textContent = "failed: " + e.message; }
+  finally { btn.disabled = false; }
+}
+function renderJobs(jobs) {
+  if (!jobs.length) { $("jobsBox").innerHTML = '<p class="muted">No running jobs in this sweep.</p>'; return; }
+  const pts = new Map(pointsShown().map(p => [`${p.t}|${p.mu}`, p]));
+  const rows = jobs.map(j => {
+    const p = pts.get(`${j.t}|${j.mu}`), job = p && (j.stage === "obs" ? p.obs_job : p.job) || {};
+    const since = j.phase === "ITE" && j.step_since ? j.step_since : j.phase_since, inStep = agoHms(since);
+    return { j, job, inStep, cells: [
+      `t ${j.t} · μ ${j.mu}${j.stage === "obs" ? " (obs)" : ""}`,
+      esc(j.id) + (job.host ? `<br><span class="muted">${esc(job.host.replace(/^slot\d+(_\d+)?@/, ""))}</span>` : ""),
+      job.wall ? dur(job.wall) : "",
+      job.wall ? `<span class="${job.stalled ? "warn" : ""}">${job.cores_used.toFixed(2)} / ${job.cpus ?? "?"}</span>` : "",
+      job.mem_frac !== undefined ? `<span class="${job.mem_frac >= 0.9 ? "warn" : ""}">${Math.round(100 * job.mem_frac)} %</span>` +
+        `<br><span class="muted">${gb(job.mem_peak)} / ${gb(job.mem_req)}</span>` : "",
+      esc(j.phase === "ITE" && j.iteration ? `${j.iteration} (cap ${j.cap})` : ""),
+      esc(j.phase === "ITE" ? (j.iteration ? (j.step === "Iteration start" ? "starting" : j.step) : "starting") : j.phase) +
+        (j.error ? `<br><span class="warn">${esc(j.error)}</span>` : ""),
+      since ? `${esc(since)} <span class="muted">(${dur(inStep)})</span>` : "",
+    ] };
+  });
+  rows.sort((a, b) => (b.inStep ?? -1) - (a.inStep ?? -1));
+  $("jobsBox").innerHTML = `<table class="jobs"><thead><tr><th>Point</th><th>Job</th><th>Runtime</th><th>CPU (cores)</th>` +
+    `<th>RAM (% of request)</th><th>Iteration</th><th>Phase / step</th><th>In it since</th></tr></thead><tbody>` +
+    rows.map(r => `<tr data-t="${r.j.t}" data-mu="${r.j.mu}">${r.cells.map(x => `<td>${x}</td>`).join("")}</tr>`).join("") +
+    `</tbody></table>`;
+}
+$("jobsBtn").onclick = loadAllProgress;
+$("jobsBox").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr[data-t]");
+  if (!tr) return;
+  const p = pointsShown().find(q => q.t === tr.dataset.t && q.mu === tr.dataset.mu);
   $("pointLog").style.display = "none";
   if (p) showPoint(p, true);
 });
@@ -596,6 +724,7 @@ $("sweepSel").onchange = () => {
   const saved = store.get(`sweep:${tag}:L${L}`, null);
   setForm(Object.assign(form(), saved || {}, parseTag(tag) || {}, { L }));
   selected = null; $("pointCard").style.display = "none";
+  progress = new Map(); $("jobsBox").innerHTML = ""; $("jobsTime").textContent = "";
   onParamsChanged();
 };
 $("refreshBtn").onclick = () => { refresh(true); loadSweeps(); loadInfo(); };
