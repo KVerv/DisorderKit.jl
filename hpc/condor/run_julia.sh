@@ -4,8 +4,9 @@
 # the transferred Project.toml, Manifest.toml, src/ and the scripts (at their relative paths, preserve_relative_paths).
 #   run_julia.sh <script.jl> <args...> [:: <script2.jl> <args...> ...]
 # Several scripts separated by `::` run one after the other in the same Julia setup; the job stops at the first failure.
-# Environment (set by the submit file): HOME (/tmp/<login>), JULIA_THREADS (default 1), REMOVE_STATES (see below), and
-# the scripts' own variables.
+# Environment (set by the submit file): HOME (/tmp/<login>), JULIA_THREADS (default 1), REMOVE_STATES (see below),
+# RUN_PROJECT (the Julia environment, default . = the slim root environment of the jobs; the plot job uses examples,
+# which has CairoMakie), and the scripts' own variables.
 #
 # Julia: the version the Manifest was resolved with (julia_version in Manifest.toml; override with JULIA_VERSION), run
 # through juliaup. The first job on a machine installs juliaup and that version in $HOME/.juliaup; later jobs reuse it
@@ -59,7 +60,7 @@ echo "== $(date +%T) setup: waiting for the setup lock"
     for ((i = 1; i <= attempts; i++)); do
         echo "== $(date +%T) setup: Pkg.instantiate (attempt $i of $attempts)"
         rc=0
-        timeout --kill-after=60 "${SETUP_TIMEOUT:-1800}" "${JULIA[@]}" --project=. --startup-file=no -e 'using Pkg; Pkg.instantiate()' || rc=$?
+        timeout --kill-after=60 "${SETUP_TIMEOUT:-1800}" "${JULIA[@]}" --project="${RUN_PROJECT:-.}" --startup-file=no -e 'using Pkg; Pkg.instantiate()' || rc=$?
         [ "$rc" = "124" ] || [ "$rc" = "137" ] || exit "$rc"   # 124: timed out (SIGTERM), 137: SIGKILL after the grace time
         echo "Pkg.instantiate() did not finish within ${SETUP_TIMEOUT:-1800} s on $(hostname) (attempt $i of $attempts)" | tee /dev/stderr
     done
@@ -71,7 +72,7 @@ for a in "$@" ::; do
     if [ "$a" = "::" ]; then
         if [ "${#cmd[@]}" -gt 0 ]; then
             echo "== $(date +%T) julia ${cmd[*]}"
-            "${JULIA[@]}" --project=. --startup-file=no --threads="${JULIA_THREADS:-1}" "${cmd[@]}"
+            "${JULIA[@]}" --project="${RUN_PROJECT:-.}" --startup-file=no --threads="${JULIA_THREADS:-1}" "${cmd[@]}"
         fi
         cmd=()
     else

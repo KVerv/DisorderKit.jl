@@ -8,7 +8,7 @@
 # can run on the login node.
 #
 # Usage (from the repo root, with the same run parameters as the sweep, so the run tag matches):
-#   U=1.0 R=0.0 DELTA=0.2 OMEGA=0.5 NMAX=4 DTAU=0.05 MAXD=16 KAPPA_TOL=0.05 SBSTD_TOL=0.05 A2_TOL=0.05 DATA_DIR=$VSC_DATA/data julia --project=. hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl <L>
+#   U=1.0 R=0.0 DELTA=0.2 OMEGA=0.5 NMAX=4 DTAU=0.05 MAXD=16 KAPPA_TOL=0.05 SBSTD_TOL=0.05 A2_TOL=0.05 DATA_DIR=$VSC_DATA/data julia --project=examples hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl <L>
 #
 # Environment (all required): U, R, DELTA, OMEGA, NMAX, DTAU, MAXD, DATA_DIR, and the phase classification thresholds
 #   KAPPA_TOL, SBSTD_TOL, A2_TOL: with κ low ⇔ κ ≤ KAPPA_TOL, S_bstd (bulk bonds, see N_EDGE in the observables script)
@@ -22,7 +22,7 @@
 #   and the figure plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png. The grid is set by the t<t>/mu<μ>.jld2 and
 #   mu<μ>_obs.csv names; grid points without (readable) observables are set to 0 and marked with a cross.
 
-length(ARGS) == 1 || error("usage: julia --project=. hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl <L>")
+length(ARGS) == 1 || error("usage: julia --project=examples hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl <L>")
 L = parse(Int, ARGS[1])
 
 # Same run tag as BoseHubbardCorrelated_NormalizedITE.jl

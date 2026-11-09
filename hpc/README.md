@@ -30,6 +30,9 @@ added after a `git pull` are installed before the computation starts.
     ~/.juliaup/bin/julia +1.12.6 --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
     QUICK=1 julia --project=. hpc/RTFIM_NormalizedITE.jl 6 0.0000 0.1000
 
+The simulation and observables scripts use the slim root environment (`--project=.`); the plot scripts need CairoMakie
+and use `--project=examples` (instantiate it first: `julia --project=examples -e 'using Pkg; Pkg.instantiate()'`).
+
 Run parameters (environment): `DTAU` (0.02), `ORDER` (2), `DMAX_SCHEDULE` ("300:8,100:16,100:32", steps:cap),
 `MAXITER` (total steps of the schedule), `CONVTOL` (1e-8), `FILTER_TAIL_TOL` (1e-8), `SEED` (20266001), `QUICK`,
 `DATA_DIR` ($VSC_DATA/data). Job resources: `WALLTIME` (24:00:00), `MEM` (16GB), `PPN` (4), `JULIA_THREADS` and

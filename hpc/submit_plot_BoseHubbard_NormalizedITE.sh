@@ -43,8 +43,8 @@ echo "PBS: \$PBS_JOBID"
 echo "Bose-Hubbard observables and plot: L = $L, run tag $tag"
 echo "Job started at : \$(date)"
 export T=$T U=$U NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR="$DATA_DIR" N_SAMPLES=$N_SAMPLES S_MUS="$S_MUS"
-$JULIA --project=. --threads=$PPN -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
-$JULIA --project=. --threads=$PPN hpc/plot_BoseHubbard_NormalizedITE.jl $L
+$JULIA --project=examples --threads=$PPN -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+$JULIA --project=examples --threads=$PPN hpc/plot_BoseHubbard_NormalizedITE.jl $L
 echo "Job ended at : \$(date)"
 EOF
 )

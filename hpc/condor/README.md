@@ -98,6 +98,10 @@ Observables-only jobs have one `.out`/`.err` per job (`BHC_obs_L<L>_<cluster>.<p
     juliaup add 1.12.6                                          # the Manifest's julia_version
     git clone https://github.com/KVerv/DisorderKit.jl.git && cd DisorderKit.jl
     julia +1.12.6 --project=. -e 'using Pkg; Pkg.instantiate()'
+    julia +1.12.6 --project=examples -e 'using Pkg; Pkg.instantiate()'   # only to plot on the access point
+
+The jobs use the root environment, which holds only what `src/` and the job scripts load (93 packages); the plotting
+and development packages are in `examples/` (see the top-level README), so a job's setup does not precompile them.
 
 The scripts call `~/.juliaup/bin/julia +<Manifest version>` on the access point (override with `JULIA=...`). To see
 the pool: `condor_status -constraint has_julia -af:h machine cpus memory cpu_performance | sort -u`.

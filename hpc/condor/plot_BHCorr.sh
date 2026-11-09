@@ -34,7 +34,7 @@ JULIA="${JULIA:-$HOME/.juliaup/bin/julia +$(sed -n 's/^julia_version = "\(.*\)"/
 script=hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl
 
 if [ "${CONDOR:-0}" != "1" ]; then
-    exec $JULIA --project=. --startup-file=no $script "$L"
+    exec $JULIA --project=examples --startup-file=no $script "$L"
 fi
 
 MEM="${MEM:-4 G}"
@@ -59,12 +59,12 @@ UG_NAME = $UG_NAME
 executable          = hpc/condor/run_julia.sh
 transfer_executable = TRUE
 arguments           = "$script $L"
-environment         = "HOME=/tmp/\$(UG_NAME) U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR=$DATA_DIR KAPPA_TOL=$KAPPA_TOL SBSTD_TOL=$SBSTD_TOL A2_TOL=$A2_TOL"
+environment         = "HOME=/tmp/\$(UG_NAME) U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR=$DATA_DIR KAPPA_TOL=$KAPPA_TOL SBSTD_TOL=$SBSTD_TOL A2_TOL=$A2_TOL RUN_PROJECT=examples"
 
 should_transfer_files   = TRUE
 preserve_relative_paths = TRUE
 when_to_transfer_output = ON_EXIT
-transfer_input_files    = Project.toml, Manifest.toml, src, $script, $inputs
+transfer_input_files    = Project.toml, Manifest.toml, examples/Project.toml, examples/Manifest.toml, src, $script, $inputs
 transfer_output_files   = $folder/observables.csv, $plotfile
 
 nice_user      = $NICE

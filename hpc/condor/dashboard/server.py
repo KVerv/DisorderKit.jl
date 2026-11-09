@@ -765,7 +765,7 @@ class Dashboard:
         if action == "plot":
             values = self._check(params, MODEL_PARAMS + ["KAPPA_TOL", "SBSTD_TOL", "A2_TOL"])
             env = {**os.environ, **values, "DATA_DIR": "data"}
-            cmd = [*self.local_julia, f"--project={REPO}", "--startup-file=no", os.path.join(REPO, PLOT_SCRIPT), str(L)]
+            cmd = [*self.local_julia, f"--project={os.path.join(REPO, 'examples')}", "--startup-file=no", os.path.join(REPO, PLOT_SCRIPT), str(L)]
             emit(f"$ julia {PLOT_SCRIPT} {L}  (on the laptop, data in {self.args.gather_dest}/data)")
             return stream(cmd, emit, cwd=self.args.gather_dest, env=env)
         raise ValueError(f"unknown action {action}")

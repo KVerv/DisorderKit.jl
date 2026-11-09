@@ -6,7 +6,7 @@
 #
 # Usage (from the repo root, normally through hpc/submit_plot_BoseHubbard_NormalizedITE.sh, which sets the environment):
 #   T=0.16 U=1.0 NMAX=4 DTAU=0.05 MAXD=16 DATA_DIR=$VSC_DATA/data N_SAMPLES=10000 S_MUS="0.3 0.6 1.0" \
-#       julia --project=. hpc/plot_BoseHubbard_NormalizedITE.jl <L>
+#       julia --project=examples hpc/plot_BoseHubbard_NormalizedITE.jl <L>
 #
 # Environment (all required; defaults in hpc/submit_plot_BoseHubbard_NormalizedITE.sh): T, U, NMAX, DTAU, MAXD,
 #   DATA_DIR (the same as for the sweep, so the run tag matches), N_SAMPLES (disorder words are enumerated exactly if
@@ -22,7 +22,7 @@
 # The same mixing of particle numbers lowers the entanglement entropy (most in the bulk), so S is computed for every
 # conditional state projected onto its most likely particle number, the number of its exact ground state.
 
-length(ARGS) == 1 || error("usage: julia --project=. hpc/plot_BoseHubbard_NormalizedITE.jl <L>")
+length(ARGS) == 1 || error("usage: julia --project=examples hpc/plot_BoseHubbard_NormalizedITE.jl <L>")
 L = parse(Int, ARGS[1])
 
 # Same run tag as BoseHubbard_NormalizedITE.jl

@@ -57,8 +57,8 @@ echo "PBS: \$PBS_JOBID"
 echo "Correlated Bose-Hubbard plot: L = $L, run tag $tag"
 echo "Job started at : \$(date)"
 export U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR="$DATA_DIR" KAPPA_TOL=$KAPPA_TOL SBSTD_TOL=$SBSTD_TOL A2_TOL=$A2_TOL
-$JULIA --project=. --threads=$PPN -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
-$JULIA --project=. --threads=$PPN hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl $L
+$JULIA --project=examples --threads=$PPN -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+$JULIA --project=examples --threads=$PPN hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl $L
 echo "Job ended at : \$(date)"
 EOF
 )
