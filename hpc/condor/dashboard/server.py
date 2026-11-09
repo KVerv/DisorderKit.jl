@@ -45,7 +45,8 @@ OBS_SCRIPT = "hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl"
 PLOT_SCRIPT = "hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl"
 JOB_ATTRS = ("ClusterId,ProcId,JobStatus,BHC_stage,BHC_tag,BHC_L,BHC_t,BHC_mu,RemoteHost,LastRemoteHost,"
              "HoldReason,EnteredCurrentStatus,QDate,CompletionDate,ExitCode,RemoveReason,"
-             "RemoteUserCpu,RemoteSysCpu,JobCurrentStartDate,RequestCpus,RequestMemory,ResidentSetSize,ResidentSetSize_RAW")
+             "RemoteUserCpu,RemoteSysCpu,JobCurrentStartDate,RequestCpus,RequestMemory,ResidentSetSize,ResidentSetSize_RAW,"
+             "RemoteWallClockTime,NumJobStarts")
 STALL_AFTER = 30 * 60   # s: a running job that used less than STALL_CPU cores on average after this long is flagged
 STALL_CPU = 0.05
 GATHER_MIN_AGE = 2  # minutes: younger result files may still be written by condor
@@ -60,12 +61,12 @@ PARAMS = {
     "MEM": r"^\d+(\.\d+)? ?[KMGT]?B?$", "DISK": r"^\d+(\.\d+)? ?[KMGT]?B?$",
     "REQUIREMENTS": r"^[A-Za-z0-9_ .<>=!&|()\"']*$", "NICE": r"^(TRUE|FALSE)$",
     "N_SAMPLES": r"^\d+$", "N_EDGE": r"^\d+$", "KAPPA_TOL": NUM, "SBSTD_TOL": NUM, "A2_TOL": NUM,
-    "POINTS": r"^[0-9.\- ,]*$", "DRYRUN": r"^[01]$",
+    "POINTS": r"^[0-9.\- ,]*$", "DRYRUN": r"^[01]$", "RESUME": r"^[01]$",
 }
 MODEL_PARAMS = ["U", "R", "DELTA", "OMEGA", "NMAX", "DTAU", "MAXD"]
 SCRIPT_PARAMS = {
     "submit": MODEL_PARAMS + ["MAXITER", "CONVTOL", "CROSS_WIDTH", "N_SAMPLES", "N_EDGE", "PPN", "OBS_THREADS", "MEM",
-                              "DISK", "REQUIREMENTS", "NICE", "POINTS", "DRYRUN"],
+                              "DISK", "REQUIREMENTS", "NICE", "POINTS", "DRYRUN", "RESUME"],
     "recompute_obs": MODEL_PARAMS + ["N_SAMPLES", "N_EDGE", "PPN", "MEM", "REQUIREMENTS", "NICE", "POINTS"],
 }
 SCRIPT = {"submit": "hpc/condor/sweep_BHCorr.sh", "recompute_obs": "hpc/condor/obs_BHCorr.sh"}
@@ -183,6 +184,12 @@ def job_info(j, now=None):
         cpu = (j.get("RemoteUserCpu") or 0) + (j.get("RemoteSysCpu") or 0)
         info.update(start=start, wall=wall, cpus=j.get("RequestCpus"), cores_used=cpu / wall,
                     stalled=wall > STALL_AFTER and cpu / wall < STALL_CPU)
+    if j.get("JobStatus") == 4:
+        # finished job: total wall time over all its runs (RemoteWallClockTime), else that of the last run
+        rt = j.get("RemoteWallClockTime")
+        if not isinstance(rt, (int, float)) and j.get("CompletionDate") and start:
+            rt = j["CompletionDate"] - start
+        info.update(runtime=rt if isinstance(rt, (int, float)) else None, starts=j.get("NumJobStarts"))
     req = j.get("RequestMemory")
     if isinstance(req, (int, float)) and req > 0:
         # ResidentSetSize: peak of the job (KB, rounded up by condor), ResidentSetSize_RAW: current (KB). condor's
@@ -299,7 +306,7 @@ def merge(remote, local, queue, history, obs_version="", n_edge=None):
         f = r if r.get("state") else l            # the state that counts: the access point's (newer) or the laptop's
         o = r if r.get("obs") else l               # observables: likewise
         where = [w for w, x in (("laptop", l), ("access point", r)) if x.get("state") or x.get("obs")]
-        rec = {"t": p["t"], "mu": p["mu"], "eps": f.get("eps"), "nsteps": f.get("nsteps"), "maxiter": f.get("maxiter"),
+        rec = {"t": p["t"], "mu": p["mu"], "eps": f.get("eps"), "nsteps": f.get("nsteps"), "maxiter": f.get("maxiter"), "resumed_from": f.get("resumed_from"),
                "convtol": f.get("convtol"), "mtime": f.get("mtime"), "has_state": bool(f.get("state")),
                "n_edge": o.get("n_edge"), "obs_version": o.get("obs_version"), "where": where,
                "on_remote": bool(r.get("state") or r.get("obs")), "reason": None, "job": None, "obs_job": None}
@@ -313,6 +320,8 @@ def merge(remote, local, queue, history, obs_version="", n_edge=None):
                 rec["state"], rec["reason"] = "failed", "unreadable state: " + f["error"]
             else:
                 rec["state"] = "done" if f.get("converged") else "unconverged"
+                if key in last["ite"] and last["ite"][key][1].get("JobStatus") == 4:
+                    rec["job"] = job_info(last["ite"][key][1])   # the finished job: runtime, peak RAM
         elif key in last["ite"]:
             j = last["ite"][key][1]
             rec["state"], rec["reason"], rec["job"] = "failed", failure(j), job_info(j)
@@ -325,6 +334,8 @@ def merge(remote, local, queue, history, obs_version="", n_edge=None):
             stale = (obs_version and o.get("obs_version") != obs_version) or \
                     (n_edge is not None and o.get("n_edge") != n_edge)
             rec["obs"] = "outdated" if stale else "done"
+            if key in last["obs"] and last["obs"][key][1].get("JobStatus") == 4:
+                rec["obs_job"] = job_info(last["obs"][key][1])
         elif key in last["obs"] and f.get("state"):
             rec["obs"], rec["obs_job"] = "failed", job_info(last["obs"][key][1])
         else:
@@ -370,7 +381,9 @@ def needs_run(p, maxiter, convtol, force=False):
     eps = float("inf") if eps is None else eps
     if eps <= convtol:
         return None
-    if maxiter > (p.get("maxiter") or 0) or convtol < (p.get("convtol") or float("inf")):
+    if maxiter > (p.get("maxiter") or 0):
+        return "resume"                               # continues the ITE from the stored state
+    if convtol < (p.get("convtol") or float("inf")):
         return "rerun"
     return None
 
@@ -652,25 +665,39 @@ class Dashboard:
             st = self.status(tag, L, n_edge, fresh=True)
             known = {(p["t"], p["mu"]): p for p in st["points"]}
             grid = self._grid(params) or list(known)
-            todo, nrun, nrerun, nskip, nqueued = [], 0, 0, 0, 0
+            force = params.get("FORCE") == "1"
+            todo, nrun, nrerun, nresume, nskip, nqueued = [], 0, 0, 0, 0, 0
+            upload = []   # states of resumed points that are only on the laptop
             for key in grid:
                 p = known.get(key, {"state": "none", "has_state": False})
-                why = needs_run(p, maxiter, convtol, params.get("FORCE") == "1")
+                why = needs_run(p, maxiter, convtol, force)
                 if why is None:
                     nqueued += p.get("state") in ("idle", "running", "held")
                     nskip += p.get("state") not in ("idle", "running", "held")
                     continue
                 nrun += why == "run"
                 nrerun += why == "rerun"
+                nresume += why == "resume"
+                if why == "resume" and not p.get("on_remote"):
+                    upload.append(key)
                 todo.append(key)
-            emit(f"{len(todo)} point(s) to submit ({nrun} new, {nrerun} rerun with the new MAXITER/CONVTOL), "
-                 f"{nskip} done, {nqueued} in the queue")
+            emit(f"{len(todo)} point(s) to submit ({nrun} new, {nresume} resumed from their state up to MAXITER, "
+                 f"{nrerun} rerun from scratch for the new CONVTOL), {nskip} done, {nqueued} in the queue")
             if not todo:
                 return 0
             values["POINTS"] = ",".join(f"{t} {m}" for t, m in todo)
+            values["RESUME"] = "0" if force else "1"
             if action == "preview":
                 values["DRYRUN"] = "1"
+                if upload:
+                    emit(f"(submit would first upload {len(upload)} state(s) from the laptop to resume them)")
             else:
+                if upload:
+                    emit(f"Uploading {len(upload)} state(s) from the laptop to the access point, to resume them ...")
+                    rel = [f"data/{MODEL}/{tag}/L{L}/t{t}/mu{m}.jld2" for t, m in upload]
+                    rc = self._rsync(rel, self.args.gather_dest + "/", self.remote.path(), emit)
+                    if rc != 0:
+                        return rc
                 rc = self._sync(params, emit, task)
                 if rc != 0:
                     return rc
@@ -871,7 +898,10 @@ def selftest():
          "HoldReason": "Error from slot: failed to transfer output"},
         {"ClusterId": 9, "ProcId": 0, "JobStatus": 1, "BHC_stage": "ite", "BHC_t": "0.4000", "BHC_mu": "0.2000"}]
     history = [{"ClusterId": 5, "ProcId": 3, "JobStatus": 4, "ExitCode": 1, "CompletionDate": 100, "BHC_stage": "ite",
-                "BHC_t": "0.3000", "BHC_mu": "0.4000"}]
+                "BHC_t": "0.3000", "BHC_mu": "0.4000"},
+               {"ClusterId": 4, "ProcId": 0, "JobStatus": 4, "ExitCode": 0, "CompletionDate": 90, "BHC_stage": "ite",
+                "BHC_t": "0.1000", "BHC_mu": "0.2000", "RemoteWallClockTime": 5400.0, "NumJobStarts": 2,
+                "RequestMemory": 6144, "ResidentSetSize": 3145728}]
     recs = {(p["t"], p["mu"]): p for p in merge(remote, local, queue, history, "v2", 2)}
     got = {k: (p["state"], p["obs"]) for k, p in recs.items()}
     want = {("0.1000", "0.2000"): ("done", "done"), ("0.1000", "0.4000"): ("unconverged", "outdated"),
@@ -880,12 +910,16 @@ def selftest():
             ("0.4000", "0.2000"): ("idle", "none"), ("0.5000", "0.2000"): ("done", "outdated")}
     assert got == want, f"\n got  {got}\n want {want}"
     assert recs[("0.1000", "0.2000")]["where"] == ["laptop", "access point"]
+    j = recs[("0.1000", "0.2000")]["job"]   # finished job attached to a done point
+    assert j["id"] == "4.0" and j["runtime"] == 5400.0 and j["starts"] == 2 and j["mem_peak"] == 3072, j
+    assert recs[("0.5000", "0.2000")]["job"] is None   # no history job: no info
     assert recs[("0.1000", "0.4000")]["where"] == ["laptop"] and not recs[("0.1000", "0.4000")]["on_remote"]
     # submit decisions (MAXITER 2000 / 4000, CONVTOL 1e-6)
     assert needs_run(recs[("0.2000", "0.4000")], 2000, 1e-6) == "run"
     assert needs_run(recs[("0.5000", "0.2000")], 2000, 1e-6) is None              # converged
     assert needs_run(recs[("0.1000", "0.4000")], 2000, 1e-6) is None              # unconverged, same settings
-    assert needs_run(recs[("0.1000", "0.4000")], 4000, 1e-6) == "rerun"           # more steps
+    assert needs_run(recs[("0.1000", "0.4000")], 4000, 1e-6) == "resume"          # more steps: continue the state
+    assert needs_run(recs[("0.1000", "0.4000")], 2000, 1e-8) == "rerun"           # only a smaller CONVTOL
     assert needs_run(recs[("0.2000", "0.2000")], 4000, 1e-6) is None              # in the queue
     assert needs_run(recs[("0.5000", "0.2000")], 2000, 1e-6, force=True) == "run"
     assert sections("@@A\n1\n2\n@@B\n@@END\n") == {"A": "1\n2", "B": "", "END": ""}

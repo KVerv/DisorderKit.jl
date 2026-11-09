@@ -18,13 +18,17 @@
 # and CONVTOL of the environment:
 #   run       there is no (readable) stored state
 #   uptodate  the stored state is converged for this job: final ϵ_conv ≤ CONVTOL
-#   rerun     it is not, and MAXITER > stored maxiter or CONVTOL < stored convtol (the rerun starts from scratch)
+#   resume    it is not, and MAXITER > stored maxiter (and RESUME ≠ 0): the run continues the ITE from the stored state
+#   rerun     it is not, and CONVTOL < stored convtol only (or RESUME = 0): the rerun starts from scratch
 #   uptodate  it is not, but the same settings would give the same result
+# Resume: MAXITER is the total number of steps, so a state stored after n steps continues for at most MAXITER - n steps;
+# the per-step diagnostics (info) of both runs are concatenated and params.resumed_from = n (0 for a fresh run).
 # t and μ (the mean values) are used verbatim in the file name (the sweep script passes them formatted as %.4f).
 #
 # Run parameters (environment, all required; their defaults are set in hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh):
 #   U, R (correlation r), DELTA (potential disorder Δ), OMEGA (relative hopping disorder Ω), NMAX, DTAU, MAXD, MAXITER, CONVTOL, CROSS_WIDTH, DATA_DIR
-# Optional: BLAS_THREADS (default: as many as Julia threads)
+# Optional: BLAS_THREADS (default: as many as Julia threads), RESUME (default 1: continue an unconverged stored state
+#   when MAXITER > its maxiter, 0: always start from scratch)
 #
 # Output: <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/t<t>/mu<μ>.jld2,
 #   run tag U<U>_r<R>_Delta<DELTA>_Omega<OMEGA>_nmax<NMAX>_dtau<DTAU>_D<MAXD>
@@ -38,6 +42,7 @@ L_str, t_str, μ_str = args
 L, t, μ = parse(Int, L_str), parse(Float64, t_str), parse(Float64, μ_str)
 
 param(k) = haskey(ENV, k) ? ENV[k] : error("environment variable $k not set; run parameters are set in hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh")
+resume_enabled = get(ENV, "RESUME", "1") != "0"
 U_str = param("U")
 r_str = param("R")
 Δ_str = param("DELTA")
@@ -76,6 +81,7 @@ function status(filename, maxiter, convtol)
     maxiter > stored.maxiter && push!(changes, "maxiter $(stored.maxiter) → $maxiter")
     convtol < stored.convtol && push!(changes, "convtol $(stored.convtol) → $convtol")
     isempty(changes) && return "uptodate", "unconverged ($ϵ), but run with maxiter $(stored.maxiter) ≥ $maxiter and convtol $(stored.convtol) ≤ $convtol"
+    resume_enabled && maxiter > stored.maxiter && return "resume", "unconverged ($ϵ), $(join(changes, ", ")), continues from the stored state"
     return "rerun", "unconverged ($ϵ), $(join(changes, ", "))"
 end
 if status_only
@@ -133,26 +139,52 @@ function uniform_state(Hs, ps, L, d)
     return DisorderKit.FiniteDisorderMPS([[W for _ in p] for p in site_ps], site_ps, sectors)
 end
 
-ψ0 = uniform_state(Hs, ps, L, d)
+# Initial state: the stored state if it can be continued (see the header), else the uniform superposition
+function load_resume(filename)
+    resume_enabled || return nothing, "RESUME = 0"
+    isfile(filename) || return nothing, "no stored state"
+    stored = try
+        jldopen(filename, "r") do f
+            (; ψ = f["ψ"], info = f["info"], params = f["params"], meta = f["meta"], nsteps = f["nsteps"])
+        end
+    catch e
+        return nothing, "unreadable stored state: $(sprint(showerror, e))"
+    end
+    sp = stored.params
+    (sp.L == L && sp.nmax == nmax && sp.maxD == maxD && sp.Δτ == Δτ && sp.ps ≈ ps && sp.cross_width == cross_width) ||
+        return nothing, "stored state has other parameters"
+    ϵ = isempty(stored.info.ϵsconv) ? Inf : last(stored.info.ϵsconv)
+    ϵ <= convtol && return nothing, "stored state is converged (ϵ = $ϵ)"
+    sp.maxiter < maxiter && stored.nsteps < maxiter || return nothing, "stored state already has maxiter $(sp.maxiter) ≥ $maxiter"
+    return stored, "unconverged after $(stored.nsteps) steps (ϵ = $(round(ϵ; sigdigits = 2)))"
+end
+stored, why = load_resume(filename)
+n0 = stored === nothing ? 0 : stored.nsteps
+ψ0 = stored === nothing ? uniform_state(Hs, ps, L, d) : stored.ψ
+println(stored === nothing ? "Starting from the uniform state ($why)" : "Resuming from $filename: $why, at most $(maxiter - n0) more steps")
 
-params = (; L, t, μ, U, r, Δ, Ω, nmax, ps, Δτ, maxD, maxiter, convtol, cross_width)
+params = (; L, t, μ, U, r, Δ, Ω, nmax, ps, Δτ, maxD, maxiter, convtol, cross_width, resumed_from = n0)
 println("Correlated Bose-Hubbard normalized ITE: L = $L, t = $t, μ = $μ, U = $U, r = $r, Δ = $Δ, Ω = $Ω, nmax = $nmax, maxD = $maxD, Δτ = $Δτ")
 println("Output: $filename")
 
 to = TimerOutput()
-alg = DisorderKit.Groundstate_FiniteNormalizedITE(; maxD, order = 2, convtol, maxiter, cross_width, verbosity = 1,
-                                                  timer_output = to)
+# A resumed run does the remaining maxiter - n0 steps, with other random streams than the steps already done
+alg = DisorderKit.Groundstate_FiniteNormalizedITE(; maxD, order = 2, convtol, maxiter = maxiter - n0, cross_width, verbosity = 1,
+                                                  timer_output = to, seed = 20266001 + n0)
 walltime = @elapsed ψ, _, info = DisorderKit.groundstate(ψ0, Hs, Δτ, alg)
 
-nsteps = length(info.Es)
-converged = !isempty(info.ϵsconv) && info.ϵsconv[end] <= convtol
 info_nt = NamedTuple{fieldnames(typeof(info))}(Tuple(getfield(info, f) for f in fieldnames(typeof(info))))
+# Resumed: the per-step diagnostics of the stored run followed by those of this one
+stored === nothing || (info_nt = NamedTuple{keys(info_nt)}(Tuple(vcat(stored.info[k], info_nt[k]) for k in keys(info_nt))))
+nsteps = length(info_nt.Es)
+converged = !isempty(info_nt.ϵsconv) && info_nt.ϵsconv[end] <= convtol
 
 gitcmd(args...) = try readchomp(Cmd(`git -C $(pkgdir(DisorderKit)) $args`)) catch; "unknown" end
 meta = (; walltime, timer = TimerOutputs.todict(to), git_commit = gitcmd("rev-parse", "HEAD"),
         git_dirty = !isempty(gitcmd("status", "--porcelain", "--untracked-files=no")),
         julia_version = string(VERSION), hostname = gethostname(), threads = Threads.nthreads(),
-        blas_threads = BLAS.get_num_threads(), date = string(now()))
+        blas_threads = BLAS.get_num_threads(), date = string(now()),
+        previous = stored === nothing ? nothing : stored.meta)   # meta of the run this one continues
 
 # Write to a temporary file and move it in place, so an interrupted job never leaves a partial result
 mkpath(folder)
@@ -160,6 +192,6 @@ tmp = filename * ".tmp"
 jldsave(tmp; ψ, info = info_nt, converged, nsteps, params, meta)
 mv(tmp, filename; force = true)
 
-println("Done: $nsteps steps, converged = $converged, walltime = $(round(walltime; digits = 1)) s")
+println("Done: $nsteps steps$(n0 > 0 ? " ($n0 stored + $(nsteps - n0) new)" : ""), converged = $converged, walltime = $(round(walltime; digits = 1)) s")
 println("Saved $filename")
 show(to; allocations = false, compact = true); println()

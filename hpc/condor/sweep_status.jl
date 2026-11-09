@@ -4,7 +4,7 @@
 # Usage (from the repo root):
 #   julia --project=. hpc/condor/sweep_status.jl --list          all sweeps: [{tag, L, n_states, n_obs, mtime}]
 #   julia --project=. hpc/condor/sweep_status.jl <tag> <L>       one sweep:
-#     {tag, L, points: [{t, mu, state, error, converged, eps, nsteps, maxiter, convtol, mtime, obs, n_edge, obs_version}],
+#     {tag, L, points: [{t, mu, state, error, converged, eps, nsteps, maxiter, convtol, resumed_from, mtime, obs, n_edge, obs_version}],
 #      planned: [[t, mu], ...]}
 # t and mu are the strings of the file names (%.4f). `state` is true if t<t>/mu<μ>.jld2 exists; `error` is set if it
 # cannot be read. `converged` is the stored flag (final ϵ_conv ≤ CONVTOL of that run). `obs` is true if mu<μ>_obs.csv
@@ -66,6 +66,7 @@ function sweep_status(tag, L)
                     p["nsteps"] = haskey(f, "nsteps") ? f["nsteps"] : length(ϵs)
                     p["maxiter"] = params.maxiter
                     p["convtol"] = params.convtol
+                    p["resumed_from"] = haskey(params, :resumed_from) ? params.resumed_from : 0   # steps of the run it continued
                     p["converged"] = haskey(f, "converged") ? f["converged"] : (!isempty(ϵs) && last(ϵs) <= params.convtol)
                 end
             end

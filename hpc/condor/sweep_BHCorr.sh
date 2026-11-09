@@ -8,15 +8,18 @@
 #   DRYRUN=1 bash hpc/condor/sweep_BHCorr.sh 6                # only print the points and the submit file
 #   TS="0.05 0.1" MUS="0.2 0.4 0.6" bash hpc/condor/sweep_BHCorr.sh 6
 #   R=0.5 DELTA=0.3 OMEGA=0.5 MAXD=32 MAXITER=1000 bash hpc/condor/sweep_BHCorr.sh 6
-#   MAXITER=4000 bash hpc/condor/sweep_BHCorr.sh 6            # rerun the unconverged points with more steps
-#   FORCE=1 bash hpc/condor/sweep_BHCorr.sh 6                 # resubmit every point, also those that are done
+#   MAXITER=4000 bash hpc/condor/sweep_BHCorr.sh 6            # continue the unconverged points up to 4000 steps in total
+#   FORCE=1 bash hpc/condor/sweep_BHCorr.sh 6                 # resubmit every point from scratch, also those that are done
 #   POINTS="0.1000 0.3000,0.1200 0.3000" bash hpc/condor/sweep_BHCorr.sh 6   # exactly these points (the dashboard)
 #   PPN=4 REQUIREMENTS="cpu_performance > 7" bash hpc/condor/sweep_BHCorr.sh 6
 #
 # Which points are submitted: with POINTS ("t mu" pairs separated by commas) exactly those, without any status check
 # (the dashboard decides, since gathered states only exist on the laptop). Otherwise every point of TS × MUS whose state
 # here is missing or can be improved, as decided by hpc/BoseHubbardCorrelated_NormalizedITE.jl --status (run: no
-# state, rerun: unconverged and MAXITER/CONVTOL improved, uptodate: skipped). In both cases points that still have a
+# state, resume: unconverged and MAXITER raised, rerun: unconverged and only CONVTOL lowered, uptodate: skipped).
+# Resume (RESUME=1, the default; FORCE=1 sets RESUME=0): a point whose state is here (with POINTS: any point with a
+# state here; the job checks whether it can be continued and else starts from scratch) is queued with its state as an
+# input file, and the job continues the ITE from it up to MAXITER steps in total. In both cases points that still have a
 # job in the queue (idle, running or held) are skipped, so a point is never submitted twice. The jobs carry the
 # attributes BHC_stage = "ite", BHC_tag, BHC_L, BHC_t and BHC_mu (used for this and by the dashboard).
 #
@@ -47,6 +50,8 @@ export MAXITER="${MAXITER:-2000}"
 export CONVTOL="${CONVTOL:-1e-6}"
 export CROSS_WIDTH="${CROSS_WIDTH:-32}"
 export DATA_DIR=data           # relative, so the transferred files land at the same path here and in the sandbox
+[ "${FORCE:-0}" = "1" ] && RESUME=0
+export RESUME="${RESUME:-1}"   # continue unconverged states (see above)
 # Observables computed in the same job (see hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl)
 N_SAMPLES="${N_SAMPLES:-1000}"
 N_EDGE="${N_EDGE:-2}"
@@ -94,6 +99,7 @@ else
 fi
 
 points=()
+resume=()
 rerun=0
 skipped=0
 queued=0
@@ -115,10 +121,20 @@ for p in "${candidates[@]}"; do
             echo "rerun  L=$L t=$t μ=$mu (${st[3]})"
             rerun=$((rerun + 1))
         fi
+        if [ "${st[2]}" = "resume" ]; then
+            echo "resume L=$L t=$t μ=$mu (${st[3]})"
+            resume+=("$t $mu")
+            continue
+        fi
+    elif [ "$RESUME" = "1" ] && [ -f "$DATA_DIR/BoseHubbardCorrelated_NormalizedITE/$tag/L$L/t$t/mu$mu.jld2" ]; then
+        resume+=("$t $mu")   # POINTS: the job decides whether the state can be continued
+        continue
     fi
     points+=("$t $mu")
 done
-if [ "${#points[@]}" = "0" ]; then
+total=$((${#points[@]} + ${#resume[@]}))
+counts="${#points[@]} from scratch ($rerun rerun), ${#resume[@]} resumed"
+if [ "$total" = "0" ]; then
     echo "L = $L: nothing to submit, $skipped skipped (done), $queued already queued"
     exit 0
 fi
@@ -126,6 +142,7 @@ fi
 logdir="logs/BoseHubbardCorrelated_NormalizedITE/$tag/L$L/condor"
 stamp=$(date +%Y%m%d_%H%M%S)
 pointsfile="$logdir/points_$stamp.txt"
+resumefile="$logdir/resume_$stamp.txt"
 submitfile="$logdir/sweep_$stamp.submit"
 reqs="has_julia${REQUIREMENTS:+ && ($REQUIREMENTS)}"
 pointdir="$DATA_DIR/BoseHubbardCorrelated_NormalizedITE/$tag/L$L/t\$(t)"
@@ -138,7 +155,7 @@ UG_NAME = $UG_NAME
 executable          = hpc/condor/run_julia.sh
 transfer_executable = TRUE
 arguments           = "$script $L \$(t) \$(mu) :: --threads=$OBS_THREADS $obsscript $L \$(t) \$(mu)"
-environment         = "HOME=/tmp/\$(UG_NAME) JULIA_THREADS=$JULIA_THREADS BLAS_THREADS=$BLAS_THREADS U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD MAXITER=$MAXITER CONVTOL=$CONVTOL CROSS_WIDTH=$CROSS_WIDTH DATA_DIR=$DATA_DIR N_SAMPLES=$N_SAMPLES N_EDGE=$N_EDGE OBS_VERSION=$OBS_VERSION"
+environment         = "HOME=/tmp/\$(UG_NAME) JULIA_THREADS=$JULIA_THREADS BLAS_THREADS=$BLAS_THREADS U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD MAXITER=$MAXITER CONVTOL=$CONVTOL CROSS_WIDTH=$CROSS_WIDTH RESUME=$RESUME DATA_DIR=$DATA_DIR N_SAMPLES=$N_SAMPLES N_EDGE=$N_EDGE OBS_VERSION=$OBS_VERSION"
 
 should_transfer_files   = TRUE
 preserve_relative_paths = TRUE
@@ -164,18 +181,23 @@ output = $logdir/\$(JOBNAME)_t\$(t)_mu\$(mu)_\$(Cluster).out
 error  = $logdir/\$(JOBNAME)_t\$(t)_mu\$(mu)_\$(Cluster).err
 log    = $logdir/\$(Cluster).log
 
-queue t, mu from $pointsfile
+$([ "${#points[@]}" = "0" ] || echo "queue t, mu from $pointsfile")
+$([ "${#resume[@]}" = "0" ] || printf '%s\n' "" "# Resumed points: their stored state is transferred to the job, which continues the ITE from it" \
+    "transfer_input_files    = Project.toml, Manifest.toml, src, $script, $obsscript, $pointdir/mu\$(mu).jld2" \
+    "queue t, mu from $resumefile")
 EOF
 )
 
 if [ "${DRYRUN:-0}" = "1" ]; then
-    printf '%s\n' "${points[@]}" | sed 's/^/point  /'
+    [ "${#points[@]}" = "0" ] || printf '%s\n' "${points[@]}" | sed 's/^/point  /'
+    [ "${#resume[@]}" = "0" ] || printf '%s\n' "${resume[@]}" | sed 's/^/resume /'
     echo "$submit" | sed 's/^/       | /'
-    echo "L = $L: ${#points[@]} job(s) to submit ($rerun rerun), $skipped skipped (done), $queued already queued"
+    echo "L = $L: $total job(s) to submit ($counts), $skipped skipped (done), $queued already queued"
 else
     mkdir -p "$logdir"
-    printf '%s\n' "${points[@]}" > "$pointsfile"
+    [ "${#points[@]}" = "0" ] || printf '%s\n' "${points[@]}" > "$pointsfile"
+    [ "${#resume[@]}" = "0" ] || printf '%s\n' "${resume[@]}" > "$resumefile"
     echo "$submit" > "$submitfile"
     condor_submit "$submitfile"
-    echo "L = $L: ${#points[@]} job(s) submitted ($rerun rerun), $skipped skipped (done), $queued already queued; submit file $submitfile"
+    echo "L = $L: $total job(s) submitted ($counts), $skipped skipped (done), $queued already queued; submit file $submitfile"
 fi

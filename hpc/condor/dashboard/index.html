@@ -200,7 +200,7 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
       <h2>Actions</h2>
       <div class="action"><span class="name"><span class="step">1</span>Submit / continue sweep</span>
         <span><button class="btn small" data-act="preview">Preview</button> <button class="btn primary" data-act="submit">Submit</button></span>
-        <span class="desc">Pulls the latest code on the access point, then submits every grid point without a result on the laptop or the access point. Each job runs the simulation and its observables. Points that are done or already queued are skipped; to rerun unconverged points, raise MAXITER first.</span></div>
+        <span class="desc">Pulls the latest code on the access point, then submits every grid point without a result on the laptop or the access point. Each job runs the simulation and its observables. Points that are done or already queued are skipped. To continue unconverged points, raise MAXITER first: they resume from their stored state (uploaded from the laptop if needed) up to MAXITER steps in total. FORCE restarts every point from scratch.</span></div>
       <div class="action"><span class="name"><span class="step">2</span>Gather data</span>
         <button class="btn primary" data-act="gather">Gather<span class="count" id="gatherCount">0</span></button>
         <span class="desc" id="gatherDesc">Copies finished results to the laptop, then deletes them and their logs on the access point. A file is only deleted after it was copied completely.</span></div>
@@ -545,7 +545,8 @@ function kv(p) {
   const rows = [["Point", `t/U = ${p.t}, μ/U = ${p.mu}`], ["State", LABEL[p.state]]];
   if (p.reason) rows.push(["Why", p.reason]);
   if (p.eps !== undefined && p.eps !== null) rows.push(["ϵ_conv", `${fmt(p.eps)} (tol ${fmt(p.convtol, 0)})`]);
-  if (p.nsteps !== undefined && p.nsteps !== null) rows.push(["Steps", `${p.nsteps} of max ${p.maxiter ?? "?"}`]);
+  if (p.nsteps !== undefined && p.nsteps !== null) rows.push(["Steps", `${p.nsteps} of max ${p.maxiter ?? "?"}` +
+    (p.resumed_from > 0 ? ` (resumed after ${p.resumed_from})` : "")]);
   if (p.job) rows.push(["Job", `${p.job.id}${p.job.host ? " on " + p.job.host.replace(/^slot\d+(_\d+)?@/, "") : ""}${p.job.since && ["idle", "running", "held"].includes(p.state) ? ` · ${since(p.job.since)}` : ""}`]);
   if (p.state === "running" && p.job && p.job.wall) {
     rows.push(["CPU", `${p.job.cores_used.toFixed(2)} of ${p.job.cpus ?? "?"} cores on average over ${dur(p.job.wall)}` +
@@ -555,6 +556,17 @@ function kv(p) {
     rows.push(["Current step", pr ? stepText(pr) : "not read yet (click the point, or Check running jobs)"]);
   }
   if (p.job && ["held", "failed"].includes(p.state) && memText(p.job)) rows.push(["Memory", memText(p.job)]);
+  if (p.job && ["done", "unconverged"].includes(p.state)) {
+    if (p.job.runtime !== null && p.job.runtime !== undefined)
+      rows.push(["Runtime", dur(p.job.runtime) + (p.job.starts > 1 ? ` (total over ${p.job.starts} starts)` : "")]);
+    if (memText(p.job)) rows.push(["Max RAM", memText(p.job)]);
+  }
+  if (p.obs_job && p.obs_job.status === 4 && ["done", "outdated"].includes(p.obs)) {
+    const parts = [];
+    if (p.obs_job.runtime !== null && p.obs_job.runtime !== undefined) parts.push(`runtime ${dur(p.obs_job.runtime)}`);
+    if (memText(p.obs_job)) parts.push(`max RAM ${memText(p.obs_job)}`);
+    if (parts.length) rows.push(["Observables job", `${p.obs_job.id} · ${parts.join(" · ")}`]);
+  }
   rows.push(["Observables", OBS_LABEL[p.obs] + (p.n_edge !== null && p.n_edge !== undefined && p.obs === "done" ? ` (N_EDGE ${p.n_edge})` : "")]);
   if (p.where && p.where.length) rows.push(["Stored on", p.where.join(" and ")]);
   if (p.mtime) rows.push(["Computed", new Date(p.mtime * 1000).toLocaleString()]);

@@ -43,8 +43,9 @@ The workflow, one button each:
 
 1. **Submit**: pulls the latest code on the access point (warns if the laptop has uncommitted or unpushed changes, since
    the cluster runs the code on GitHub) and submits every grid point without a result on the laptop or the access point.
-   Each job runs the ITE and the observables. Points that are done or in the queue are skipped; raise MAXITER (or lower
-   CONVTOL) to rerun unconverged points. *Preview* shows what would be submitted.
+   Each job runs the ITE and the observables. Points that are done or in the queue are skipped; raise MAXITER to continue
+   unconverged points from their stored state (up to MAXITER steps in total; a state that is only on the laptop is
+   uploaded first), or lower CONVTOL to rerun them from scratch. FORCE restarts every point from scratch. *Preview* shows what would be submitted.
 2. **Gather**: copies the finished results to this repo's `data/` (rsync), then deletes them on the access point, with
    their logs, and the cluster logs and submit files once no job of the sweep is left. A file is deleted only after it was
    copied completely, and results younger than 2 minutes or of points still in the queue wait for the next Gather. The
@@ -99,13 +100,13 @@ the pool: `condor_status -constraint has_julia -af:h machine cpus memory cpu_per
     git pull
     DELTA=0.3 OMEGA=0.5 DRYRUN=1 bash hpc/condor/sweep_BHCorr.sh 6    # the points and the submit file
     DELTA=0.3 OMEGA=0.5 bash hpc/condor/sweep_BHCorr.sh 6
-    DELTA=0.3 OMEGA=0.5 MAXITER=4000 bash hpc/condor/sweep_BHCorr.sh 6   # rerun unconverged points
+    DELTA=0.3 OMEGA=0.5 MAXITER=4000 bash hpc/condor/sweep_BHCorr.sh 6   # continue unconverged points
     DELTA=0.3 OMEGA=0.5 bash hpc/condor/plot_BHCorr.sh 6
 
 Without `POINTS` the sweep script decides from the states on the access point only, so after a Gather (states only on the
 laptop) it would submit those points again: use the dashboard, or pass `POINTS="t mu,t mu,…"` explicitly.
 
-Parameters (environment): `TS`, `MUS`, `POINTS`, `U`, `R`, `DELTA`, `OMEGA`, `NMAX`, `DTAU`, `MAXD`, `MAXITER`,
+Parameters (environment): `TS`, `MUS`, `POINTS`, `U`, `R`, `DELTA`, `OMEGA`, `NMAX`, `DTAU`, `MAXD`, `MAXITER`, `RESUME` (default 1; 0: no resume),
 `CONVTOL`, `CROSS_WIDTH`, `N_SAMPLES`, `N_EDGE` (observables), `KAPPA_TOL`, `SBSTD_TOL`, `A2_TOL` (plot), `FORCE`, `DRYRUN`. Condor
 resources: `PPN` (request_cpus; 8 sweep, 4 observables-only), `JULIA_THREADS`, `BLAS_THREADS` (ITE: 1 and `PPN`),
 `OBS_THREADS` (observables in the sweep job: `PPN`), `MEM` ("6 G"), `DISK` ("2 G"), `REQUIREMENTS` (extra requirements,

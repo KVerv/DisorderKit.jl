@@ -6,15 +6,16 @@
 #   DRYRUN=1 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6           # only print what would be submitted
 #   TS="0.05 0.1" MUS="0.2 0.4 0.6" bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6
 #   R=0.5 DELTA=0.3 OMEGA=0.5 MAXD=32 MAXITER=1000 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6
-#   MAXITER=4000 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6       # rerun the unconverged points with more steps
-#   FORCE=1 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6            # resubmit every point, also those that are done
+#   MAXITER=4000 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6       # continue the unconverged points up to 4000 steps
+#   FORCE=1 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6            # resubmit every point from scratch, also those that are done
 #   PPN=4 JULIA_THREADS=1 BLAS_THREADS=4 bash hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh 6
 #
 # Run parameters (U, R, DELTA, OMEGA, NMAX, DTAU, MAXD, MAXITER, CONVTOL, CROSS_WIDTH, DATA_DIR) and their defaults are set below;
 # override them from the caller's environment. They are written into every job script,
 # hpc/BoseHubbardCorrelated_NormalizedITE.jl has no defaults of its own.
 # A point is only submitted if it has no stored state (run), or if its stored state is not converged for this CONVTOL
-# (final ϵ_conv > CONVTOL) and this sweep has a larger MAXITER or a smaller CONVTOL than the stored run (rerun, from
+# (final ϵ_conv > CONVTOL) and this sweep has a larger MAXITER (resume: the job continues the ITE from the stored state,
+# up to MAXITER steps in total; RESUME=0 or FORCE=1 restart from scratch instead) or only a smaller CONVTOL (rerun, from
 # scratch). Converged points, and unconverged points that the same settings would not improve, are skipped. The decision
 # is made by hpc/BoseHubbardCorrelated_NormalizedITE.jl --status (it reads the stored params and ϵ_conv history).
 # Results: <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/t<t>/mu<μ>.jld2
@@ -45,6 +46,8 @@ export MAXITER="${MAXITER:-2000}"
 export CONVTOL="${CONVTOL:-1e-6}"
 export CROSS_WIDTH="${CROSS_WIDTH:-32}"
 export DATA_DIR="${DATA_DIR:-${VSC_DATA:-.}/data}"
+[ "${FORCE:-0}" = "1" ] && RESUME=0
+export RESUME="${RESUME:-1}"   # continue unconverged stored states (see above)
 
 # Resources per job
 WALLTIME="${WALLTIME:-1:00:00}"
@@ -82,8 +85,8 @@ for t in $TS; do
             skipped=$((skipped + 1))
             continue
         fi
-        if [ "$st" = "rerun" ]; then
-            echo "rerun  L=$L t=$t μ=$mu ($reason)"
+        if [ "$st" = "rerun" ] || [ "$st" = "resume" ]; then
+            echo "$(printf '%-6s' "$st") L=$L t=$t μ=$mu ($reason)"
             rerun=$((rerun + 1))
         fi
 
@@ -96,7 +99,7 @@ echo "PBS: \$PBS_JOBID"
 echo "Correlated Bose-Hubbard normalized ITE: L = $L, t = $t, μ = $mu, r = $R, Δ = $DELTA, Ω = $OMEGA"
 echo "Job started at : \$(date)"
 export U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD
-export MAXITER=$MAXITER CONVTOL=$CONVTOL CROSS_WIDTH=$CROSS_WIDTH DATA_DIR="$DATA_DIR"
+export MAXITER=$MAXITER CONVTOL=$CONVTOL CROSS_WIDTH=$CROSS_WIDTH RESUME=$RESUME DATA_DIR="$DATA_DIR"
 export BLAS_THREADS=$BLAS_THREADS
 $JULIA --project=. --threads=$JULIA_THREADS -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 $JULIA --project=. --threads=$JULIA_THREADS hpc/BoseHubbardCorrelated_NormalizedITE.jl $L $t $mu
