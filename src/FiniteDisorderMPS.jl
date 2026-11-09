@@ -444,6 +444,61 @@ function average_entanglement_entropy(ρ::FiniteDisorderMPS, k::Int; kwargs...)
     return Ss[k], Ss_err[k], Ss_var[k]
 end
 
+# Local density ⟨n_i⟩_w = Σ_s charges[s] |⟨s|ψ_w⟩_i|² on every site i = 1..L of the conditional state ψ_w of word w (not
+# projected onto a fixed total charge), with charges the U(1) charge of every physical basis state (e.g. 0:nmax). Uses the
+# Gram matrices of the left (sites 1..i-1, G_L[b̄, b]) and right (sites i+1..L, G_R[a, ā]) Schmidt vectors, as in
+# _charge_environments; each is divided by its largest entry, which cancels in the ratio, so ψ_w does not have to be normalized
+function conditional_density(ρ::FiniteDisorderMPS, word::AbstractVector{Int}, charges)
+    L = length(word)
+    As = [convert(Array, ρ[i, p]) for (i, p) in enumerate(word)]   # A[a, s, b]
+    all(size(A, 2) == length(charges) for A in As) || throw(ArgumentError("charges should have one entry per physical basis state"))
+    rescale(G) = (m = LinearAlgebra.norm(G, Inf); m > 0 ? G ./ m : G)
+    lefts = Vector{Matrix{ComplexF64}}(undef, L)    # lefts[i]: sites 1..i-1
+    rights = Vector{Matrix{ComplexF64}}(undef, L)   # rights[i]: sites i+1..L
+    lefts[1] = ones(ComplexF64, 1, 1)
+    for i in 1:L-1
+        lefts[i+1] = rescale(sum(As[i][:, s, :]' * lefts[i] * As[i][:, s, :] for s in axes(As[i], 2)))
+    end
+    rights[L] = ones(ComplexF64, 1, 1)
+    for i in L:-1:2
+        rights[i-1] = rescale(sum(As[i][:, s, :] * rights[i] * As[i][:, s, :]' for s in axes(As[i], 2)))
+    end
+    return map(1:L) do i
+        w = [real(tr(As[i][:, s, :]' * lefts[i] * As[i][:, s, :] * rights[i])) for s in axes(As[i], 2)]
+        sum(charges .* w) / sum(w)
+    end
+end
+
+# Disorder average 𝔼_w[δn_w] of the spatial density fluctuation within one realization,
+#   δn_w = sqrt((1/N_s) Σ_{i ∈ sites} (⟨n_i⟩_w - n̄_w)²),   n̄_w = (1/N_s) Σ_{i ∈ sites} ⟨n_i⟩_w,
+# over the sites in `sites` (nothing: all sites; N_s of them), with ⟨n_i⟩_w from conditional_density. Returns
+# (𝔼_w[δn_w], its standard error). As in average_entanglement_entropy, if there are at most n_samples words they are all
+# enumerated (exact, zero error), otherwise n_samples words are sampled
+function average_density_fluctuation(ρ::FiniteDisorderMPS; n_samples::Int = 1000, rng::AbstractRNG = Random.default_rng(),
+                                     charges, sites = nothing)
+    L = length(ρ.ps)
+    if !isnothing(sites)
+        all(i -> 1 <= i <= L, sites) || throw(ArgumentError("sites $sites outside 1:$L"))
+        length(sites) >= 2 || throw(ArgumentError("at least two sites are needed for a fluctuation, got $sites"))
+    end
+    function fluctuation(word)
+        n = conditional_density(ρ, word, charges)
+        isnothing(sites) || (n = n[sites])
+        return sqrt(mean(abs2, n .- mean(n)))
+    end
+    if prod(float.(length.(ρ.ps))) <= n_samples
+        dn = 0.0
+        for word in ProgressBar(Iterators.product(eachindex.(ρ.ps)...))
+            w = prod(ρ.ps[i][p] for (i, p) in enumerate(word))
+            iszero(w) && continue
+            dn += w * fluctuation(collect(word))
+        end
+        return dn, 0.0
+    end
+    dns = [fluctuation(sample_word(rng, ρ.ps)) for _ in ProgressBar(1:n_samples)]
+    return mean(dns), std(dns) / sqrt(n_samples)
+end
+
 # Per sample w: the mean S̄_w and standard deviation σ_w of S_w(k) across the bonds k ∈ bonds (nothing: all bonds
 # k = 1..L-1). Returns the averages over n_samples sampled words of S̄_w and σ_w, with their standard errors:
 # (𝔼[S̄_w], err, 𝔼[σ_w], err). As in average_entanglement_entropy, if there are at most n_samples words they are all

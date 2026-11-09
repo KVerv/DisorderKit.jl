@@ -9,7 +9,11 @@
 # (DisorderKit.bond_averaged_entanglement_entropy, same words as S̄):
 #   S_bstd   = 𝔼_w[std_{k ∈ bulk} S_w(k)]                  bond-to-bond fluctuation of the entropy in one realization
 #   S_bstd_err                                             its standard error (0 if the words are enumerated)
-# The bulk (for S_avg, S_inhom and S_bstd) excludes N_EDGE sites at each end: sites N_EDGE+1..L-N_EDGE, bonds
+# and, per word, the spatial fluctuation of the local density ⟨nᵢ⟩_w of the (unprojected) conditional state across the
+# N_s bulk sites, averaged over the same words (DisorderKit.average_density_fluctuation):
+#   dn       = 𝔼_w[sqrt((1/N_s) Σ_{i ∈ bulk} (⟨nᵢ⟩_w - n̄_w)²)],  n̄_w = (1/N_s) Σ_{i ∈ bulk} ⟨nᵢ⟩_w
+#   dn_err                                                 its standard error (0 if the words are enumerated)
+# The bulk (for S_avg, S_inhom, S_bstd and dn) excludes N_EDGE sites at each end: sites N_EDGE+1..L-N_EDGE, bonds
 # k = N_EDGE+1..L-N_EDGE-1 (at least 2, so L ≥ 2 N_EDGE + 3). N_EDGE = 0 uses all bonds. varS_avg and the per-bond
 # columns S_k, varS_k cover the whole chain.
 # The compressibility κ = dρ/dμ needs the neighbouring points and is computed by hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl.
@@ -23,17 +27,17 @@
 # Environment (all required; defaults in hpc/submit_obs_BHCorr.sh): U, R, DELTA, OMEGA, NMAX,
 #   DTAU, MAXD, DATA_DIR (the same as for the sweep, so the run tag matches), N_SAMPLES (for the entropy only: disorder
 #   words are enumerated exactly if ∏ᵢ qᵢ ≤ N_SAMPLES, qᵢ the number of sectors of site i, else N_SAMPLES words are sampled),
-#   N_EDGE (sites excluded at each end for S_bstd)
+#   N_EDGE (sites excluded at each end for S_bstd and dn)
 # Optional: OBS_VERSION, a version stamp of this script (the condor scripts pass `git hash-object` of it), stored in
 #   the obs_version column, so observables computed with an older version of the script are recomputed
 #
 # Input:  <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/t<t>/mu<μ>.jld2
 # Output: <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/t<t>/mu<μ>_obs.csv, columns
-#   t_over_U, mu_over_U, rho, a2, varS_avg, S_avg, S_inhom, S_bstd, S_bstd_err, n_edge, obs_version, n_samples, exact, nsteps, eps_conv, converged, S_1..S_{L-1},
+#   t_over_U, mu_over_U, rho, a2, varS_avg, S_avg, S_inhom, S_bstd, S_bstd_err, dn, dn_err, n_edge, obs_version, n_samples, exact, nsteps, eps_conv, converged, S_1..S_{L-1},
 #   varS_1..varS_{L-1} (n_samples and exact refer to the entropy)
 #
 # The observables are (re)computed only if (status compute)
-#   - there is no readable observables file, or it is of an older format (no S_bstd or n_edge column), or
+#   - there is no readable observables file, or it is of an older format (no S_bstd, dn or n_edge column), or
 #   - its n_edge differs from N_EDGE, or OBS_VERSION is set and its obs_version differs, or
 #   - the state is newer than the observables file (the point was rerun), or
 #   - the stored words were sampled (exact = false) and N_SAMPLES is larger than the stored n_samples.
@@ -71,6 +75,7 @@ obs_version = get(ENV, "OBS_VERSION", "")
 n_edge >= 0 || error("N_EDGE = $n_edge must be ≥ 0")
 L >= 2n_edge + 3 || error("N_EDGE = $n_edge leaves fewer than 2 bulk bonds for L = $L (need L ≥ 2 N_EDGE + 3)")
 bulk_bonds = n_edge+1:L-n_edge-1
+bulk_sites = n_edge+1:L-n_edge
 folder = joinpath(data_root, "BoseHubbardCorrelated_NormalizedITE", run_tag, "L$(L)", "t$(t_str)")
 statefile = joinpath(folder, "mu$(μ_str).jld2")
 obsfile = joinpath(folder, "mu$(μ_str)_obs.csv")
@@ -88,7 +93,7 @@ end
 function status(statefile, obsfile, n_samples, n_edge, obs_version)
     isfile(statefile) || return "nostate"
     row = read_row(obsfile)
-    (isnothing(row) || !all(k -> haskey(row, k), ("n_samples", "exact", "S_inhom", "S_bstd", "n_edge"))) && return "compute"
+    (isnothing(row) || !all(k -> haskey(row, k), ("n_samples", "exact", "S_inhom", "S_bstd", "dn", "n_edge"))) && return "compute"
     tryparse(Int, row["n_edge"]) == n_edge || return "compute"
     isempty(obs_version) || get(row, "obs_version", "") == obs_version || return "compute"
     mtime(statefile) > mtime(obsfile) && return "compute"
@@ -133,6 +138,7 @@ walltime = @elapsed begin
     S, _, S_var = DisorderKit.average_entanglement_entropy(ψ; n_samples, rng = Xoshiro(1), charges = 0:nmax)
     _, _, S_bstd, S_bstd_err = DisorderKit.bond_averaged_entanglement_entropy(ψ; n_samples, rng = Xoshiro(1), charges = 0:nmax,
                                                                                    bonds = bulk_bonds)
+    dn, dn_err = DisorderKit.average_density_fluctuation(ψ; n_samples, rng = Xoshiro(1), charges = 0:nmax, sites = bulk_sites)
 end
 ϵs = data["info"].ϵsconv
 nsteps = get(data, "nsteps", -1)
@@ -143,10 +149,10 @@ S_avg = mean(S[bulk_bonds])
 S_inhom = mean(abs2, S[bulk_bonds] .- S_avg)
 
 # Write to a temporary file and move it in place, so an interrupted job never leaves a partial result
-header = ["t_over_U", "mu_over_U", "rho", "a2", "varS_avg", "S_avg", "S_inhom", "S_bstd", "S_bstd_err", "n_edge", "obs_version", "n_samples", "exact", "nsteps", "eps_conv",
+header = ["t_over_U", "mu_over_U", "rho", "a2", "varS_avg", "S_avg", "S_inhom", "S_bstd", "S_bstd_err", "dn", "dn_err", "n_edge", "obs_version", "n_samples", "exact", "nsteps", "eps_conv",
           "converged",
           ("S_$k" for k in eachindex(S))..., ("varS_$k" for k in eachindex(S_var))...]
-row = Any[parse(Float64, t_str) / U, parse(Float64, μ_str) / U, ρ, φ, varS, S_avg, S_inhom, S_bstd, S_bstd_err, n_edge, obs_version, n_samples, exact, nsteps, ϵconv, converged,
+row = Any[parse(Float64, t_str) / U, parse(Float64, μ_str) / U, ρ, φ, varS, S_avg, S_inhom, S_bstd, S_bstd_err, dn, dn_err, n_edge, obs_version, n_samples, exact, nsteps, ϵconv, converged,
        S..., S_var...]
 tmp = obsfile * ".tmp"
 open(tmp, "w") do io
@@ -155,6 +161,6 @@ open(tmp, "w") do io
 end
 mv(tmp, obsfile; force = true)
 
-@printf("ρ = %.6f, |⟨a⟩|² = %.6f, ⟨Var S⟩ = %.6f, ⟨S⟩_bulk = %.6f, Var_{k∈bulk}[S] = %.6f, 𝔼_w[std_{k∈bulk} S] = %.6f ± %.6f (entropy from %s, %.1f s)\n", ρ, φ,
-        varS, S_avg, S_inhom, S_bstd, S_bstd_err, exact ? "exact enumeration" : "$n_samples sampled words", walltime)
+@printf("ρ = %.6f, |⟨a⟩|² = %.6f, ⟨Var S⟩ = %.6f, ⟨S⟩_bulk = %.6f, Var_{k∈bulk}[S] = %.6f, 𝔼_w[std_{k∈bulk} S] = %.6f ± %.6f, δn = %.6f ± %.6f (entropy and δn from %s, %.1f s)\n", ρ, φ,
+        varS, S_avg, S_inhom, S_bstd, S_bstd_err, dn, dn_err, exact ? "exact enumeration" : "$n_samples sampled words", walltime)
 println("Saved $obsfile")
