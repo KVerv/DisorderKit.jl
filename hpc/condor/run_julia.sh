@@ -11,7 +11,8 @@
 # (and the package depot $HOME/.julia). On the UGent pool /tmp is private to every job (MOUNT_UNDER_SCRATCH), so every
 # job installs from scratch (about 8 minutes); on a pool with a shared /tmp, jobs on the same machine set up one at a time
 # (flock on $HOME/.juliaup.lock). Pkg.instantiate() sometimes hangs forever without output (a stalled download; Pkg has
-# no timeout), so every attempt is limited to SETUP_TIMEOUT seconds (default 1800) and retried up to SETUP_ATTEMPTS
+# no timeout, and a blocked Julia can ignore SIGTERM), so every attempt is limited to SETUP_TIMEOUT seconds (default 1800,
+# then SIGKILL after 60 s more) and retried up to SETUP_ATTEMPTS
 # times (default 3); then the job fails with a clear message. Only Pkg.instantiate() is run, no Pkg.precompile(): the
 # script's `using` precompiles just the packages it needs.
 # Progress markers on stdout (read by the dashboard through condor_tail): "== HH:MM:SS setup: <phase>" and
@@ -45,8 +46,8 @@ echo "== $(date +%T) setup: waiting for the setup lock"
     for ((i = 1; i <= attempts; i++)); do
         echo "== $(date +%T) setup: Pkg.instantiate (attempt $i of $attempts)"
         rc=0
-        timeout "${SETUP_TIMEOUT:-1800}" "${JULIA[@]}" --project=. --startup-file=no -e 'using Pkg; Pkg.instantiate()' || rc=$?
-        [ "$rc" = "124" ] || exit "$rc"
+        timeout --kill-after=60 "${SETUP_TIMEOUT:-1800}" "${JULIA[@]}" --project=. --startup-file=no -e 'using Pkg; Pkg.instantiate()' || rc=$?
+        [ "$rc" = "124" ] || [ "$rc" = "137" ] || exit "$rc"   # 124: timed out (SIGTERM), 137: SIGKILL after the grace time
         echo "Pkg.instantiate() did not finish within ${SETUP_TIMEOUT:-1800} s on $(hostname) (attempt $i of $attempts)" | tee /dev/stderr
     done
     echo "Pkg.instantiate() hung $attempts times: giving up" | tee /dev/stderr
