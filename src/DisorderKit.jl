@@ -6,7 +6,6 @@ using TensorKit, MPSKit, MPSKitModels, KrylovKit, BlockTensorKit, MatrixAlgebraK
 using LinearAlgebra, StatsBase, Zygote, OptimKit, TensorKitManifolds
 using Crayons, TimerOutputs, ProgressBars
 using BenchmarkFreeFermions, Random
-using TensorCrossInterpolation
 
 # export VOMPS_Inversion, invert_mpo 
 # export test_identity, mpo_fidelity

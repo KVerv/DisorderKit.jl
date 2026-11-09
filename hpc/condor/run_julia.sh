@@ -32,6 +32,11 @@ echo "Host: $(hostname), started at $(date)"
 echo "Sandbox: $(pwd)"
 echo "Arguments: $*"
 
+# Pkg precompiles in parallel with one Julia process per task, by default as many tasks as the machine has cores (not
+# the job's request_cpus); each needs up to ~1 GB, which exceeds request_memory on large machines (seen: 7.3 GB peak
+# during Pkg.instantiate with 5 GB requested). Limit it (override with JULIA_NUM_PRECOMPILE_TASKS).
+export JULIA_NUM_PRECOMPILE_TASKS="${JULIA_NUM_PRECOMPILE_TASKS:-2}"
+
 manifest=$(sed -n 's/^julia_version = "\(.*\)"/\1/p' Manifest.toml)
 version="${JULIA_VERSION:-$manifest}"
 juliaup="$HOME/.juliaup/bin/juliaup"
