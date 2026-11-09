@@ -12,7 +12,7 @@
 # environment. They are written into the job script, hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl has no defaults.
 # Output: <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/observables.csv and
 #   plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png (one figure: κ, CV, |⟨a⟩|², ρ, S_bstd and the MI/SF/BG
-#   classification with the thresholds KAPPA_TOL and CV_TOL, see below)
+#   classification with the thresholds KAPPA_TOL, SBSTD_TOL and A2_TOL, see below)
 # Logs: logs/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/plot/
 
 set -euo pipefail
@@ -30,12 +30,12 @@ export MAXD="${MAXD:-16}"
 export DATA_DIR="${DATA_DIR:-${VSC_DATA:-.}/data}"
 
 # Phase classification thresholds for the phase-diagram plot (do not change the run tag):
-#   κ ≤ KAPPA_TOL → incompressible, CV = S_bstd/S_avg (bulk bonds) ≥ CV_TOL → large bond-to-bond entropy fluctuation
-#   Mott insulator: incompressible + large CV; superfluid: compressible + small CV; Bose glass: compressible + large CV;
-#   unclassified: incompressible + small CV
-#   e.g. KAPPA_TOL=0.02 CV_TOL=0.2 bash hpc/submit_plot_BHCorr.sh 6
+#   κ ≤ KAPPA_TOL → κ low, S_bstd < SBSTD_TOL → std low, |⟨a⟩|² ≤ A2_TOL → |⟨a⟩|² low;
+#   MI: κ, std and |⟨a⟩|² low; SF: κ high, std low, |⟨a⟩|² high; BG: κ high, std high, |⟨a⟩|² low; else unclassified
+#   e.g. KAPPA_TOL=0.02 SBSTD_TOL=0.1 A2_TOL=0.02 bash hpc/submit_plot_BHCorr.sh 6
 export KAPPA_TOL="${KAPPA_TOL:-0.05}"
-export CV_TOL="${CV_TOL:-0.6}"
+export SBSTD_TOL="${SBSTD_TOL:-0.05}"
+export A2_TOL="${A2_TOL:-0.05}"
 
 # Resources: the plot script only reads small CSV files
 WALLTIME="${WALLTIME:-0:15:00}"
@@ -56,7 +56,7 @@ module purge
 echo "PBS: \$PBS_JOBID"
 echo "Correlated Bose-Hubbard plot: L = $L, run tag $tag"
 echo "Job started at : \$(date)"
-export U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR="$DATA_DIR" KAPPA_TOL=$KAPPA_TOL CV_TOL=$CV_TOL
+export U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR="$DATA_DIR" KAPPA_TOL=$KAPPA_TOL SBSTD_TOL=$SBSTD_TOL A2_TOL=$A2_TOL
 $JULIA --project=. --threads=$PPN -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 $JULIA --project=. --threads=$PPN hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl $L
 echo "Job ended at : \$(date)"

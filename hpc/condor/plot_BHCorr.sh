@@ -5,13 +5,13 @@
 # a given L. Run on the access point from the repo root after the jobs of hpc/condor/obs_BHCorr.sh have
 # finished, with the same run parameters as the sweep, so the run tag matches:
 #   bash hpc/condor/plot_BHCorr.sh 6                          # directly on the access point (only reads small CSVs)
-#   KAPPA_TOL=0.02 CV_TOL=0.2 bash hpc/condor/plot_BHCorr.sh 6
+#   KAPPA_TOL=0.02 SBSTD_TOL=0.1 A2_TOL=0.02 bash hpc/condor/plot_BHCorr.sh 6
 #   CONDOR=1 bash hpc/condor/plot_BHCorr.sh 6                 # as one condor job instead (e.g. no CairoMakie here)
 #   CONDOR=1 DRYRUN=1 bash hpc/condor/plot_BHCorr.sh 6        # only print the submit file
 # Output: data/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/observables.csv and
 #   plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png
-# Phase classification (see the plot script): κ ≤ KAPPA_TOL → incompressible, CV = S_bstd/S_avg ≥ CV_TOL → large
-#   bond-to-bond entropy fluctuation; MI: incompressible + large CV, SF: compressible + small CV, BG: compressible + large CV
+# Phase classification (see the plot script): κ ≤ KAPPA_TOL → κ low, S_bstd < SBSTD_TOL → std low, |⟨a⟩|² ≤ A2_TOL → |⟨a⟩|² low;
+#   MI: κ, std and |⟨a⟩|² low; SF: κ high, std low, |⟨a⟩|² high; BG: κ high, std high, |⟨a⟩|² low; else unclassified
 
 set -euo pipefail
 
@@ -27,7 +27,8 @@ export DTAU="${DTAU:-0.05}"
 export MAXD="${MAXD:-16}"
 export DATA_DIR=data
 export KAPPA_TOL="${KAPPA_TOL:-0.05}"
-export CV_TOL="${CV_TOL:-0.6}"
+export SBSTD_TOL="${SBSTD_TOL:-0.05}"
+export A2_TOL="${A2_TOL:-0.05}"
 JULIA="${JULIA:-$HOME/.juliaup/bin/julia +$(sed -n 's/^julia_version = "\(.*\)"/\1/p' Manifest.toml)}"   # Julia on the access point (juliaup, Manifest version)
 
 script=hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl
@@ -58,7 +59,7 @@ UG_NAME = $UG_NAME
 executable          = hpc/condor/run_julia.sh
 transfer_executable = TRUE
 arguments           = "$script $L"
-environment         = "HOME=/tmp/\$(UG_NAME) U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR=$DATA_DIR KAPPA_TOL=$KAPPA_TOL CV_TOL=$CV_TOL"
+environment         = "HOME=/tmp/\$(UG_NAME) U=$U R=$R DELTA=$DELTA OMEGA=$OMEGA NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD DATA_DIR=$DATA_DIR KAPPA_TOL=$KAPPA_TOL SBSTD_TOL=$SBSTD_TOL A2_TOL=$A2_TOL"
 
 should_transfer_files   = TRUE
 preserve_relative_paths = TRUE

@@ -8,13 +8,15 @@
 # can run on the login node.
 #
 # Usage (from the repo root, with the same run parameters as the sweep, so the run tag matches):
-#   U=1.0 R=0.0 DELTA=0.2 OMEGA=0.5 NMAX=4 DTAU=0.05 MAXD=16 KAPPA_TOL=0.05 CV_TOL=0.1 DATA_DIR=$VSC_DATA/data julia --project=. hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl <L>
+#   U=1.0 R=0.0 DELTA=0.2 OMEGA=0.5 NMAX=4 DTAU=0.05 MAXD=16 KAPPA_TOL=0.05 SBSTD_TOL=0.05 A2_TOL=0.05 DATA_DIR=$VSC_DATA/data julia --project=. hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl <L>
 #
-# Environment (all required): U, R, DELTA, OMEGA, NMAX, DTAU, MAXD, DATA_DIR, and the phase classification thresholds KAPPA_TOL, CV_TOL:
-#   with CV = S_bstd/S_avg (both over the bulk bonds, see N_EDGE in the observables script), a point is a Mott insulator
-#   (MI) if κ ≤ KAPPA_TOL and CV ≥ CV_TOL, a superfluid (SF) if κ > KAPPA_TOL and CV < CV_TOL, a Bose glass (BG) if
-#   κ > KAPPA_TOL and CV ≥ CV_TOL, and unclassified otherwise (κ ≤ KAPPA_TOL and CV < CV_TOL). CV = NaN (S_avg = 0)
-#   counts as large.
+# Environment (all required): U, R, DELTA, OMEGA, NMAX, DTAU, MAXD, DATA_DIR, and the phase classification thresholds
+#   KAPPA_TOL, SBSTD_TOL, A2_TOL: with κ low ⇔ κ ≤ KAPPA_TOL, S_bstd (bulk bonds, see N_EDGE in the observables script)
+#   low ⇔ S_bstd < SBSTD_TOL and |⟨a⟩|² low ⇔ |⟨a⟩|² ≤ A2_TOL, a point is a
+#     Mott insulator (MI): κ low,  S_bstd low,  |⟨a⟩|² low
+#     superfluid (SF):     κ high, S_bstd low,  |⟨a⟩|² high
+#     Bose glass (BG):     κ high, S_bstd high, |⟨a⟩|² low
+#   and unclassified otherwise (also when S_bstd is NaN, observables of an older format).
 # Output: the table on stdout, <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/observables.csv (all points)
 #   and the figure plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png. The grid is set by the t<t>/mu<μ>.jld2 and
 #   mu<μ>_obs.csv names; grid points without (readable) observables are set to 0 and marked with a cross.
@@ -34,7 +36,8 @@ maxD = parse(Int, param("MAXD"))
 run_tag = "U$(U_str)_r$(r_str)_Delta$(Δ_str)_Omega$(Ω_str)_nmax$(nmax)_dtau$(dtau_str)_D$(maxD)"
 data_root = param("DATA_DIR")
 κtol = parse(Float64, param("KAPPA_TOL"))
-cvtol = parse(Float64, param("CV_TOL"))
+sbstdtol = parse(Float64, param("SBSTD_TOL"))
+a2tol = parse(Float64, param("A2_TOL"))
 folder = joinpath(data_root, "BoseHubbardCorrelated_NormalizedITE", run_tag, "L$(L)")
 
 using CairoMakie, Printf
@@ -101,14 +104,17 @@ for i in eachindex(ts), j in eachindex(μs)
     κs[i, j] = hi == lo ? 0.0 : (ρs[i, hi] - ρs[i, lo]) / (U * (μs[hi] - μs[lo]))
 end
 
-# Phase classification from κ and CV = S_bstd/S_avg: 1 = MI, 2 = SF, 3 = BG, 4 = unclassified, 0 = no result
+# Phase classification from κ, S_bstd and |⟨a⟩|²: 1 = MI, 2 = SF, 3 = BG, 4 = unclassified, 0 = no result
 const phasenames = ("MI", "SF", "BG", "unclassified")
-function classify(κ, cv)
-    compressible = κ > κtol
-    largecv = isnan(cv) || cv >= cvtol   # S_avg = 0 (product state) counts as large
-    compressible ? (largecv ? 3 : 2) : (largecv ? 1 : 4)
+function classify(κ, sbstd, a2)
+    isnan(sbstd) && return 4   # observables of an older format
+    compressible, largestd, condensed = κ > κtol, sbstd >= sbstdtol, a2 > a2tol
+    !compressible && !largestd && !condensed && return 1
+    compressible && !largestd && condensed && return 2
+    compressible && largestd && !condensed && return 3
+    return 4
 end
-phases = [hasdata[i, j] ? classify(κs[i, j], ratios[i, j]) : 0 for i in eachindex(ts), j in eachindex(μs)]
+phases = [hasdata[i, j] ? classify(κs[i, j], Sbstds[i, j], φs[i, j]) : 0 for i in eachindex(ts), j in eachindex(μs)]
 
 println("Run tag $run_tag, L = $L ($folder)")
 println("    t/U      μ/U        ρ        κ   |⟨a⟩|²  ⟨Var S⟩      ⟨S⟩  Var_k S   std_k S   ratio  samples   steps   ϵ_conv   converged  phase")
@@ -119,7 +125,7 @@ for x in results
             κs[i, j], φs[i, j], varSs[i, j], Savgs[i, j], Sinhoms[i, j], Sbstds[i, j], ratios[i, j], x.exact ? "exact" : string(x.n_samples), x.nsteps, x.ϵconv, x.converged,
             phasenames[phases[i, j]])
 end
-println("Phases with κ_tol = $κtol, CV_tol = $cvtol: ", join(("$(n) $(count(==(k), phases))" for (k, n) in enumerate(phasenames)), ", "))
+println("Phases with κ_tol = $κtol, S_bstd_tol = $sbstdtol, |⟨a⟩|²_tol = $a2tol: ", join(("$(n) $(count(==(k), phases))" for (k, n) in enumerate(phasenames)), ", "))
 nconv = count(!, (x.converged for x in results))
 nconv > 0 && println("$nconv of $(length(results)) points not converged (open circles in the plot)")
 nsamp = unique(x.n_samples for x in results if !x.exact)
@@ -146,7 +152,7 @@ println("Saved $csv")
 # (bottom); unconverged points are marked with open circles, points without a result with crosses
 set_theme!(theme_latexfonts())
 fig = Figure(backgroundcolor = :white, fontsize = 30, size = (3200, 1700))
-Label(fig[0, 1:6], L"$L=%$L$, $r=%$r$, $t(1\pm%$Ω_str)$, $μ\pm%$Δ_str$, $D=%$maxD$, $κ_\mathrm{tol}=%$κtol$, $\mathrm{CV}_\mathrm{tol}=%$cvtol$";
+Label(fig[0, 1:6], L"$L=%$L$, $r=%$r$, $t(1\pm%$Ω_str)$, $μ\pm%$Δ_str$, $D=%$maxD$, $κ_\mathrm{tol}=%$κtol$, $S_{\mathrm{bstd},\mathrm{tol}}=%$sbstdtol$, $|\langle a\rangle|^2_\mathrm{tol}=%$a2tol$";
       fontsize = 36)
 unconv = [(ts[i], μs[j]) for i in eachindex(ts), j in eachindex(μs) if hasdata[i, j] && !converged[i, j]]
 function markpoints!(ax, circlecolor)

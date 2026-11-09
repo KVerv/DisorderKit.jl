@@ -206,7 +206,7 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
         <span class="desc" id="gatherDesc">Copies finished results to the laptop, then deletes them and their logs on the access point. A file is only deleted after it was copied completely.</span></div>
       <div class="action"><span class="name"><span class="step">3</span>Phase-diagram plot</span>
         <button class="btn" data-act="plot">Plot</button>
-        <span class="desc">Runs the plot script on the laptop's data (κ, CV, |⟨a⟩|², ρ, S_bstd, phases), using KAPPA_TOL and CV_TOL below.</span></div>
+        <span class="desc">Runs the plot script on the laptop's data (κ, CV, |⟨a⟩|², ρ, S_bstd, phases from κ, S_bstd and |⟨a⟩|²), using KAPPA_TOL, SBSTD_TOL and A2_TOL below.</span></div>
       <div class="action"><span class="name">Recompute observables</span>
         <button class="btn" data-act="recompute_obs">Recompute<span class="count" id="obsCount" style="background:var(--surface-3)">0</span></button>
         <span class="desc">For points whose observables are missing or outdated (changed observables script, or another N_EDGE). Uploads only those states and runs observables-only jobs; the simulation is not rerun. Gather afterwards.</span></div>
@@ -265,7 +265,8 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
           <label>N_EDGE <input type="text" id="N_EDGE" value="2"></label>
           <span></span>
           <label>KAPPA_TOL <input type="text" id="KAPPA_TOL" value="0.05"></label>
-          <label>CV_TOL <input type="text" id="CV_TOL" value="0.6"></label>
+          <label>SBSTD_TOL <input type="text" id="SBSTD_TOL" value="0.05"></label>
+          <label>A2_TOL <input type="text" id="A2_TOL" value="0.05"></label>
         </div></details>
       <details><summary>Resources per job</summary>
         <div class="fields">
@@ -303,7 +304,7 @@ const GLYPH = Object.fromEntries(STATES.map(s => [s[0], s[2]]));
 const OBS_LABEL = { done: "computed", outdated: "outdated (other script version or N_EDGE)", idle: "queued", running: "running",
   held: "held", failed: "failed", none: "not computed" };
 const FIELDS = ["L", "t0", "t1", "tstep", "m0", "m1", "mstep", "U", "R", "DELTA", "OMEGA", "NMAX", "DTAU", "MAXD",
-  "MAXITER", "CONVTOL", "CROSS_WIDTH", "PPN", "OBS_PPN", "MEM", "REQUIREMENTS", "N_SAMPLES", "N_EDGE", "KAPPA_TOL", "CV_TOL"];
+  "MAXITER", "CONVTOL", "CROSS_WIDTH", "PPN", "OBS_PPN", "MEM", "REQUIREMENTS", "N_SAMPLES", "N_EDGE", "KAPPA_TOL", "SBSTD_TOL", "A2_TOL"];
 const CHECKS = ["FORCE", "NICE"];
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -671,7 +672,7 @@ function params(action, extra = {}) {
       N_SAMPLES: f.N_SAMPLES, PPN: f.PPN, MEM: f.MEM, REQUIREMENTS: f.REQUIREMENTS, NICE: f.NICE ? "TRUE" : "FALSE", FORCE: f.FORCE ? "1" : "0" });
   if (action === "recompute_obs")
     Object.assign(p, { N_SAMPLES: f.N_SAMPLES, PPN: f.OBS_PPN, MEM: f.MEM, REQUIREMENTS: f.REQUIREMENTS, NICE: f.NICE ? "TRUE" : "FALSE" });
-  if (action === "plot") Object.assign(p, { KAPPA_TOL: f.KAPPA_TOL, CV_TOL: f.CV_TOL });
+  if (action === "plot") Object.assign(p, { KAPPA_TOL: f.KAPPA_TOL, SBSTD_TOL: f.SBSTD_TOL, A2_TOL: f.A2_TOL });
   return Object.assign(p, extra);
 }
 const TITLES = { submit: "Submit sweep", preview: "Preview (dry run)", remove_held: "Remove held jobs", recompute_obs: "Recompute observables",

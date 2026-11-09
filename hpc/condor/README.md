@@ -106,7 +106,7 @@ Without `POINTS` the sweep script decides from the states on the access point on
 laptop) it would submit those points again: use the dashboard, or pass `POINTS="t mu,t mu,…"` explicitly.
 
 Parameters (environment): `TS`, `MUS`, `POINTS`, `U`, `R`, `DELTA`, `OMEGA`, `NMAX`, `DTAU`, `MAXD`, `MAXITER`,
-`CONVTOL`, `CROSS_WIDTH`, `N_SAMPLES`, `N_EDGE` (observables), `KAPPA_TOL`, `CV_TOL` (plot), `FORCE`, `DRYRUN`. Condor
+`CONVTOL`, `CROSS_WIDTH`, `N_SAMPLES`, `N_EDGE` (observables), `KAPPA_TOL`, `SBSTD_TOL`, `A2_TOL` (plot), `FORCE`, `DRYRUN`. Condor
 resources: `PPN` (request_cpus; 8 sweep, 4 observables-only), `JULIA_THREADS`, `BLAS_THREADS` (ITE: 1 and `PPN`),
 `OBS_THREADS` (observables in the sweep job: `PPN`), `MEM` ("6 G"), `DISK` ("2 G"), `REQUIREMENTS` (extra requirements,
 e.g. `"cpu_performance > 7"`), `NICE` (`nice_user`, TRUE: only idle slots), `UG_NAME` (default `$USER`). There is no

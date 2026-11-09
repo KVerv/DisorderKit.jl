@@ -59,7 +59,7 @@ PARAMS = {
     "MAXITER": r"^\d+$", "CONVTOL": NUM, "CROSS_WIDTH": r"^\d+$", "PPN": r"^\d+$", "OBS_THREADS": r"^\d+$",
     "MEM": r"^\d+(\.\d+)? ?[KMGT]?B?$", "DISK": r"^\d+(\.\d+)? ?[KMGT]?B?$",
     "REQUIREMENTS": r"^[A-Za-z0-9_ .<>=!&|()\"']*$", "NICE": r"^(TRUE|FALSE)$",
-    "N_SAMPLES": r"^\d+$", "N_EDGE": r"^\d+$", "KAPPA_TOL": NUM, "CV_TOL": NUM,
+    "N_SAMPLES": r"^\d+$", "N_EDGE": r"^\d+$", "KAPPA_TOL": NUM, "SBSTD_TOL": NUM, "A2_TOL": NUM,
     "POINTS": r"^[0-9.\- ,]*$", "DRYRUN": r"^[01]$",
 }
 MODEL_PARAMS = ["U", "R", "DELTA", "OMEGA", "NMAX", "DTAU", "MAXD"]
@@ -706,7 +706,7 @@ class Dashboard:
         if action == "gather":
             return self._gather(tag, L, emit)
         if action == "plot":
-            values = self._check(params, MODEL_PARAMS + ["KAPPA_TOL", "CV_TOL"])
+            values = self._check(params, MODEL_PARAMS + ["KAPPA_TOL", "SBSTD_TOL", "A2_TOL"])
             env = {**os.environ, **values, "DATA_DIR": "data"}
             cmd = [*self.local_julia, f"--project={REPO}", "--startup-file=no", os.path.join(REPO, PLOT_SCRIPT), str(L)]
             emit(f"$ julia {PLOT_SCRIPT} {L}  (on the laptop, data in {self.args.gather_dest}/data)")
