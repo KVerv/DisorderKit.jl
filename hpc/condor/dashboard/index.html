@@ -209,7 +209,7 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
         <span class="desc">Runs the plot script on the laptop's data (κ, density fluctuation δn, |⟨a⟩|², ρ, S_bstd, phases from κ and S_bstd, |⟨a⟩|² only for low κ with high S_bstd), using KAPPA_TOL, SBSTD_TOL and A2_TOL below.</span></div>
       <div class="action"><span class="name">Recompute observables</span>
         <button class="btn" data-act="recompute_obs">Recompute<span class="count" id="obsCount" style="background:var(--surface-3)">0</span></button>
-        <span class="desc">For points whose observables are missing or outdated (changed observables script, or another N_EDGE). Uploads only those states and runs observables-only jobs; the simulation is not rerun. Gather afterwards.</span></div>
+        <span class="desc">For points whose observables are missing or outdated (changed observables script, or another N_EDGE). Uploads only those states and runs observables-only jobs, several points per job (Points per obs job); the simulation is not rerun. Gather afterwards.</span></div>
       <div class="action"><span class="name">Remove held jobs</span>
         <button class="btn" data-act="remove_held">Remove held</button>
         <span class="desc">Read their log first (click a red point), then press Submit to run them again.</span></div>
@@ -272,6 +272,7 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
         <div class="fields">
           <label>CPUs (sweep) <input type="text" id="PPN" value="8"></label>
           <label>CPUs (obs-only) <input type="text" id="OBS_PPN" value="4"></label>
+          <label>Points per obs job <input type="text" id="OBS_CHUNK" value="20" title="Observables-only jobs compute this many points each: the ~10 min Julia setup per job is paid once per chunk"></label>
           <label>Memory <input type="text" id="MEM" value="6 G"></label>
           <label class="wide">Extra requirements <input type="text" id="REQUIREMENTS" placeholder='e.g. cpu_performance > 7'></label>
           <label class="check"><input type="checkbox" id="NICE" checked> nice_user: only use idle machines</label>
@@ -304,7 +305,7 @@ const GLYPH = Object.fromEntries(STATES.map(s => [s[0], s[2]]));
 const OBS_LABEL = { done: "computed", outdated: "outdated (other script version or N_EDGE)", idle: "queued", running: "running",
   held: "held", failed: "failed", none: "not computed" };
 const FIELDS = ["L", "t0", "t1", "tstep", "m0", "m1", "mstep", "U", "R", "DELTA", "OMEGA", "NMAX", "DTAU", "MAXD",
-  "MAXITER", "CONVTOL", "CROSS_WIDTH", "PPN", "OBS_PPN", "MEM", "REQUIREMENTS", "N_SAMPLES", "N_EDGE", "KAPPA_TOL", "SBSTD_TOL", "A2_TOL"];
+  "MAXITER", "CONVTOL", "CROSS_WIDTH", "PPN", "OBS_PPN", "OBS_CHUNK", "MEM", "REQUIREMENTS", "N_SAMPLES", "N_EDGE", "KAPPA_TOL", "SBSTD_TOL", "A2_TOL"];
 const CHECKS = ["FORCE", "NICE"];
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -683,7 +684,7 @@ function params(action, extra = {}) {
     Object.assign(p, { TS: ts.join(" "), MUS: ms.join(" "), MAXITER: f.MAXITER, CONVTOL: f.CONVTOL, CROSS_WIDTH: f.CROSS_WIDTH,
       N_SAMPLES: f.N_SAMPLES, PPN: f.PPN, MEM: f.MEM, REQUIREMENTS: f.REQUIREMENTS, NICE: f.NICE ? "TRUE" : "FALSE", FORCE: f.FORCE ? "1" : "0" });
   if (action === "recompute_obs")
-    Object.assign(p, { N_SAMPLES: f.N_SAMPLES, PPN: f.OBS_PPN, MEM: f.MEM, REQUIREMENTS: f.REQUIREMENTS, NICE: f.NICE ? "TRUE" : "FALSE" });
+    Object.assign(p, { N_SAMPLES: f.N_SAMPLES, PPN: f.OBS_PPN, CHUNK: f.OBS_CHUNK, MEM: f.MEM, REQUIREMENTS: f.REQUIREMENTS, NICE: f.NICE ? "TRUE" : "FALSE" });
   if (action === "plot") Object.assign(p, { KAPPA_TOL: f.KAPPA_TOL, SBSTD_TOL: f.SBSTD_TOL, A2_TOL: f.A2_TOL });
   return Object.assign(p, extra);
 }

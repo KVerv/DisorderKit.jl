@@ -20,6 +20,10 @@
 #
 # Usage (from the repo root, normally through hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh):
 #   julia --project=. hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl <L> <t> <μ>      compute and store
+#   julia --project=. hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl <L> <t1> <μ1> <t2> <μ2> ...
+#       several points in one process (one Julia start and compilation; hpc/condor/obs_BHCorr.sh runs CHUNK points per
+#       job). Every point is tried, a failing one does not stop the others; the exit code is 1 if any point failed.
+#       "== HH:MM:SS point k of n: t = …, μ = …" on stdout before every point.
 #   julia hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl --status <L> <t> <μ>         only print the run tag, the
 #       state file, the observables file and the status: nostate, uptodate or compute
 # t and μ are used verbatim in the file names, as in hpc/BoseHubbardCorrelated_NormalizedITE.jl (formatted as %.4f).
@@ -54,8 +58,10 @@
 # ---- Parameters, paths and status (before loading any package, so --status is fast)
 status_only = !isempty(ARGS) && ARGS[1] == "--status"
 args = status_only ? ARGS[2:end] : ARGS
-length(args) == 3 || error("usage: julia --project=. hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl [--status] <L> <t> <μ>")
-L_str, t_str, μ_str = args
+usage = "usage: julia --project=. hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl [--status] <L> <t> <μ> [<t2> <μ2> ...] (--status: one point)"
+(length(args) >= 3 && isodd(length(args)) && !(status_only && length(args) > 3)) || error(usage)
+L_str = args[1]
+points = [(args[k], args[k+1]) for k in 2:2:length(args)]   # (t, μ) as strings, used verbatim in the file names
 L = parse(Int, L_str)
 
 # Same run tag and folder as hpc/BoseHubbardCorrelated_NormalizedITE.jl
@@ -76,9 +82,12 @@ n_edge >= 0 || error("N_EDGE = $n_edge must be ≥ 0")
 L >= 2n_edge + 3 || error("N_EDGE = $n_edge leaves fewer than 2 bulk bonds for L = $L (need L ≥ 2 N_EDGE + 3)")
 bulk_bonds = n_edge+1:L-n_edge-1
 bulk_sites = n_edge+1:L-n_edge
-folder = joinpath(data_root, "BoseHubbardCorrelated_NormalizedITE", run_tag, "L$(L)", "t$(t_str)")
-statefile = joinpath(folder, "mu$(μ_str).jld2")
-obsfile = joinpath(folder, "mu$(μ_str)_obs.csv")
+
+# State and observables file of a point
+function point_files(t_str, μ_str)
+    folder = joinpath(data_root, "BoseHubbardCorrelated_NormalizedITE", run_tag, "L$(L)", "t$(t_str)")
+    return joinpath(folder, "mu$(μ_str).jld2"), joinpath(folder, "mu$(μ_str)_obs.csv")
+end
 
 # Header and first row of a CSV as column => value (strings), nothing if the file is missing or malformed
 function read_row(file)
@@ -103,64 +112,89 @@ function status(statefile, obsfile, n_samples, n_edge, obs_version)
     return !exact && n_samples > stored ? "compute" : "uptodate"
 end
 
-st = status(statefile, obsfile, n_samples, n_edge, obs_version)
 if status_only
+    statefile, obsfile = point_files(points[1]...)
     println(run_tag)
     println(statefile)
     println(obsfile)
-    println(st)
-    exit()
-end
-st == "nostate" && error("no state $statefile")
-if st == "uptodate"
-    println("Up to date (N_SAMPLES = $n_samples, N_EDGE = $n_edge): $obsfile")
+    println(status(statefile, obsfile, n_samples, n_edge, obs_version))
     exit()
 end
 
 # ---- Observables
-using TensorKit, DisorderKit, LinearAlgebra, Random, JLD2, Printf, StatsBase
+using TensorKit, DisorderKit, LinearAlgebra, Random, JLD2, Printf, StatsBase, Dates
 
 d = nmax + 1
 n_op = TensorMap(ComplexF64.(diagm(0:nmax)), ℂ^d ← ℂ^d)
 a_op = TensorMap(ComplexF64.(diagm(1 => sqrt.(1:nmax))), ℂ^d ← ℂ^d)   # a|n⟩ = √n |n-1⟩
-
 U = parse(Float64, U_str)
-println("Correlated Bose-Hubbard observables: L = $L, t = $t_str, μ = $μ_str, run tag $run_tag, N_SAMPLES = $n_samples, N_EDGE = $n_edge (bulk bonds $bulk_bonds)")
-println("State: $statefile")
 
-data = load(statefile)
-ψ = data["ψ"]
-exact = prod(float.(length.(ψ.ps))) <= n_samples
-walltime = @elapsed begin
-    # Exact disorder averages of the local operators on every site
-    ρ = mean(DisorderKit.expectation_value(ψ, n_op))
-    φ = mean(abs2, DisorderKit.expectation_value(ψ, a_op))
-    S, _, S_var = DisorderKit.average_entanglement_entropy(ψ; n_samples, rng = Xoshiro(1), charges = 0:nmax)
-    _, _, S_bstd, S_bstd_err = DisorderKit.bond_averaged_entanglement_entropy(ψ; n_samples, rng = Xoshiro(1), charges = 0:nmax,
-                                                                                   bonds = bulk_bonds)
-    dn, dn_err = DisorderKit.average_density_fluctuation(ψ; n_samples, rng = Xoshiro(1), charges = 0:nmax, sites = bulk_sites)
+function compute_point(t_str, μ_str)
+    statefile, obsfile = point_files(t_str, μ_str)
+    st = status(statefile, obsfile, n_samples, n_edge, obs_version)
+    st == "nostate" && error("no state $statefile")
+    if st == "uptodate"
+        println("Up to date (N_SAMPLES = $n_samples, N_EDGE = $n_edge): $obsfile")
+        return
+    end
+    println("Correlated Bose-Hubbard observables: L = $L, t = $t_str, μ = $μ_str, run tag $run_tag, N_SAMPLES = $n_samples, N_EDGE = $n_edge (bulk bonds $bulk_bonds)")
+    println("State: $statefile")
+
+    data = load(statefile)
+    ψ = data["ψ"]
+    exact = prod(float.(length.(ψ.ps))) <= n_samples
+    local ρ, φ, S, S_var, S_bstd, S_bstd_err, dn, dn_err
+    walltime = @elapsed begin
+        # Exact disorder averages of the local operators on every site
+        ρ = mean(DisorderKit.expectation_value(ψ, n_op))
+        φ = mean(abs2, DisorderKit.expectation_value(ψ, a_op))
+        S, _, S_var = DisorderKit.average_entanglement_entropy(ψ; n_samples, rng = Xoshiro(1), charges = 0:nmax)
+        _, _, S_bstd, S_bstd_err = DisorderKit.bond_averaged_entanglement_entropy(ψ; n_samples, rng = Xoshiro(1), charges = 0:nmax,
+                                                                                       bonds = bulk_bonds)
+        dn, dn_err = DisorderKit.average_density_fluctuation(ψ; n_samples, rng = Xoshiro(1), charges = 0:nmax, sites = bulk_sites)
+    end
+    ϵs = data["info"].ϵsconv
+    nsteps = get(data, "nsteps", -1)
+    converged = get(data, "converged", false)
+    ϵconv = isempty(ϵs) ? NaN : last(ϵs)
+    varS = mean(S_var)
+    S_avg = mean(S[bulk_bonds])
+    S_inhom = mean(abs2, S[bulk_bonds] .- S_avg)
+
+    # Write to a temporary file and move it in place, so an interrupted job never leaves a partial result
+    header = ["t_over_U", "mu_over_U", "rho", "a2", "varS_avg", "S_avg", "S_inhom", "S_bstd", "S_bstd_err", "dn", "dn_err", "n_edge", "obs_version", "n_samples", "exact", "nsteps", "eps_conv",
+              "converged",
+              ("S_$k" for k in eachindex(S))..., ("varS_$k" for k in eachindex(S_var))...]
+    row = Any[parse(Float64, t_str) / U, parse(Float64, μ_str) / U, ρ, φ, varS, S_avg, S_inhom, S_bstd, S_bstd_err, dn, dn_err, n_edge, obs_version, n_samples, exact, nsteps, ϵconv, converged,
+           S..., S_var...]
+    tmp = obsfile * ".tmp"
+    open(tmp, "w") do io
+        println(io, join(header, ','))
+        println(io, join(string.(row), ','))
+    end
+    mv(tmp, obsfile; force = true)
+
+    @printf("ρ = %.6f, |⟨a⟩|² = %.6f, ⟨Var S⟩ = %.6f, ⟨S⟩_bulk = %.6f, Var_{k∈bulk}[S] = %.6f, 𝔼_w[std_{k∈bulk} S] = %.6f ± %.6f, δn = %.6f ± %.6f (entropy and δn from %s, %.1f s)\n", ρ, φ,
+            varS, S_avg, S_inhom, S_bstd, S_bstd_err, dn, dn_err, exact ? "exact enumeration" : "$n_samples sampled words", walltime)
+    println("Saved $obsfile")
 end
-ϵs = data["info"].ϵsconv
-nsteps = get(data, "nsteps", -1)
-converged = get(data, "converged", false)
-ϵconv = isempty(ϵs) ? NaN : last(ϵs)
-varS = mean(S_var)
-S_avg = mean(S[bulk_bonds])
-S_inhom = mean(abs2, S[bulk_bonds] .- S_avg)
 
-# Write to a temporary file and move it in place, so an interrupted job never leaves a partial result
-header = ["t_over_U", "mu_over_U", "rho", "a2", "varS_avg", "S_avg", "S_inhom", "S_bstd", "S_bstd_err", "dn", "dn_err", "n_edge", "obs_version", "n_samples", "exact", "nsteps", "eps_conv",
-          "converged",
-          ("S_$k" for k in eachindex(S))..., ("varS_$k" for k in eachindex(S_var))...]
-row = Any[parse(Float64, t_str) / U, parse(Float64, μ_str) / U, ρ, φ, varS, S_avg, S_inhom, S_bstd, S_bstd_err, dn, dn_err, n_edge, obs_version, n_samples, exact, nsteps, ϵconv, converged,
-       S..., S_var...]
-tmp = obsfile * ".tmp"
-open(tmp, "w") do io
-    println(io, join(header, ','))
-    println(io, join(string.(row), ','))
+# Every point is tried; a failing point does not stop the others, but makes the exit code 1
+failed = Tuple{String, String}[]
+for (k, (t_str, μ_str)) in enumerate(points)
+    println("== $(Dates.format(now(), "HH:MM:SS")) point $k of $(length(points)): t = $t_str, μ = $μ_str")
+    flush(stdout)
+    try
+        compute_point(t_str, μ_str)
+    catch e
+        push!(failed, (t_str, μ_str))
+        println(stderr, "ERROR for point t = $t_str, μ = $μ_str:")
+        showerror(stderr, e, catch_backtrace())
+        println(stderr)
+    end
+    flush(stdout); flush(stderr)
 end
-mv(tmp, obsfile; force = true)
-
-@printf("ρ = %.6f, |⟨a⟩|² = %.6f, ⟨Var S⟩ = %.6f, ⟨S⟩_bulk = %.6f, Var_{k∈bulk}[S] = %.6f, 𝔼_w[std_{k∈bulk} S] = %.6f ± %.6f, δn = %.6f ± %.6f (entropy and δn from %s, %.1f s)\n", ρ, φ,
-        varS, S_avg, S_inhom, S_bstd, S_bstd_err, dn, dn_err, exact ? "exact enumeration" : "$n_samples sampled words", walltime)
-println("Saved $obsfile")
+if !isempty(failed)
+    println(stderr, "$(length(failed)) of $(length(points)) point(s) failed: ", join(("t = $t, μ = $μ" for (t, μ) in failed), "; "))
+    exit(1)
+end

@@ -4,7 +4,8 @@
 # the transferred Project.toml, Manifest.toml, src/ and the scripts (at their relative paths, preserve_relative_paths).
 #   run_julia.sh <script.jl> <args...> [:: <script2.jl> <args...> ...]
 # Several scripts separated by `::` run one after the other in the same Julia setup; the job stops at the first failure.
-# Environment (set by the submit file): HOME (/tmp/<login>), JULIA_THREADS (default 1), and the scripts' own variables.
+# Environment (set by the submit file): HOME (/tmp/<login>), JULIA_THREADS (default 1), REMOVE_STATES (see below), and
+# the scripts' own variables.
 #
 # Julia: the version the Manifest was resolved with (julia_version in Manifest.toml; override with JULIA_VERSION), run
 # through juliaup. The first job on a machine installs juliaup and that version in $HOME/.juliaup; later jobs reuse it
@@ -19,6 +20,13 @@
 # "== HH:MM:SS julia <script> <args>" before every script.
 
 set -euo pipefail
+
+# REMOVE_STATES=1 (observables jobs of hpc/condor/obs_BHCorr.sh, which transfer back their whole data folder): on any
+# exit, delete the transferred states (*.jld2 under $DATA_DIR) in the sandbox, so only the results go back and the
+# states on the access point are never overwritten. Only inside a condor sandbox (_CONDOR_SCRATCH_DIR).
+if [ "${REMOVE_STATES:-0}" = "1" ] && [ -n "${_CONDOR_SCRATCH_DIR:-}" ] && [ "$(pwd -P)" = "$(cd "$_CONDOR_SCRATCH_DIR" && pwd -P)" ]; then
+    trap 'find "./${DATA_DIR:?}" -name "*.jld2" -type f -delete 2> /dev/null || true' EXIT
+fi
 
 echo "Host: $(hostname), started at $(date)"
 echo "Sandbox: $(pwd)"

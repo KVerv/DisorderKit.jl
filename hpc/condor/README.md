@@ -56,6 +56,9 @@ The workflow, one button each:
   observables script (every observables file stores the `git hash-object` of the script that made it, so after you change
   `hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl` and push, all points show as outdated). Uploads only the
   needed states to the access point and runs observables-only jobs; the ITE is not rerun. Gather afterwards.
+  Each job computes "Points per obs job" points (`CHUNK`, default 20) in one Julia process: a job spends ~10 min (up to
+  ~45 min) installing Julia and the packages and only ~0.5–1 min per point at L = 10, so the setup is paid once per chunk.
+  A failing point does not stop the others in its job (the job then ends with exit code 1).
 - **Remove held** (then Submit resubmits them) and **Remove all jobs** of the sweep.
 
 The parameters (grid, model, convergence, observables, plot, resources) are in the form and remembered per sweep. The
@@ -81,7 +84,11 @@ access point:
 
 Each script writes its points file and submit file to `logs/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/condor/`
 (`…/condor/obs/` for observables-only jobs), next to the job `.out`/`.err` and the cluster `.log`. The jobs carry the
-attributes `BHC_stage`, `BHC_tag`, `BHC_L`, `BHC_t`, `BHC_mu`, so a point is never submitted twice while it is queued.
+attributes `BHC_stage`, `BHC_tag`, `BHC_L`, `BHC_t`, `BHC_mu` (observables-only jobs, which hold several points:
+`BHC_points = "t1_mu1,t2_mu2,..."` instead of `BHC_t`, `BHC_mu`), so a point is never submitted twice while it is queued.
+Observables-only jobs have one `.out`/`.err` per job (`BHC_obs_L<L>_<cluster>.<proc>`), with a line
+`== HH:MM:SS point k of n: t = …, μ = …` before each point; they transfer back their whole `L<L>` folder, from which
+`run_julia.sh` first deletes the copies of the states (`REMOVE_STATES=1`), so only the `_obs.csv` files return.
 
 ## One-time setup on the access point
 
@@ -109,7 +116,7 @@ laptop) it would submit those points again: use the dashboard, or pass `POINTS="
 Parameters (environment): `TS`, `MUS`, `POINTS`, `U`, `R`, `DELTA`, `OMEGA`, `NMAX`, `DTAU`, `MAXD`, `MAXITER`, `RESUME` (default 1; 0: no resume),
 `CONVTOL`, `CROSS_WIDTH`, `N_SAMPLES`, `N_EDGE` (observables), `KAPPA_TOL`, `SBSTD_TOL`, `A2_TOL` (plot), `FORCE`, `DRYRUN`. Condor
 resources: `PPN` (request_cpus; 8 sweep, 4 observables-only), `JULIA_THREADS`, `BLAS_THREADS` (ITE: 1 and `PPN`),
-`OBS_THREADS` (observables in the sweep job: `PPN`), `MEM` ("6 G"), `DISK` ("2 G"), `REQUIREMENTS` (extra requirements,
+`OBS_THREADS` (observables in the sweep job: `PPN`), `CHUNK` (points per observables-only job, 20), `MEM` ("6 G"), `DISK` ("2 G", per job), `REQUIREMENTS` (extra requirements,
 e.g. `"cpu_performance > 7"`), `NICE` (`nice_user`, TRUE: only idle slots), `UG_NAME` (default `$USER`). There is no
 walltime on condor.
 

@@ -43,7 +43,7 @@ CONFIG = os.path.join(REPO, "hpc", "condor", "condor.local.env")
 MODEL = "BoseHubbardCorrelated_NormalizedITE"
 OBS_SCRIPT = "hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl"
 PLOT_SCRIPT = "hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl"
-JOB_ATTRS = ("ClusterId,ProcId,JobStatus,BHC_stage,BHC_tag,BHC_L,BHC_t,BHC_mu,RemoteHost,LastRemoteHost,"
+JOB_ATTRS = ("ClusterId,ProcId,JobStatus,BHC_stage,BHC_tag,BHC_L,BHC_t,BHC_mu,BHC_points,RemoteHost,LastRemoteHost,"
              "HoldReason,EnteredCurrentStatus,QDate,CompletionDate,ExitCode,RemoveReason,"
              "RemoteUserCpu,RemoteSysCpu,JobCurrentStartDate,RequestCpus,RequestMemory,ResidentSetSize,ResidentSetSize_RAW,"
              "RemoteWallClockTime,NumJobStarts")
@@ -61,13 +61,13 @@ PARAMS = {
     "MEM": r"^\d+(\.\d+)? ?[KMGT]?B?$", "DISK": r"^\d+(\.\d+)? ?[KMGT]?B?$",
     "REQUIREMENTS": r"^[A-Za-z0-9_ .<>=!&|()\"']*$", "NICE": r"^(TRUE|FALSE)$",
     "N_SAMPLES": r"^\d+$", "N_EDGE": r"^\d+$", "KAPPA_TOL": NUM, "SBSTD_TOL": NUM, "A2_TOL": NUM,
-    "POINTS": r"^[0-9.\- ,]*$", "DRYRUN": r"^[01]$", "RESUME": r"^[01]$",
+    "POINTS": r"^[0-9.\- ,]*$", "DRYRUN": r"^[01]$", "RESUME": r"^[01]$", "CHUNK": r"^[1-9]\d*$",
 }
 MODEL_PARAMS = ["U", "R", "DELTA", "OMEGA", "NMAX", "DTAU", "MAXD"]
 SCRIPT_PARAMS = {
     "submit": MODEL_PARAMS + ["MAXITER", "CONVTOL", "CROSS_WIDTH", "N_SAMPLES", "N_EDGE", "PPN", "OBS_THREADS", "MEM",
                               "DISK", "REQUIREMENTS", "NICE", "POINTS", "DRYRUN", "RESUME"],
-    "recompute_obs": MODEL_PARAMS + ["N_SAMPLES", "N_EDGE", "PPN", "MEM", "REQUIREMENTS", "NICE", "POINTS"],
+    "recompute_obs": MODEL_PARAMS + ["N_SAMPLES", "N_EDGE", "PPN", "MEM", "REQUIREMENTS", "NICE", "POINTS", "CHUNK"],
 }
 SCRIPT = {"submit": "hpc/condor/sweep_BHCorr.sh", "recompute_obs": "hpc/condor/obs_BHCorr.sh"}
 
@@ -276,22 +276,24 @@ def merge(remote, local, queue, history, obs_version="", n_edge=None):
         entry((t, mu))
     active = {"ite": {}, "obs": {}}
     for j in queue:
-        stage, key = j.get("BHC_stage"), (j.get("BHC_t"), j.get("BHC_mu"))
-        if stage not in active or None in key or j.get("JobStatus") == 3:
+        stage = j.get("BHC_stage")
+        if stage not in active or j.get("JobStatus") == 3:
             continue
-        entry(key)
-        old = active[stage].get(key)
-        if old is None or (j.get("ClusterId", 0), j.get("ProcId", 0)) > (old.get("ClusterId", 0), old.get("ProcId", 0)):
-            active[stage][key] = j
+        for key in job_points(j):
+            entry(key)
+            old = active[stage].get(key)
+            if old is None or (j.get("ClusterId", 0), j.get("ProcId", 0)) > (old.get("ClusterId", 0), old.get("ProcId", 0)):
+                active[stage][key] = j
     last = {"ite": {}, "obs": {}}
     for j in history:
-        stage, key = j.get("BHC_stage"), (j.get("BHC_t"), j.get("BHC_mu"))
-        if stage not in last or None in key:
+        stage = j.get("BHC_stage")
+        if stage not in last:
             continue
-        entry(key)
         rank = (j.get("CompletionDate") or j.get("EnteredCurrentStatus") or 0, j.get("ClusterId", 0))
-        if key not in last[stage] or rank > last[stage][key][0]:
-            last[stage][key] = (rank, j)
+        for key in job_points(j):
+            entry(key)
+            if key not in last[stage] or rank > last[stage][key][0]:
+                last[stage][key] = (rank, j)
 
     def failure(j):
         if j.get("JobStatus") == 3:
@@ -343,6 +345,21 @@ def merge(remote, local, queue, history, obs_version="", n_edge=None):
         out.append(rec)
     out.sort(key=lambda x: (float(x["t"]), float(x["mu"])))
     return out
+
+
+def job_points(j):
+    """The points (t, mu) of a job: BHC_points "t1_mu1,t2_mu2,..." (observables jobs of several points, see
+    hpc/condor/obs_BHCorr.sh), else BHC_t and BHC_mu (ITE jobs, older observables jobs)."""
+    pts = j.get("BHC_points")
+    if isinstance(pts, str) and pts:
+        return [tuple(x.split("_", 1)) for x in pts.split(",") if "_" in x]
+    key = (j.get("BHC_t"), j.get("BHC_mu"))
+    return [] if None in key else [key]
+
+
+def point_constraint(t, mu):
+    """ClassAd constraint matching the jobs of the point (t, mu), single-point or with BHC_points."""
+    return f'((BHC_t =?= "{t}" && BHC_mu =?= "{mu}") || stringListMember("{t}_{mu}", BHC_points) =?= true)'
 
 
 def parse_progress_dump(text):
@@ -539,12 +556,20 @@ class Dashboard:
         d = f"logs/{MODEL}/{tag}/L{L}/condor" + ("/obs" if stage == "obs" else "")
         prefix = f"BHC_obs_L{L}" if stage == "obs" else f"BHC_L{L}"
         # A running job's files on the access point stay empty until it ends: show its live output instead
-        c = shlex.quote(f'{self.condor_constraint(tag, L)} && BHC_stage =?= "{"obs" if stage == "obs" else "ite"}" && '
-                        f'BHC_t =?= "{t}" && BHC_mu =?= "{mu}" && JobStatus == 2')
+        pc = f'{self.condor_constraint(tag, L)} && BHC_stage =?= "{"obs" if stage == "obs" else "ite"}" && {point_constraint(t, mu)}'
+        c = shlex.quote(pc + " && JobStatus == 2")
         cmd = (f"id=$(condor_q \"$USER\" -constraint {c} -format '%d.' ClusterId -format '%d\\n' ProcId 2>/dev/null | head -1); "
                f"if [ -n \"$id\" ]; then echo \"== job $id is running: live stdout (condor_tail)\"; "
                f"timeout 30 condor_tail -maxbytes 8000 $id 2>&1 | tail -n 60; echo; echo \"== live stderr\"; "
                f"timeout 30 condor_tail -stderr -maxbytes 12000 $id 2>&1 | tail -n 60; exit 0; fi; "
+               # observables jobs of several points: the log of the newest finished job of this point (by job id)
+               + (f"id=$(condor_history \"$USER\" -constraint {shlex.quote(pc)} -limit 1 -format '%d.' ClusterId "
+                  f"-format '%d\\n' ProcId 2>/dev/null | head -1); "
+                  f"f=; [ -n \"$id\" ] && f=$(ls {d}/{prefix}_$id.err 2>/dev/null); "
+                  # its setup and the section of this point (from its \"== … point k of n: t = …, μ = …\" marker)
+                  f"if [ -n \"$f\" ]; then o=\"${{f%.err}}.out\"; echo \"== $o (job $id, setup and this point)\"; "
+                  f"awk -v m=\"t = {t}, μ = {mu}\" '/^== .* point [0-9]+ of [0-9]+: / {{ s = index($0, m) > 0; p = 1 }} !p || s' "
+                  f"\"$o\" | tail -n 80; echo; echo \"== $f\"; tail -n 60 \"$f\"; exit 0; fi; " if stage == "obs" else "") +
                f"f=$(ls -t {d}/{prefix}_t{t}_mu{mu}_*.err 2>/dev/null | head -1); "
                f"if [ -z \"$f\" ]; then echo 'No log files for this point on the access point (gathered points have no logs left).'; exit 0; fi; "
                f"o=\"${{f%.err}}.out\"; echo \"== $o\"; tail -n 60 \"$o\" 2>/dev/null; echo; echo \"== $f\"; tail -n 60 \"$f\"")
@@ -558,7 +583,7 @@ class Dashboard:
         L = int(L)
         c = self.condor_constraint(tag, L) + " && JobStatus == 2"
         if t is not None:
-            c += f' && BHC_t =?= "{t}" && BHC_mu =?= "{mu}"'
+            c += " && " + point_constraint(t, mu)
         cmd = (f"condor_q \"$USER\" -constraint {shlex.quote(c)} -af ClusterId ProcId BHC_stage BHC_t BHC_mu 2>/dev/null | "
                "while read c p st t mu; do echo \"@@JOB $c.$p $st $t $mu\"; echo @@OUT; "
                "timeout 30 condor_tail -maxbytes 20000 $c.$p 2>&1 < /dev/null; echo; echo @@ERR; "
@@ -566,7 +591,12 @@ class Dashboard:
         rc, out, err = self.remote.run(cmd, timeout=300)
         if rc == 255 and not self.args.local:
             raise ConnectionError(err.strip() or "ssh connection lost")
-        return {"time": time.time(), "jobs": parse_progress_dump(out)}
+        jobs = parse_progress_dump(out)
+        if t is not None:
+            for j in jobs:   # observables jobs of several points have no BHC_t, BHC_mu
+                if j.get("t") in (None, "undefined"):
+                    j["t"], j["mu"] = t, mu
+        return {"time": time.time(), "jobs": jobs}
 
     def plot_file(self, tag, L):
         if not RE_TAG.match(tag):
@@ -760,13 +790,18 @@ class Dashboard:
         # Result files older than GATHER_MIN_AGE min of points without a job in the queue (any stage)
         cmd = (f"echo @@FILES; [ -d {data} ] && find {data} -type f \\( -name 'mu*.jld2' -o -name 'mu*_obs.csv' \\) "
                f"-mmin +{GATHER_MIN_AGE}; "
-               f"echo @@ACTIVE; command -v condor_q >/dev/null && condor_q \"$USER\" -constraint {c} -af BHC_t BHC_mu 2>/dev/null; "
+               f"echo @@ACTIVE; command -v condor_q >/dev/null && condor_q \"$USER\" -constraint {c} -af BHC_t BHC_mu BHC_points 2>/dev/null; "
                f"echo @@END")
         rc, out, err = self.remote.run(cmd, timeout=120)
         if rc == 255 and not self.args.local:
             raise ConnectionError(err.strip() or "ssh connection lost")
         s = sections(out)
-        active = {tuple(line.split()) for line in s.get("ACTIVE", "").splitlines() if len(line.split()) == 2}
+        active = set()
+        for line in s.get("ACTIVE", "").splitlines():
+            parts = line.split()
+            if len(parts) == 3:
+                job = {k: v for k, v in zip(("BHC_t", "BHC_mu", "BHC_points"), parts) if v != "undefined"}
+                active.update(job_points(job))
         files, points = [], set()
         for path in s.get("FILES", "").splitlines():
             m = re.match(rf"^{re.escape(data)}/t(-?\d+\.\d{{4}})/mu(-?\d+\.\d{{4}})(_obs\.csv|\.jld2)$", path.strip())
@@ -924,6 +959,23 @@ def selftest():
     assert needs_run(recs[("0.5000", "0.2000")], 2000, 1e-6, force=True) == "run"
     assert sections("@@A\n1\n2\n@@B\n@@END\n") == {"A": "1\n2", "B": "", "END": ""}
     assert parse_json_section("warning\n[1,2]\n", None) == [1, 2]
+    # observables jobs of several points (BHC_points): a running chunk applies to each of its points, a finished one
+    # is attached to them; an old single-point obs job is still matched
+    assert job_points({"BHC_points": "0.1000_0.2000,0.2000_0.2000"}) == [("0.1000", "0.2000"), ("0.2000", "0.2000")]
+    assert job_points({"BHC_t": "0.1000", "BHC_mu": "0.2000"}) == [("0.1000", "0.2000")] and job_points({}) == []
+    q2 = queue + [{"ClusterId": 11, "ProcId": 0, "JobStatus": 2, "BHC_stage": "obs",
+                   "BHC_points": "0.2000_0.2000,0.1000_0.4000"}]
+    h2 = history + [{"ClusterId": 10, "ProcId": 1, "JobStatus": 4, "ExitCode": 1, "CompletionDate": 95, "BHC_stage": "obs",
+                     "BHC_points": "0.1000_0.2000,0.3000_0.4000", "RemoteWallClockTime": 900.0},
+                    {"ClusterId": 3, "ProcId": 0, "JobStatus": 4, "ExitCode": 0, "CompletionDate": 80, "BHC_stage": "obs",
+                     "BHC_t": "0.5000", "BHC_mu": "0.2000"}]
+    r2 = {(p["t"], p["mu"]): p for p in merge(remote, local, q2, h2, "v2", 2)}
+    assert r2[("0.2000", "0.2000")]["obs"] == "running" and r2[("0.1000", "0.4000")]["obs"] == "running"
+    assert r2[("0.2000", "0.2000")]["obs_job"]["id"] == "11.0"
+    assert r2[("0.1000", "0.2000")]["obs"] == "done" and r2[("0.1000", "0.2000")]["obs_job"]["id"] == "10.1"   # its point ok, another failed
+    assert r2[("0.3000", "0.4000")]["obs"] == "none"                     # no state: not "failed"
+    assert r2[("0.5000", "0.2000")]["obs"] == "outdated" and r2[("0.5000", "0.2000")]["obs_job"]["id"] == "3.0"
+    assert point_constraint("0.1", "0.2") == '((BHC_t =?= "0.1" && BHC_mu =?= "0.2") || stringListMember("0.1_0.2", BHC_points) =?= true)'
     # progress: a job of the old run_julia.sh (no markers) hanging in Pkg.instantiate
     old_out = "Host: x\nWelcome to Julia!\nNow installing Juliaup\nJulia was successfully installed\nJulia 1.12.6 (juliaup), HOME = /tmp/k"
     pr = parse_progress(old_out, "info: downloading installer\n   Configure Default Julia version set to '1.12.6'.")
