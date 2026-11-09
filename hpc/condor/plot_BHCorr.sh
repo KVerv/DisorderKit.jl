@@ -11,7 +11,7 @@
 # Output: data/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/observables.csv and
 #   plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png
 # Phase classification (see the plot script): κ ≤ KAPPA_TOL → κ low, S_bstd < SBSTD_TOL → std low, |⟨a⟩|² ≤ A2_TOL → |⟨a⟩|² low;
-#   MI: κ, std and |⟨a⟩|² low; SF: κ high, std low, |⟨a⟩|² high; BG: κ high, std high, |⟨a⟩|² low; else unclassified
+#   MI: κ low, std low; SF: κ high, std low; BG: κ high, std high; κ low, std high: SF if |⟨a⟩|² high, else unclassified
 
 set -euo pipefail
 

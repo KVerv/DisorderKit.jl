@@ -12,11 +12,12 @@
 #
 # Environment (all required): U, R, DELTA, OMEGA, NMAX, DTAU, MAXD, DATA_DIR, and the phase classification thresholds
 #   KAPPA_TOL, SBSTD_TOL, A2_TOL: with κ low ⇔ κ ≤ KAPPA_TOL, S_bstd (bulk bonds, see N_EDGE in the observables script)
-#   low ⇔ S_bstd < SBSTD_TOL and |⟨a⟩|² low ⇔ |⟨a⟩|² ≤ A2_TOL, a point is a
-#     Mott insulator (MI): κ low,  S_bstd low,  |⟨a⟩|² low
-#     superfluid (SF):     κ high, S_bstd low,  |⟨a⟩|² high
-#     Bose glass (BG):     κ high, S_bstd high, |⟨a⟩|² low
-#   and unclassified otherwise (also when S_bstd is NaN, observables of an older format).
+#   low ⇔ S_bstd < SBSTD_TOL and |⟨a⟩|² low ⇔ |⟨a⟩|² ≤ A2_TOL, κ and S_bstd decide:
+#     Mott insulator (MI): κ low,  S_bstd low
+#     superfluid (SF):     κ high, S_bstd low
+#     Bose glass (BG):     κ high, S_bstd high
+#   and |⟨a⟩|² only decides the ambiguous combination κ low, S_bstd high: SF if |⟨a⟩|² high, else unclassified.
+#   S_bstd = NaN (observables of an older format) is unclassified.
 # Output: the table on stdout, <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/observables.csv (all points)
 #   and the figure plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png. The grid is set by the t<t>/mu<μ>.jld2 and
 #   mu<μ>_obs.csv names; grid points without (readable) observables are set to 0 and marked with a cross.
@@ -108,11 +109,10 @@ end
 const phasenames = ("MI", "SF", "BG", "unclassified")
 function classify(κ, sbstd, a2)
     isnan(sbstd) && return 4   # observables of an older format
-    compressible, largestd, condensed = κ > κtol, sbstd >= sbstdtol, a2 > a2tol
-    !compressible && !largestd && !condensed && return 1
-    compressible && !largestd && condensed && return 2
-    compressible && largestd && !condensed && return 3
-    return 4
+    compressible, largestd = κ > κtol, sbstd >= sbstdtol
+    !largestd && return compressible ? 2 : 1   # SF or MI
+    compressible && return 3                   # BG
+    return a2 > a2tol ? 2 : 4                  # ambiguous (κ low, S_bstd high): |⟨a⟩|² decides
 end
 phases = [hasdata[i, j] ? classify(κs[i, j], Sbstds[i, j], φs[i, j]) : 0 for i in eachindex(ts), j in eachindex(μs)]
 

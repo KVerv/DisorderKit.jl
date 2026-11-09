@@ -31,7 +31,7 @@ export DATA_DIR="${DATA_DIR:-${VSC_DATA:-.}/data}"
 
 # Phase classification thresholds for the phase-diagram plot (do not change the run tag):
 #   κ ≤ KAPPA_TOL → κ low, S_bstd < SBSTD_TOL → std low, |⟨a⟩|² ≤ A2_TOL → |⟨a⟩|² low;
-#   MI: κ, std and |⟨a⟩|² low; SF: κ high, std low, |⟨a⟩|² high; BG: κ high, std high, |⟨a⟩|² low; else unclassified
+#   MI: κ low, std low; SF: κ high, std low; BG: κ high, std high; κ low, std high: SF if |⟨a⟩|² high, else unclassified
 #   e.g. KAPPA_TOL=0.02 SBSTD_TOL=0.1 A2_TOL=0.02 bash hpc/submit_plot_BHCorr.sh 6
 export KAPPA_TOL="${KAPPA_TOL:-0.05}"
 export SBSTD_TOL="${SBSTD_TOL:-0.05}"
