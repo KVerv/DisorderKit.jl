@@ -121,10 +121,13 @@ class Remote:
         self.lost = False
 
     def _argv(self, cmd):
+        """argv plus the script to feed on stdin. The script goes over stdin, not as an argument, because a long one
+        (e.g. the rm of the logs of many gathered points) exceeds the kernel's argument length limit. It is wrapped in
+        { ...; } </dev/null so bash reads it completely before running it and the commands in it do not eat it."""
+        script = f"{{ cd {shlex.quote(self.local or self.dir)} && {cmd}\n}} </dev/null\n"
         if self.local:
-            return ["bash", "-c", f"cd {shlex.quote(self.local)} && {cmd}"]
-        return ["ssh", "-S", self.sock, "-o", "BatchMode=yes", "-p", self.port, self.target,
-                f"cd {shlex.quote(self.dir)} && {cmd}"]
+            return ["bash", "-s"], script
+        return ["ssh", "-S", self.sock, "-o", "BatchMode=yes", "-p", self.port, self.target, "bash -s"], script
 
     def connect(self):
         if self.local:
@@ -140,7 +143,8 @@ class Remote:
 
     def run(self, cmd, timeout=300):
         try:
-            p = subprocess.run(self._argv(cmd), capture_output=True, text=True, timeout=timeout)
+            argv, script = self._argv(cmd)
+            p = subprocess.run(argv, input=script, capture_output=True, text=True, timeout=timeout)
         except subprocess.TimeoutExpired:
             return 124, "", f"timed out after {timeout} s"
         if p.returncode == 255 and not self.local:
@@ -149,7 +153,8 @@ class Remote:
         return p.returncode, p.stdout, p.stderr
 
     def stream(self, cmd, emit):
-        return stream(self._argv(cmd), emit)
+        argv, script = self._argv(cmd)
+        return stream(argv, emit, input=script)
 
     def path(self, rel=""):
         """rsync address of a path relative to the repo on the access point."""
@@ -161,8 +166,12 @@ class Remote:
         return [] if self.local else ["-e", f"ssh -S {self.sock} -o BatchMode=yes -p {self.port}"]
 
 
-def stream(argv, emit, **kw):
-    p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, **kw)
+def stream(argv, emit, input=None, **kw):
+    p = subprocess.Popen(argv, stdin=subprocess.PIPE if input is not None else None, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, text=True, bufsize=1, **kw)
+    if input is not None:
+        p.stdin.write(input)
+        p.stdin.close()
     for line in p.stdout:
         emit(line.rstrip("\n"))
     return p.wait()
