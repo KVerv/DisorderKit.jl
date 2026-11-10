@@ -10,20 +10,20 @@
 using TensorKit, DisorderKit, LinearAlgebra, Printf, CairoMakie
 
 # Model
-L = 8
-U = 1.0
-t = 0.1                                          # hopping (t/U)
-Δ = 0.3                                          # μᵢ uniform in [-Δ, Δ] (keep 2Δ < U: at 2Δ = U moving a boson
+L = 10
+U = 1.5
+t = 0.5                                          # hopping (t/U)
+Δ = 1.5                                          # μᵢ uniform in [-Δ, Δ] (keep 2Δ < U: at 2Δ = U moving a boson
                                                  # from μ = -Δ to a neighbouring μ = +Δ costs nothing, the gap closes
                                                  # and the imaginary time evolution becomes very slow) ...
 q = 2                                            # ... discretized to q equally likely values
-nmax = 3                                         # at most nmax bosons per site
+nmax = 4                                         # at most nmax bosons per site
 μs = collect(range(-Δ, Δ; length = q))
 ps = fill(1/q, q)
 
 # Normalized ITE
-Δτ = 0.02                                         # with order = 2 the time step error is far below the cap error
-maxD = 32                                        # one bond basis carries the conditional states of all words: at
+Δτ = 0.05                                         # with order = 2 the time step error is far below the cap error
+maxD = [50 => 16, 25 => 32, 25 => 64]                                       # one bond basis carries the conditional states of all words: at
                                                  # maxD = 16 the cap dominates the error (L = 4: 3e-5 in E/L, 5e-6 at 32)
 maxiter = 100
 convtol = 1e-7
@@ -98,7 +98,7 @@ scatterlines!(ax4, τs, maximum.(info.src_ranks); markersize = 6, label = L"\mat
 scatterlines!(ax4, τs, maximum.(info.filter_ranks); markersize = 6, label = L"\mathrm{filter}")
 scatterlines!(ax4, τs, maximum.(info.partition_ranks); markersize = 6, label = L"\mathrm{partition}")
 lines!(ax4, τs, info.caps; color = :black, linestyle = :dash, label = L"\mathrm{cap}")
-axislegend(ax4; position = :rc)
+axislegend(ax4; position = :rb)
 
 ax5 = Axis(fig[3, 1]; xlabel = L"i", ylabel = L"\langle n_i \rangle", xticks = 1:L)
 hlines!(ax5, [1.0]; color = :gray, linestyle = :dash)
