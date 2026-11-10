@@ -60,7 +60,7 @@ The page shows:
 - **Running jobs**: *Check running jobs* reads the live output of all running jobs (condor_tail) and lists their
   runtime, CPU use, phase/step and how long they are in it, longest first;
 - counts, a progress bar, what is on the laptop and what still waits on the access point; it refreshes every 20 s;
-- the **phase diagram** of the sweep once it is plotted;
+- the **phase diagram** (BHCorr) or the **heatmap PNG** of the selected observable (U(1)) once it is plotted;
 - a theme switch (Auto / Light / Dark).
 
 The workflow, one button each:
@@ -75,6 +75,9 @@ The workflow, one button each:
    copied completely, and results younger than 2 minutes or of points still in the queue wait for the next Gather. The
    laptop is the archive; nothing piles up on the access point. Logs of held or failed points are kept until resolved.
 3. **Plot**: runs `hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl` on the laptop's data and shows the figure.
+   For the U(1) model it runs `hpc/plot_BoseHubbardU1_NormalizedITE.jl` instead: a heatmap PNG of the observable
+   chosen in *Colour by*, restricted to the x/y window set next to the button (empty = everything), saved as
+   `plots/BoseHubbardU1_NormalizedITE_<tag>_L<L>_<observable>.png`.
 
 - **Recompute observables**: for points whose observables are missing or outdated: another N_EDGE, or a changed
   observables script (every observables file stores the `git hash-object` of the script that made it, so after you change

@@ -210,8 +210,8 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
       <p class="hint" style="margin:0">Reads the live output of every running job (condor_tail): setup phase, ITE iteration and step, and how long it is in it. A warning marker on a running point means it used almost no CPU for more than 30 minutes (stuck).</p>
       <div class="jobswrap" id="jobsBox"></div>
     </section>
-    <section class="card plot m-only m-BHCorr">
-      <h2>Phase diagram <span class="muted" id="plotTime" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h2>
+    <section class="card plot">
+      <h2><span class="m-only m-BHCorr">Phase diagram</span><span class="m-only m-BHU1">Heatmap PNG</span> <span class="muted" id="plotTime" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h2>
       <div id="plotBox"></div>
     </section>
   </div>
@@ -225,9 +225,16 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
       <div class="action"><span class="name"><span class="step">2</span>Gather data</span>
         <button class="btn primary" data-act="gather">Gather<span class="count" id="gatherCount">0</span></button>
         <span class="desc" id="gatherDesc">Copies finished results to the laptop, then deletes them and their logs on the access point. A file is only deleted after it was copied completely.</span></div>
-      <div class="action m-only m-BHCorr"><span class="name"><span class="step">3</span>Phase-diagram plot</span>
+      <div class="action"><span class="name"><span class="step">3</span><span class="m-only m-BHCorr">Phase-diagram plot</span><span class="m-only m-BHU1">Heatmap PNG</span></span>
         <button class="btn" data-act="plot">Plot</button>
-        <span class="desc">Runs the plot script on the laptop's data (κ, density fluctuation δn, |⟨a⟩|², ρ, S_bstd, phases from κ and S_bstd, |⟨a⟩|² only for low κ with high S_bstd), using KAPPA_TOL, SBSTD_TOL and A2_TOL below.</span></div>
+        <span class="desc m-only m-BHU1">Saves the heatmap of the observable chosen in <b>Colour by</b> as a PNG (plots/ on the laptop, from the gathered data), restricted to the window below. Empty bounds: everything. The colour scale spans the plotted points.
+          <span class="fields" style="grid-template-columns:repeat(4,1fr)">
+            <label><span id="pxLabel">x</span> min <input type="text" id="PXMIN"></label>
+            <label><span id="pxLabel2">x</span> max <input type="text" id="PXMAX"></label>
+            <label><span id="pyLabel">y</span> min <input type="text" id="PYMIN"></label>
+            <label><span id="pyLabel2">y</span> max <input type="text" id="PYMAX"></label>
+          </span></span>
+        <span class="desc m-only m-BHCorr">Runs the plot script on the laptop's data (κ, density fluctuation δn, |⟨a⟩|², ρ, S_bstd, phases from κ and S_bstd, |⟨a⟩|² only for low κ with high S_bstd), using KAPPA_TOL, SBSTD_TOL and A2_TOL below.</span></div>
       <div class="action"><span class="name">Recompute observables</span>
         <button class="btn" data-act="recompute_obs">Recompute<span class="count" id="obsCount" style="background:var(--surface-3)">0</span></button>
         <span class="desc">For points whose observables are missing or outdated (changed observables script, or another N_EDGE). Uploads only those states and runs observables-only jobs, several points per job (Points per obs job); the simulation is not rerun. Gather afterwards.</span></div>
@@ -337,7 +344,7 @@ const OBS_LABEL = { done: "computed", outdated: "outdated (other script version 
 const AXIS_PARAM = { t: "T", U: "U", Delta: "DELTA", Omega: "OMEGA", r: "R" };
 const MODELS = {
   BHU1: { name: "U(1) Bose-Hubbard, fixed filling", params: ["T", "U", "DELTA", "OMEGA", "R", "FILLING", "NMAX", "DTAU", "MAXD"],
-    grid: ["XS", "YS"], plot: false,
+    grid: ["XS", "YS"], plot: true,
     axisLabel: { t: "t", U: "U", Delta: "Δ", Omega: "Ω", r: "r" },
     observables: [["S_bar", "S̄  (bond-averaged entanglement entropy)", "S_bar_err"], ["S_bstd", "σ_S  (bond-to-bond std of S)", "S_bstd_err"],
       ["E", "E/L  (energy density)"], ["eps_conv", "ϵ_conv  (convergence error)", null, true],
@@ -351,7 +358,7 @@ const MODELS = {
 };
 const FIELDS = ["L", "x0", "x1", "xstep", "y0", "y1", "ystep", "XAXIS", "YAXIS", "T", "U", "R", "DELTA", "OMEGA", "FILLING", "NMAX",
   "DTAU", "MAXD", "MAXITER", "CONVTOL", "CROSS_WIDTH", "PPN", "OBS_PPN", "OBS_CHUNK", "MEM", "REQUIREMENTS", "N_SAMPLES", "N_EDGE",
-  "OBS", "KAPPA_TOL", "SBSTD_TOL", "A2_TOL"];
+  "OBS", "KAPPA_TOL", "SBSTD_TOL", "A2_TOL", "PXMIN", "PXMAX", "PYMIN", "PYMAX"];
 const CHECKS = ["FORCE", "NICE"];
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -580,7 +587,7 @@ function render() {
     const q = (k) => document.querySelector(`[data-act="${k}"]`);
     q("remove_held").disabled = !counts.held;
     q("recompute_obs").disabled = !obsTodo;
-    q("plot").disabled = !onLaptop || !MODELS[model].plot;
+    q("plot").disabled = !onLaptop || !MODELS[model].plot || (model === "BHU1" && $("colorSel").value === "state");
     q("remove_all").disabled = !((counts.idle || 0) + (counts.running || 0) + (counts.held || 0));
     q("gather").disabled = !toGather;
   }
@@ -588,14 +595,25 @@ function render() {
 }
 let plotKey = "";
 function renderPlot(c) {
-  const mt = mine(c) ? status.plot_mtime : null;
-  const key = `${c.tag}|${c.L}|${mt}`;
+  const u1 = model === "BHU1", obs = u1 ? $("colorSel").value : "";
+  if (u1) {   // window fields: the axis names, the planned grid's range as placeholder
+    const [X, Y] = c.axes, { xs, ys } = plannedGrid(c.f);
+    for (const id of ["pxLabel", "pxLabel2"]) $(id).textContent = axisLabel(model, X);
+    for (const id of ["pyLabel", "pyLabel2"]) $(id).textContent = axisLabel(model, Y);
+    $("PXMIN").placeholder = xs.length ? xs[0] : ""; $("PXMAX").placeholder = xs.length ? xs[xs.length - 1] : "";
+    $("PYMIN").placeholder = ys.length ? ys[0] : ""; $("PYMAX").placeholder = ys.length ? ys[ys.length - 1] : "";
+  }
+  const mt = mine(c) ? (status.plot_mtimes || {})[obs] ?? null : null;
+  const key = `${c.model}|${c.tag}|${c.L}|${obs}|${mt}`;
   if (key === plotKey) return;
   plotKey = key;
   $("plotTime").textContent = mt ? "· made " + new Date(mt * 1000).toLocaleString() : "";
+  const what = u1 ? `heatmap of ${obs}` : "phase diagram";
   $("plotBox").innerHTML = mt
-    ? `<img alt="Phase diagram of ${esc(c.tag)}, L = ${c.L}" src="/api/plot?${sweepQuery(c)}&v=${mt}">`
-    : `<div class="placeholder">No plot yet. Gather the data, then press <b>Plot</b>.</div>`;
+    ? `<img alt="${esc(what)} of ${esc(c.tag)}, L = ${c.L}" src="/api/plot?${sweepQuery(c)}${u1 ? "&obs=" + encodeURIComponent(obs) : ""}&v=${mt}">`
+    : u1 && obs === "state"
+      ? `<div class="placeholder">Choose an observable in <b>Colour by</b>, then press <b>Plot</b>.</div>`
+      : `<div class="placeholder">No ${u1 ? "PNG of " + esc(obs) : "plot"} yet. Gather the data, then press <b>Plot</b>.</div>`;
 }
 function renderGrid(pts, c) {
   const xset = [...new Set(pts.map(p => p.x))].sort((a, b) => a - b);
@@ -842,7 +860,11 @@ function params(action, extra = {}) {
     Object.assign(p, res, { [M.grid[0]]: xs.join(" "), [M.grid[1]]: ys.join(" "), MAXITER: f.MAXITER, CONVTOL: f.CONVTOL,
       CROSS_WIDTH: f.CROSS_WIDTH, N_SAMPLES: f.N_SAMPLES, PPN: f.PPN, FORCE: f.FORCE ? "1" : "0" });
   if (action === "recompute_obs") Object.assign(p, res, { N_SAMPLES: f.N_SAMPLES, PPN: f.OBS_PPN, CHUNK: f.OBS_CHUNK });
-  if (action === "plot") Object.assign(p, { KAPPA_TOL: f.KAPPA_TOL, SBSTD_TOL: f.SBSTD_TOL, A2_TOL: f.A2_TOL });
+  if (action === "plot" && model === "BHCorr") Object.assign(p, { KAPPA_TOL: f.KAPPA_TOL, SBSTD_TOL: f.SBSTD_TOL, A2_TOL: f.A2_TOL });
+  if (action === "plot" && model === "BHU1") {
+    const key = $("colorSel").value, o = M.observables.find(x => x[0] === key);
+    Object.assign(p, { OBS_COL: key, LOG: o && o[3] ? "1" : "0", XMIN: f.PXMIN, XMAX: f.PXMAX, YMIN: f.PYMIN, YMAX: f.PYMAX });
+  }
   return Object.assign(p, extra);
 }
 const TITLES = { submit: "Submit sweep", preview: "Preview (dry run)", remove_held: "Remove held jobs", recompute_obs: "Recompute observables",

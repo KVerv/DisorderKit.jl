@@ -57,6 +57,7 @@ RE_TAG = re.compile(r"^[A-Za-z0-9._+-]+$")
 RE_POINT = re.compile(r"^-?\d+\.\d{4}$")
 RE_AXIS = r"^(t|U|Delta|Omega|r)$"
 NUM = r"^[0-9.eE+-]+$"
+RE_COL = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")   # an observables CSV column
 # Environment variables the actions may pass to the condor scripts, with the allowed values
 PARAMS = {
     "T": NUM, "U": NUM, "R": NUM, "DELTA": NUM, "OMEGA": NUM, "FILLING": r"^\d+$", "NMAX": r"^\d+$", "DTAU": NUM,
@@ -64,7 +65,8 @@ PARAMS = {
     "MAXITER": r"^\d+$", "CONVTOL": NUM, "CROSS_WIDTH": r"^\d+$", "PPN": r"^\d+$", "OBS_THREADS": r"^\d+$",
     "MEM": r"^\d+(\.\d+)? ?[KMGT]?B?$", "DISK": r"^\d+(\.\d+)? ?[KMGT]?B?$",
     "REQUIREMENTS": r"^[A-Za-z0-9_ .<>=!&|()\"']*$", "NICE": r"^(TRUE|FALSE)$",
-    "N_SAMPLES": r"^\d+$", "N_EDGE": r"^\d+$", "KAPPA_TOL": NUM, "SBSTD_TOL": NUM, "A2_TOL": NUM,
+    "N_SAMPLES": r"^\d+$", "N_EDGE": r"^\d+$", "OBS_COL": RE_COL, "LOG": r"^[01]$", "XMIN": NUM, "XMAX": NUM,
+    "YMIN": NUM, "YMAX": NUM, "KAPPA_TOL": NUM, "SBSTD_TOL": NUM, "A2_TOL": NUM,
     "POINTS": r"^[0-9.\- ,]*$", "DRYRUN": r"^[01]$", "RESUME": r"^[01]$", "CHUNK": r"^[1-9]\d*$",
 }
 # The models the dashboard drives. A sweep is (model, tag, L); its points are (x, y), the values of its two axes as in
@@ -93,7 +95,7 @@ MODELS = {
     "BHU1": {
         "dir": "BoseHubbardU1_NormalizedITE",
         "obs_script": "hpc/observables_BoseHubbardU1_NormalizedITE.jl",
-        "plot_script": None,                            # heatmaps in the page instead
+        "plot_script": "hpc/plot_BoseHubbardU1_NormalizedITE.jl",   # PNG of one observable over a window
         "scripts": {"submit": "hpc/condor/sweep_BHU1.sh", "recompute_obs": "hpc/condor/obs_BHU1.sh"},
         "attrs": ("BHC_x", "BHC_y"),
         "select": ' && BHC_model =?= "BHU1"',
@@ -102,13 +104,13 @@ MODELS = {
         "status_args": "--model BHU1 ",
         "obs_marker": "{X} = {x}, {Y} = {y}",
         "model_params": ["T", "U", "DELTA", "OMEGA", "R", "FILLING", "NMAX", "DTAU", "MAXD"],
-        "extra": {"submit": ["XAXIS", "YAXIS", "OBS"], "recompute_obs": ["XAXIS", "YAXIS", "OBS"]},
-        "plot_params": [],
+        "extra": {"submit": ["XAXIS", "YAXIS", "OBS"], "recompute_obs": ["XAXIS", "YAXIS", "OBS"], "plot": ["XAXIS", "YAXIS"]},
+        "plot_params": ["OBS_COL", "LOG", "XMIN", "XMAX", "YMIN", "YMAX"],
     },
 }
 BHU1_AXES = {"t": "T", "U": "U", "Delta": "DELTA", "Omega": "OMEGA", "r": "R"}   # axis name => parameter
 COMMON = {"submit": ["MAXITER", "CONVTOL", "CROSS_WIDTH", "N_SAMPLES", "N_EDGE", "OBS_THREADS", "DISK", "DRYRUN", "RESUME"] + _RES,
-          "recompute_obs": ["N_SAMPLES", "N_EDGE", "CHUNK"] + _RES}
+          "recompute_obs": ["N_SAMPLES", "N_EDGE", "CHUNK"] + _RES, "plot": []}
 
 
 def model_of(name):
@@ -119,7 +121,7 @@ def model_of(name):
 
 def script_params(model, action):
     m = MODELS[model]
-    return m["model_params"] + m["extra"][action] + COMMON[action]
+    return m["model_params"] + m["extra"].get(action, []) + COMMON[action] + (m["plot_params"] if action == "plot" else [])
 
 
 def bhu1_tag(values):
@@ -606,7 +608,7 @@ class Dashboard:
         for p in points:
             counts[p["state"]] = counts.get(p["state"], 0) + 1
             obs_counts[p["obs"]] = obs_counts.get(p["obs"], 0) + 1
-        plot = self.plot_file(model, tag, L)
+        plots = self.plot_mtimes(model, tag, L)
         res = {"model": model, "tag": tag, "L": L, "axes": list(axes_of(model, tag)), "points": points, "counts": counts,
                "obs_counts": obs_counts,
                "clusters": sorted({j.get("ClusterId") for j in queue if j.get("ClusterId") is not None}),
@@ -615,7 +617,7 @@ class Dashboard:
                                 and p["obs"] not in ("idle", "running", "held")),
                "on_laptop": sum(1 for p in points if "laptop" in p["where"]),
                "stalled": sum(1 for p in points if p["state"] == "running" and (p["job"] or {}).get("stalled")),
-               "plot_mtime": os.path.getmtime(plot) if plot and os.path.isfile(plot) else None}
+               "plot_mtime": plots.get(""), "plot_mtimes": plots}
         with self.lock:
             self.cache[key] = (time.time(), res)
         return res
@@ -726,11 +728,29 @@ class Dashboard:
                     j["x"], j["y"] = x, y
         return {"time": time.time(), "jobs": jobs}
 
-    def plot_file(self, model, tag, L):
-        """The phase-diagram PNG of the plot script (models without one: None)."""
+    def plot_file(self, model, tag, L, obs=None):
+        """The PNG of the plot script: BHCorr's phase diagram, BHU1's heatmap of the observable obs (None without)."""
         if not MODELS[model]["plot_script"]:
             return None
+        if model == "BHU1":
+            if not obs or not RE_COL.match(obs):
+                return None
+            return os.path.join(self.args.gather_dest, "plots", f"{MODELS[model]['dir']}_{tag}_L{int(L)}_{obs}.png")
         return os.path.join(self.args.gather_dest, "plots", f"{MODELS[model]['dir']}_{tag}_L{int(L)}.png")
+
+    def plot_mtimes(self, model, tag, L):
+        """Modification times of the existing PNGs of a sweep: {"": t} for BHCorr, {observable: t} for BHU1."""
+        if model != "BHU1":
+            f = self.plot_file(model, tag, L)
+            return {"": os.path.getmtime(f)} if f and os.path.isfile(f) else {}
+        prefix = f"{MODELS[model]['dir']}_{tag}_L{int(L)}_"
+        folder = os.path.join(self.args.gather_dest, "plots")
+        out = {}
+        for name in (os.listdir(folder) if os.path.isdir(folder) else []):
+            obs = name[len(prefix):-4] if name.startswith(prefix) and name.endswith(".png") else ""
+            if RE_COL.match(obs):
+                out[obs] = os.path.getmtime(os.path.join(folder, name))
+        return out
 
     # ---- actions (one at a time, output streamed to the page)
 
@@ -913,7 +933,9 @@ class Dashboard:
         if action == "plot":
             if not m["plot_script"]:
                 raise ValueError("this model has no plot script: its observables are shown as heatmaps in the grid")
-            values = self._check(params, m["model_params"] + m["plot_params"])
+            values = self._values(model, tag, params, "plot")
+            if model == "BHU1" and "OBS_COL" not in values:
+                raise ValueError("choose an observable in 'Colour by' first")
             env = {**os.environ, **values, "DATA_DIR": "data"}
             cmd = [*self.local_julia, f"--project={os.path.join(REPO, 'examples')}", "--startup-file=no",
                    os.path.join(REPO, m["plot_script"]), str(L)]
@@ -1039,7 +1061,7 @@ def make_handler(dash):
                 if u.path == "/api/plot":
                     model = q.get("model", "BHCorr")
                     dash.check_sweep(model, q["tag"], q["L"])
-                    path = dash.plot_file(model, q["tag"], q["L"])
+                    path = dash.plot_file(model, q["tag"], q["L"], q.get("obs"))
                     if not path or not os.path.isfile(path):
                         return self._send(404, {"error": "no plot yet"})
                     with open(path, "rb") as f:
@@ -1215,6 +1237,16 @@ def selftest():
         raise AssertionError("tag mismatch accepted")
     except ValueError:
         pass
+    # the plot action: observable and window passed, a bad column name refused
+    v = d._values("BHU1", tag, {**fixed, "XAXIS": "t", "YAXIS": "Delta", "OBS_COL": "S_bar", "LOG": "0", "XMIN": "0.05",
+                                "YMAX": "", "MAXITER": "100"}, "plot")
+    assert v["TAG"] == tag and v["OBS_COL"] == "S_bar" and v["XMIN"] == "0.05" and "YMAX" not in v and "MAXITER" not in v
+    try:
+        d._values("BHU1", tag, {**fixed, "XAXIS": "t", "YAXIS": "Delta", "OBS_COL": "S_bar;rm"}, "plot")
+        raise AssertionError("bad OBS_COL accepted")
+    except ValueError:
+        pass
+    assert set(script_params("BHCorr", "plot")) == set(MODELS["BHCorr"]["model_params"] + MODELS["BHCorr"]["plot_params"])
     assert Dashboard._grid("BHU1", {"XS": "0.1 0.2", "YS": "0"}) == [("0.1000", "0.0000"), ("0.2000", "0.0000")]
     print("selftest ok")
 
