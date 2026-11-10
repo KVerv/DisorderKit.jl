@@ -62,12 +62,29 @@ logscale && foreach(k -> vals[k] > 0 || (vals[k] = NaN), collect(keys(vals)))
 nvalues = count(!isnan, values(vals))
 nvalues > 0 || error("no point in the window has a value of $col (compute the observables and gather first)")
 
-xs = sort(unique(first.(keys(vals))))
-ys = sort(unique(last.(keys(vals))))
-M = [get(vals, (x, y), NaN) for x in xs, y in ys]
+# Plotted grid of an axis: if every value lies on the lattice of the smallest step (e.g. 0.25-spaced up to 2 and
+# 0.5-spaced above), that whole lattice, so every cell is one step wide and lattice points that were not computed are
+# grey instead of being covered by a stretched neighbour; otherwise the values themselves
+function grid_of(v)
+    length(v) == 1 && return v
+    h = minimum(diff(v))
+    n = round(Int, (v[end] - v[1]) / h)
+    lattice = v[1] .+ h .* (0:n)
+    on = n <= 400 && all(x -> abs((x - v[1]) / h - round((x - v[1]) / h)) < 1e-6, v)
+    return on ? collect(lattice) : v
+end
+xs_data = sort(unique(first.(keys(vals))))
+ys_data = sort(unique(last.(keys(vals))))
+xs, ys = grid_of(xs_data), grid_of(ys_data)
+near(v, x) = (k = argmin(abs.(v .- x)); abs(v[k] - x) < 1e-6 * max(1, abs(x)) ? k : nothing)
+M = fill(NaN, length(xs), length(ys))
+for ((x, y), v) in vals
+    i, j = near(xs, x), near(ys, y)
+    (isnothing(i) || isnothing(j)) || (M[i, j] = v)
+end
 
-# Cell edges halfway between the grid values (uneven steps allowed), the outer cells as wide as their neighbour;
-# a single value gets a cell of width 10 % of it (0.1 at 0)
+# Cell edges halfway between the grid values, the outer cells as wide as their neighbour; a single value gets a
+# cell of width 10 % of it (0.1 at 0)
 function edges(v)
     if length(v) == 1
         h = v[1] == 0 ? 0.05 : 0.05 * abs(v[1])
@@ -97,6 +114,8 @@ hm = heatmap!(ax, xe, ye, M; colormap = :viridis, colorrange, nan_color = :gray8
               colorscale = logscale ? log10 : identity)
 Colorbar(fig[1, 2], hm; label = get(obslabel, col, col))
 limits!(ax, xe[1], xe[end], ye[1], ye[end])
+any(isnan, M) && Label(fig[2, 1:2], "grey: grid points without a value (not computed, not gathered or no observables)";
+                       fontsize = 16, halign = :left, tellwidth = false)
 
 mkpath("plots")
 file = joinpath("plots", "BoseHubbardU1_NormalizedITE_$(tag)_L$(L)_$(col).png")

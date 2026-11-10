@@ -167,7 +167,7 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
 .cbar b { color: var(--ink); font-weight: 600; }
 .gridhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; font-size: 12.5px; color: var(--ink-2); }
 .fields .axis { display: grid; grid-template-columns: 1fr; }
-.m-only { display: none; }
+html:not(.models-ready) .m-only { display: none; }   /* until applyModel shows the current model's */
 .jobs .warn { color: var(--warn); font-weight: 600; }
 .jobswrap { overflow-x: auto; }
 </style>
@@ -227,7 +227,7 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
         <span class="desc" id="gatherDesc">Copies finished results to the laptop, then deletes them and their logs on the access point. A file is only deleted after it was copied completely.</span></div>
       <div class="action"><span class="name"><span class="step">3</span><span class="m-only m-BHCorr">Phase-diagram plot</span><span class="m-only m-BHU1">Heatmap PNG</span></span>
         <button class="btn" data-act="plot">Plot</button>
-        <span class="desc m-only m-BHU1">Saves the heatmap of the observable chosen in <b>Colour by</b> as a PNG (plots/ on the laptop, from the gathered data), restricted to the window below. Empty bounds: everything. The colour scale spans the plotted points.
+        <span class="desc m-only m-BHU1">Saves the heatmap of the observable chosen in <b>Colour by</b> as a PNG (plots/ on the laptop, from the gathered data), restricted to the window below (bounds included; an empty bound means no limit, so empty fields plot every gathered point). Grey cells are grid points without a value. The colour scale spans the plotted points.
           <span class="fields" style="grid-template-columns:repeat(4,1fr)">
             <label><span id="pxLabel">x</span> min <input type="text" id="PXMIN"></label>
             <label><span id="pxLabel2">x</span> max <input type="text" id="PXMAX"></label>
@@ -433,6 +433,7 @@ const sweepQuery = (c) => `model=${c.model}&tag=${encodeURIComponent(c.tag)}&L=$
 function applyModel() {
   $("modelSel").value = model;
   document.querySelectorAll(".m-only").forEach(el => el.style.display = el.classList.contains(`m-${model}`) ? "" : "none");
+  document.documentElement.classList.add("models-ready");
   const c = current(), fixed = MODELS[model].fixedAxes;
   for (const k of ["XAXIS", "YAXIS"]) $(k).disabled = !!fixed;
   if (fixed) {
@@ -597,11 +598,10 @@ let plotKey = "";
 function renderPlot(c) {
   const u1 = model === "BHU1", obs = u1 ? $("colorSel").value : "";
   if (u1) {   // window fields: the axis names, the planned grid's range as placeholder
-    const [X, Y] = c.axes, { xs, ys } = plannedGrid(c.f);
+    const [X, Y] = c.axes;
     for (const id of ["pxLabel", "pxLabel2"]) $(id).textContent = axisLabel(model, X);
     for (const id of ["pyLabel", "pyLabel2"]) $(id).textContent = axisLabel(model, Y);
-    $("PXMIN").placeholder = xs.length ? xs[0] : ""; $("PXMAX").placeholder = xs.length ? xs[xs.length - 1] : "";
-    $("PYMIN").placeholder = ys.length ? ys[0] : ""; $("PYMAX").placeholder = ys.length ? ys[ys.length - 1] : "";
+    for (const id of ["PXMIN", "PXMAX", "PYMIN", "PYMAX"]) $(id).placeholder = "all";
   }
   const mt = mine(c) ? (status.plot_mtimes || {})[obs] ?? null : null;
   const key = `${c.model}|${c.tag}|${c.L}|${obs}|${mt}`;
