@@ -36,14 +36,15 @@ function time_evolution_MPO(Hs::DisorderMPOHam, dt::Real, sectors::Vector{<:Vect
     opp = map(1:L) do i
         map(Us.opp[sectors[i]]) do U
             Ui = U
+            # The first virtual basis vector is the first one of the trivial sector (the unit block comes first)
             if i == 1
-                el = zeros(ComplexF64, ℂ^1, space(U, 1))
-                el[1, 1] = 1
+                el = zeros(ComplexF64, oneunit(space(U, 1)), space(U, 1))
+                dense_block(el)[1, 1] = 1
                 @tensor Ui[-1 -2; -3 -4] := el[-1; 1] * Ui[1 -2; -3 -4]
             end
             if i == L
-                er = zeros(ComplexF64, space(U, 4)', ℂ^1)
-                er[1, 1] = 1
+                er = zeros(ComplexF64, space(U, 4)', oneunit(space(U, 4)))
+                dense_block(er)[1, 1] = 1
                 @tensor Ui[-1 -2; -3 -4] := Ui[-1 -2; -3 1] * er[1; -4]
             end
             Ui

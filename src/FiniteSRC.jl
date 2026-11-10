@@ -61,8 +61,8 @@ right_space(P::PartitionSource, i::Int) = domain(P.A[i][1])[1] ⊗ domain(P.W[i]
 right_space(P::PhysicalSource, i::Int) = domain(P.A[i][1])[1] ⊗ domain(P.W[i][1])[2] ⊗ domain(P.f[i][1])[1]
 
 # Physical legs X_i of site i: ℂ^q (partition) or (ℂ^d)' ⊗ ℂ^q (physical)
-physical_space(P::PartitionSource, i::Int) = ProductSpace(ℂ^length(P.g[i]))
-physical_space(P::PhysicalSource, i::Int) = space(P.W[i][1], 2)' ⊗ ℂ^length(P.g[i])
+physical_space(P::PartitionSource, i::Int) = ProductSpace(trivial_space(spacetype(P.A[i][1]), length(P.g[i])))
+physical_space(P::PhysicalSource, i::Int) = space(P.W[i][1], 2)' ⊗ trivial_space(spacetype(P.A[i][1]), length(P.g[i]))
 
 # Dimension n_i of the physical legs X_i
 physical_dim(P::Source, i::Int) = dim(physical_space(P, i))
@@ -88,7 +88,7 @@ end
 function identity_layers(ψ::FiniteDisorderMPS)
     return map(1:length(ψ)) do i
         s = space(ψ[i, 1], 2)                                    # physical space of site i
-        W = permute(id(ComplexF64, ℂ^1 ⊗ s), ((1, 2), (4, 3)))  # (ℂ^1 ⊗ s ← ℂ^1 ⊗ s) to W[1 s; t 1]
+        W = permute(id(ComplexF64, oneunit(s) ⊗ s), ((1, 2), (4, 3)))  # (1 ⊗ s ← 1 ⊗ s) to W[1 s; t 1]
         fill(W, length(ψ.ps[i]))
     end
 end
@@ -111,12 +111,13 @@ function apply_suffix(P::PartitionSource, i::Int, S::AbstractTensorMap)
     q = length(P.g[i])
     T = promote_type(scalartype(S), scalartype(P.A[i][1]), scalartype(P.W[i][1]))
     J = TensorMap{T}(undef, left_space(P, i) ← physical_space(P, i) ⊗ domain(S))   # every sector u is written below
-    Jd = dense_view(J, dim(codomain(J)), q, dim(domain(S)))                       # J[v, u, r]
+    Jb = dense_block(J)                                                           # trivial sector: everything for ℂ
+    Jd = reshape(Jb, size(Jb, 1), q, :)                                           # J[v, u, r]
     for (u, g) in enumerate(P.g[i])
         A, W = P.A[i][u], P.W[i][u]
         # explicit order, 5-25% faster than opt=true at D_i = 4..16
         @tensor allocator=site_allocator X[-1 -2 -3 -4; -5] := g * ((((S[1 3 5 7; -5] * A[-1 2; 1]) * W[-2 4; 2 3]) * conj(W[-3 4; 6 5])) * conj(A[-4 6; 7]))
-        Jd[:, u, :] .= block(X, Trivial())
+        Jd[:, u, :] .= dense_block(X)
     end
     return J
 end
@@ -124,6 +125,7 @@ end
 # Physical source: per sector u contract S with A_u, W_u, f_u, keep the spin leg s open,
 # weight g_u, write it into physical index (s, u) of J
 function apply_suffix(P::PhysicalSource, i::Int, S::AbstractTensorMap)
+    is_graded(P) && return apply_suffix_graded(P, i, S)
     q = length(P.g[i])
     d = dim(space(P.W[i][1], 2))
     T = promote_type(scalartype(S), scalartype(P.A[i][1]), scalartype(P.W[i][1]), scalartype(P.f[i][1]))
@@ -203,7 +205,7 @@ PrefixStore(P::Source, rng::AbstractRNG) = PrefixStore(P, rng, Any[nothing for _
 # C_i = apply_prefix(P, i, C_{i-1}, randn(physical_dim(P, i), ncols)), rescaled per row
 function extend_prefixes!(store::PrefixStore, ncols::Int, top::Int)
     P, rng = store.P, store.rng
-    C = ones(ComplexF64, ℂ^ncols ← left_space(P, 1))            # C_0 = 1 for every new row (V_1 is one-dimensional)
+    C = ones(ComplexF64, trivial_space(spacetype(P.A[1][1]), ncols) ← left_space(P, 1))   # C_0 = 1 for every new row (V_1 is one-dimensional)
     logs = zeros(ncols)                                           # log scale of every new row
     for i in 1:top
         if i > 1
@@ -213,7 +215,7 @@ function extend_prefixes!(store::PrefixStore, ncols::Int, top::Int)
             s = row_scales(C)
             all(isfinite, s) || throw(DomainError(s, "nonfinite prefix sketch at site $i"))
             s[s .== 0] .= 1.0
-            C = DiagonalTensorMap(1 ./ s, ℂ^ncols) * C           # every row rescaled to max |entry| 1
+            C = DiagonalTensorMap(1 ./ s, codomain(C)[1]) * C     # every row rescaled to max |entry| 1
             logs = logs .+ log.(s)
         end
         store.C[i] = store.width == 0 ? C : catcodomain(store.C[i], C)   # new rows below the old ones
@@ -223,29 +225,30 @@ function extend_prefixes!(store::PrefixStore, ncols::Int, top::Int)
     return store
 end
 
-# Largest |entry| of every row of C: ℂ^K ← V (trivial symmetry)
-row_scales(C::AbstractTensorMap) = vec(maximum(abs, reshape(convert(Array, C), dim(codomain(C)), :); dims = 2))
+# Largest |entry| of every row of C: K ← V with K in the trivial sector (only the trivial block of C is nonzero)
+function row_scales(C::AbstractTensorMap)
+    b = dense_block(C)
+    return size(b, 2) == 0 ? zeros(size(b, 1)) : vec(maximum(abs, b; dims = 2))
+end
 
-# Row selection Π: ℂ^|rows| ← ℂ^w that picks the rows `rows` out of w
-function select_rows(rows, w::Int)
+# Row selection Π: ℂ^|rows| ← ℂ^w that picks the rows `rows` out of w (trivial sector spaces of the space type S)
+function select_rows(rows, w::Int, S::Type{<:ElementarySpace} = ComplexSpace)
     Π = zeros(ComplexF64, length(rows), w)
     for (k, r) in enumerate(rows)
         Π[k, r] = 1
     end
-    return TensorMap(Π, ℂ^length(rows) ← ℂ^w)
+    return TensorMap(Π, trivial_space(S, length(rows)) ← trivial_space(S, w))
 end
 
 # Sketch columns of cut i for the prefix rows cols: Z = (C_{i-1}[cols, :] J)': X_i ⊗ ℂ^{D_i} ← ℂ^|cols|
 function sketch_columns(store::PrefixStore, J::AbstractTensorMap, i::Int, cols)
-    Ci = select_rows(cols, store.width) * store.C[i]              # C_{i-1}[cols, :]: ℂ^|cols| ← V_i
+    Ci = select_rows(cols, store.width, spacetype(store.C[i])) * store.C[i]   # C_{i-1}[cols, :]: ℂ^|cols| ← V_i
     return copy((Ci * J)')
 end
 
 #==========================================================================================
  Step 4: orthonormal basis of the sketch
 ==========================================================================================#
-
-const SketchMatrix = tensormaptype(ComplexSpace, 1, 1, ComplexF64)
 
 # State of one cut: all sketch columns Z: X_i ⊗ ℂ^{D_i} ← ℂ^K, stored relative to the common log scale `shift`
 # (true column j = exp(shift) Z[:, j]), and their QR factorization Z = Q R, recomputed after every block of columns.
@@ -255,20 +258,22 @@ const SketchMatrix = tensormaptype(ComplexSpace, 1, 1, ComplexF64)
 #   R          upper triangular ℂ^m ← ℂ^K
 #   rank       numerical rank of R
 # m can exceed the rank: for a deficient sketch the Householder QR still returns m orthonormal columns
-mutable struct SketchBasis{TZ<:AbstractTensorMap, TQ<:AbstractTensorMap}
+mutable struct SketchBasis{TZ<:AbstractTensorMap, TQ<:AbstractTensorMap, TR<:AbstractTensorMap}
     rows::Int
     threshold::Float64
     Z::TZ
     Q::TQ
-    R::SketchMatrix
+    R::TR
     shift::Float64
     rank::Int
 end
 
 # Empty basis on the space V = X_i ⊗ ℂ^{D_i}
-SketchBasis(V; threshold::Real = 1e-13) =
-    SketchBasis(dim(V), Float64(threshold), zeros(ComplexF64, V ← ℂ^0), zeros(ComplexF64, V ← ℂ^0),
-                zeros(ComplexF64, ℂ^0 ← ℂ^0), -Inf, 0)
+function SketchBasis(V; threshold::Real = 1e-13)
+    E = trivial_space(spacetype(V), 0)
+    return SketchBasis(dim(V), Float64(threshold), zeros(ComplexF64, V ← E), zeros(ComplexF64, V ← E),
+                       zeros(ComplexF64, E ← E), -Inf, 0)
+end
 
 sketch_width(basis::SketchBasis) = dim(domain(basis.R))       # K, number of stored sketch columns
 basis_size(basis::SketchBasis) = dim(codomain(basis.R))       # m, number of basis vectors
@@ -286,7 +291,7 @@ function append_columns!(basis::SketchBasis, Znew::AbstractTensorMap, logs::Abst
     factors = exp.(logs .- shift)                                # new columns relative to the new reference (≤ 1)
     (any(iszero, factors) || scale == 0) && throw(DomainError(shift, "sketch column scale exceeds numerical range"))
     basis.shift = shift
-    Zs = Znew * DiagonalTensorMap(factors, ℂ^nnew)
+    Zs = Znew * DiagonalTensorMap(factors, domain(Znew)[1])
     basis.Z = catdomain(basis.Z * scale, Zs)
 
     # 2. Householder QR of all columns: Q orthonormal even for a deficient sketch, m = min(rows, K).
@@ -335,7 +340,7 @@ function fresh_check(store::PrefixStore, basis::SketchBasis, J::AbstractTensorMa
     cols = K+1:K+nfresh
     store.width < last(cols) && extend_prefixes!(store, last(cols) - store.width, i)
     V, logs = sketch_columns(store, J, i, cols), store.logs[i][cols]
-    Vs = V * DiagonalTensorMap(exp.(logs .- maximum(logs)), ℂ^nfresh)     # relative scales of the fresh columns
+    Vs = V * DiagonalTensorMap(exp.(logs .- maximum(logs)), domain(V)[1])  # relative scales of the fresh columns
     Q = basis.Q
     passed = LinearAlgebra.norm(Vs - Q * (Q' * Vs)) <= rtol * LinearAlgebra.norm(Vs)
     append_columns!(basis, V, logs)
@@ -407,17 +412,18 @@ function run_src(P::Source, rng::AbstractRNG; rtol::Real, sketch_cap::Int, rank_
                  round_rank = nothing, round_tol::Real = 0.0, previous_widths = nothing, to::TimerOutput = TimerOutput())
     L = length(P)
     cap = max(sketch_cap, 2)
-    store = PrefixStore(P, rng)
+    graded = P isa PhysicalSource && is_graded(P)          # charge-resolved sketch (FiniteSRCGraded.jl)
+    store = graded ? GradedPrefixStore(P, rng) : PrefixStore(P, rng)
     cores = Vector{AbstractTensorMap}(undef, L)
-    widths, met = zeros(Int, L-1), trues(L-1)
-    S = ones(ComplexF64, right_space(P, L) ← ℂ^1)                # R_L is one-dimensional
+    widths, met = graded ? Vector{Any}(undef, L-1) : zeros(Int, L-1), trues(L-1)
+    S = ones(ComplexF64, right_space(P, L) ← oneunit(spacetype(P.A[L][1])))   # R_L is one-dimensional
     for i in L:-1:2
         previous_width = isnothing(previous_widths) ? nothing : previous_widths[i-1]
         cores[i], S, widths[i-1], met[i-1] = compress_cut!(P, store, S, i; rtol = rtol, cap = cap, rank_threshold = rank_threshold,
                                                            previous_width = previous_width, to = to)
         store.C[i] = nothing                                      # later cuts never use the prefixes of site i
     end
-    J1 = isomorphism(ComplexF64, ℂ^1, left_space(P, 1)) * apply_suffix(P, 1, S)   # ℂ^1 ← X_1 ⊗ ℂ^{D_1}, V_1 is one-dimensional
+    J1 = isomorphism(ComplexF64, oneunit(spacetype(P.A[1][1])), left_space(P, 1)) * apply_suffix(P, 1, S)   # 1 ← X_1 ⊗ ℂ^{D_1}, V_1 is one-dimensional
     cores[1] = core_from_basis(copy(J1'))
     cores = [c for c in cores]                                    # concrete element type
     pre_round_ranks = [dim(domain(c)) for c in cores[1:L-1]]
@@ -499,7 +505,7 @@ function src_compress(ψ::FiniteDisorderMPS, Us::FiniteDisorderMPO, F::FiniteDis
     @timeit to "materialize" opp = map(enumerate(cores)) do (i, c)
         q = length(ψ.ps[i])
         map(1:q) do u
-            e = Tensor([j == u ? 1.0 : 0.0 for j in 1:q], ℂ^q)   # basis ket of sector u
+            e = Tensor([j == u ? 1.0 : 0.0 for j in 1:q], trivial_space(c, q))   # basis ket of sector u
             @tensor cu[r s; q] := c[r s x; q] * e[x]
             cu * (factor / sqrt(ψ.ps[i][u]))
         end

@@ -52,37 +52,54 @@ end
 
 # Random Bose-Hubbard chain with at most nmax bosons per site,
 #   H_w = -Σ t_{w_i} (b†_i b_{i+1} + b_i b†_{i+1}) + Σ [U_{w_i}/2 n_i(n_i - 1) - μ_{w_i} n_i],
-# one sector per triple (μ, U, t) with μ running fastest
-function random_bose_hubbard(ts::Vector{Float64}, Us::Vector{Float64}, μs::Vector{Float64}; nmax::Int = 3)
+# one sector per triple (μ, U, t) with μ running fastest.
+# symmetry = U1Irrep conserves the particle number: |n⟩ carries the U₁ charge n - filling, so a state with total charge 0
+# (trivial boundary bonds) has exactly N = filling L bosons. The bond term space is then V = U₁(-1 => 1, 1 => 1).
+function random_bose_hubbard(ts::Vector{Float64}, Us::Vector{Float64}, μs::Vector{Float64}; nmax::Int = 3,
+                             symmetry::Type{<:Sector} = Trivial, filling::Integer = 0)
     d = nmax + 1
-    P = ℂ^d
     b = zeros(ComplexF64, d, d)
     for k in 1:nmax
         b[k, k+1] = sqrt(k)                                   # b |k⟩ = √k |k-1⟩ (index k+1 holds |k⟩)
     end
     n = Diagonal(ComplexF64.(0:nmax))
-    A = zeros(ComplexF64, ℂ^2 ⊗ P ← P ⊗ ℂ^2)
-    L = TensorMap(cat(b', b; dims = 3), P ← P ⊗ ℂ^2)          # L[v] = (b†, b)
-    R = TensorMap(permutedims(cat(b, b'; dims = 3), (3, 1, 2)), ℂ^2 ⊗ P ← P)   # R[v] = (b, b†)
+    Ld = cat(b', b; dims = 3)                                 # L[v] = (b†, b)
+    Rd = permutedims(cat(b, b'; dims = 3), (3, 1, 2))         # R[v] = (b, b†)
+    if symmetry === Trivial
+        iszero(filling) || throw(ArgumentError("a fixed filling requires symmetry = U1Irrep"))
+        P, V = ℂ^d, ℂ^2
+        pP, pV = 1:d, 1:2
+    elseif symmetry === U1Irrep
+        P = U1Space(k - filling => 1 for k in 0:nmax)
+        V = U1Space(1 => 1, -1 => 1)
+        pP = basis_order(P, [U1Irrep(k - filling) for k in 0:nmax])
+        pV = basis_order(V, [U1Irrep(1), U1Irrep(-1)])        # L[1] = b† raises the charge, L[2] = b lowers it
+    else
+        throw(ArgumentError("symmetry $symmetry not implemented"))
+    end
+    A = zeros(ComplexF64, V ⊗ P ← P ⊗ V)
+    L = TensorMap(Ld[pP, pP, pV], P ← P ⊗ V)
+    R = TensorMap(Rd[pV, pP, pP], V ⊗ P ← P)
 
     sectors = vec(collect(Iterators.product(μs, Us, ts)))
-    Ds = [TensorMap(Matrix(U / 2 * n * (n - I) - μ * n), P ← P) for (μ, U, _) in sectors]
+    Ds = [TensorMap(Matrix(U / 2 * n * (n - I) - μ * n)[pP, pP], P ← P) for (μ, U, _) in sectors]
     return DisorderMPOHam(fill(A, length(sectors)), [-t * R for (μ, U, t) in sectors], fill(L, length(sectors)), Ds)
 end
 
-# Jordan MPO tensor W = [1 L D; 0 A R; 0 0 1] as a SparseBlockTensorMap (ℂ^1 ⊕ V ⊕ ℂ^1) ⊗ P ← P ⊗ (ℂ^1 ⊕ V ⊕ ℂ^1)
+# Jordan MPO tensor W = [1 L D; 0 A R; 0 0 1] as a SparseBlockTensorMap (1 ⊕ V ⊕ 1) ⊗ P ← P ⊗ (1 ⊕ V ⊕ 1), 1 the unit space
 function jordan_mpo_tensor(A::AbstractTensorMap, R::AbstractTensorMap, L::AbstractTensorMap, D::AbstractTensorMap)
     P = space(D, 1)
     V = domain(L)[2]
-    virtual = BlockTensorKit.boxplus(ℂ^1, V, ℂ^1)
-    W = SparseBlockTensorMap{AbstractTensorMap{ComplexF64, ComplexSpace, 2, 2}}(undef, virtual ⊗ BlockTensorKit.boxplus(P),
-                                                                               BlockTensorKit.boxplus(P) ⊗ virtual)
-    W[1, 1, 1, 1] = BraidingTensor{ComplexF64, ComplexSpace}(P, ℂ^1)
+    S = spacetype(D)
+    virtual = BlockTensorKit.boxplus(oneunit(S), V, oneunit(S))
+    W = SparseBlockTensorMap{AbstractTensorMap{ComplexF64, S, 2, 2}}(undef, virtual ⊗ BlockTensorKit.boxplus(P),
+                                                                     BlockTensorKit.boxplus(P) ⊗ virtual)
+    W[1, 1, 1, 1] = BraidingTensor{ComplexF64, S}(P, oneunit(S))
     W[1, 1, 1, 2] = BlockTensorKit.insertrightunit(L, 0)
     W[1, 1, 1, 3] = MPSKit.add_util_leg(D)
     W[2, 1, 1, 2] = A
     W[2, 1, 1, 3] = BlockTensorKit.insertrightunit(R, 3)
-    W[3, 1, 1, 3] = BraidingTensor{ComplexF64, ComplexSpace}(P, ℂ^1)
+    W[3, 1, 1, 3] = BraidingTensor{ComplexF64, S}(P, oneunit(S))
     return W
 end
 

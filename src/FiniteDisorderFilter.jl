@@ -56,7 +56,8 @@ end
 
 # log|f(w)| of the filter for word w: a row vector v: ℂ^1 ← ℂ^r swept through the sites, rescaled to max |entry| 1
 function filter_log_amplitude(F::FiniteDisorderFilter, word::AbstractVector{Int})
-    v = ones(ComplexF64, ℂ^1 ← ℂ^1)
+    E = trivial_space(F[1, 1], 1)
+    v = ones(ComplexF64, E ← E)
     logv = F.log_scale
     for (i, p) in enumerate(word)
         v = v * F[i, p]
@@ -134,7 +135,7 @@ function sector_matrices(Z::ScalarPartition)
     G = map(enumerate(Z.cores)) do (i, c)
         q = length(Z.ps[i])
         map(1:q) do p
-            e = Tensor([j == p ? 1.0 : 0.0 for j in 1:q], ℂ^q)   # basis ket of sector p
+            e = Tensor([j == p ? 1.0 : 0.0 for j in 1:q], trivial_space(c, q))   # basis ket of sector p
             @tensor g[r; q] := c[r x; q] * e[x]
         end
     end
@@ -161,8 +162,9 @@ end
 
 family_size(fam::WordFamily) = length(fam.logs)
 
-# The empty word, on both boundaries
-empty_family() = WordFamily(ones(ComplexF64, ℂ^1 ← ℂ^1), [0.0], [0.0])
+# The empty word, on both boundaries (trivial sector spaces of the space type S)
+empty_family(S::Type{<:ElementarySpace} = ComplexSpace) =
+    WordFamily(ones(ComplexF64, trivial_space(S, 1) ← trivial_space(S, 1)), [0.0], [0.0])
 
 # Rescale factors of rows with largest entry s: only finite nonzero rows are rescaled (zero rows stay zero and fail
 # only when queried)
@@ -172,7 +174,7 @@ _safe_scales(s) = [(x > 0 && isfinite(x)) ? x : 1.0 for x in s]
 function extend_prefix_family(fam::WordFamily, Gi::Vector, halflogp::Vector{Float64})
     M = reduce(catcodomain, [fam.M * g for g in Gi])
     s = _safe_scales(row_scales(M))
-    M = DiagonalTensorMap(1 ./ s, ℂ^length(s)) * M
+    M = DiagonalTensorMap(1 ./ s, codomain(M)[1]) * M
     return WordFamily(M, repeat(fam.logs, length(Gi)) .+ log.(s), reduce(vcat, [fam.halflogp .+ h for h in halflogp]))
 end
 
@@ -180,13 +182,13 @@ end
 function extend_suffix_family(fam::WordFamily, Gi::Vector, halflogp::Vector{Float64})
     M = reduce(catdomain, [g * fam.M for g in Gi])
     s = _safe_scales(vec(maximum(abs, convert(Array, M); dims = 1)))   # largest |entry| of every column
-    M = M * DiagonalTensorMap(1 ./ s, ℂ^length(s))
+    M = M * DiagonalTensorMap(1 ./ s, domain(M)[1])
     return WordFamily(M, repeat(fam.logs, length(Gi)) .+ log.(s), reduce(vcat, [fam.halflogp .+ h for h in halflogp]))
 end
 
 # Keep the words idx of a prefix (rows) or suffix (columns) family
-select_prefixes(fam::WordFamily, idx) = WordFamily(select_rows(idx, family_size(fam)) * fam.M, fam.logs[idx], fam.halflogp[idx])
-select_suffixes(fam::WordFamily, idx) = WordFamily(fam.M * select_rows(idx, family_size(fam))', fam.logs[idx], fam.halflogp[idx])
+select_prefixes(fam::WordFamily, idx) = WordFamily(select_rows(idx, family_size(fam), spacetype(fam.M)) * fam.M, fam.logs[idx], fam.halflogp[idx])
+select_suffixes(fam::WordFamily, idx) = WordFamily(fam.M * select_rows(idx, family_size(fam), spacetype(fam.M))', fam.logs[idx], fam.halflogp[idx])
 
 # Phase diagnostics of all queried partition entries
 mutable struct CrossDiagnostics
@@ -244,7 +246,8 @@ function collect_nested_cross(Z::ScalarPartition; width::Int = 32, cycles::Int =
     # Random initial suffixes, from right to left
     left = Vector{WordFamily}(undef, L)
     right = Vector{WordFamily}(undef, L+1)
-    left[1], right[L+1] = empty_family(), empty_family()
+    S = spacetype(Z.cores[1])
+    left[1], right[L+1] = empty_family(S), empty_family(S)
     @timeit to "initial_suffixes" for i in L-1:-1:1
         candidates = extend_suffix_family(right[i+2], G[i+1], h[i+1])
         n = family_size(candidates)
@@ -270,7 +273,7 @@ function collect_nested_cross(Z::ScalarPartition; width::Int = 32, cycles::Int =
         logs = targets(extend_prefix_family(left[i], G[i], h[i]), right[i+1])
         [logs[(p-1)*n .+ (1:n), :] for p in eachindex(G[i])]
     end
-    return H, K, diag
+    return H, K, diag, S
 end
 
 #==========================================================================================
@@ -282,14 +285,14 @@ end
 # most tail_tol (capped by max_rank and the numerical support s > 1e-12 s₁); discarded singular values are never
 # inverted. Returns the filter, its ranks and whether every cut met the tail tolerance
 function reconstruct_filter(H::Vector{<:AbstractMatrix}, K::Vector{<:Vector{<:AbstractMatrix}}; max_rank::Int = 32,
-                            tail_tol::Real = 1e-8, to::TimerOutput = TimerOutput())
+                            tail_tol::Real = 1e-8, S::Type{<:ElementarySpace} = ComplexSpace, to::TimerOutput = TimerOutput())
     L = length(K)
     σ = maximum(maximum(maximum, Ki) for Ki in K)
     (L > 1) && (σ = max(σ, maximum(maximum, H)))
     function shifted(b)
         v = exp.(b .- σ)
         all(isfinite, v) && !any(iszero, v) || throw(DomainError(b, "cross targets exceed exponential range"))
-        return TensorMap(v, ℂ^size(b, 1) ← ℂ^size(b, 2))
+        return TensorMap(v, trivial_space(S, size(b, 1)) ← trivial_space(S, size(b, 2)))
     end
 
     trunc = truncrank(max_rank) & truncerror(; rtol = tail_tol) & trunctol(; rtol = 1e-12, p = Inf)
@@ -321,8 +324,8 @@ end
 # with its bond dimensions, whether every cut met tail_tol and the phase diagnostics of the cross
 function normalization_filter(Z::ScalarPartition; width::Int = 32, cycles::Int = 2, max_rank::Int = 32, tail_tol::Real = 1e-8,
                               rng::AbstractRNG = Random.default_rng(), to::TimerOutput = TimerOutput())
-    @timeit to "collect_nested_cross" H, K, diag = collect_nested_cross(Z; width = width, cycles = cycles, rng = rng, to = to)
-    @timeit to "reconstruct_filter" F, ranks, met = reconstruct_filter(H, K; max_rank = max_rank, tail_tol = tail_tol, to = to)
+    @timeit to "collect_nested_cross" H, K, diag, S = collect_nested_cross(Z; width = width, cycles = cycles, rng = rng, to = to)
+    @timeit to "reconstruct_filter" F, ranks, met = reconstruct_filter(H, K; max_rank = max_rank, tail_tol = tail_tol, S = S, to = to)
     return F, (filter_ranks = ranks, filter_met = met, cross = diag)
 end
 

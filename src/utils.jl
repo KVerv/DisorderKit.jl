@@ -101,3 +101,31 @@ function svd_with_fallback(f, A::AbstractTensorMap)
         return f(LAPACK_QRIteration())
     end
 end
+
+#==========================================================================================
+ Space-generic helpers: the same code runs on ComplexSpace (no symmetry) and on graded spaces (e.g. U₁)
+==========================================================================================#
+
+# Space of n dimensions in the trivial sector of the space type S: ℂ^n for ComplexSpace, S(unit => n) for a graded space.
+# Disorder-only objects (partition function, filter, sketch rows of the partition) carry no charge and live on these
+trivial_space(::Type{ComplexSpace}, n::Integer) = ℂ^n
+trivial_space(::Type{S}, n::Integer) where {S<:GradedSpace} = S(one(sectortype(S)) => n)
+trivial_space(V::ElementarySpace, n::Integer) = trivial_space(typeof(V), n)
+trivial_space(t::AbstractTensorMap, n::Integer) = trivial_space(spacetype(t), n)
+
+# Block of the trivial sector (the whole data for a ComplexSpace tensor)
+dense_block(t::AbstractTensorMap) = block(t, one(sectortype(t)))
+
+# Basis order of a graded space with multiplicity one sectors: the natural basis state k has sector charges[k], and
+# TensorKit orders the basis by sector (for U₁: 0, 1, -1, 2, -2, …). Returns p with TensorKit basis state j = natural
+# basis state p[j], so that data[p, p] is a natural operator in the TensorKit order
+function basis_order(V::ElementarySpace, charges::AbstractVector{<:Sector})
+    order = Int[]
+    for c in sectors(V)
+        idx = findall(==(c), charges)
+        length(idx) == dim(V, c) || throw(ArgumentError("charges do not match the space $V in sector $c"))
+        append!(order, idx)
+    end
+    return order
+end
+
