@@ -13,6 +13,22 @@ function plus_state(Hs::DisorderMPOHam, ps::Vector{Float64}, L::Int)
     return FiniteDisorderMPS([[W for _ in p] for p in site_ps], site_ps, sectors)
 end
 
+# Mott product state |f f … f⟩ (f = filling bosons on every site) for every disorder sector, for a particle number
+# conserving Hs (random_bose_hubbard with symmetry = U1Irrep and the same filling): every site has charge 0, so all bonds
+# are trivial and the state has exactly N = f L bosons
+function mott_state(Hs::DisorderMPOHam, ps::Vector{Float64}, L::Int; filling::Integer = 1)
+    P = space(Hs.Ds[1], 1)
+    S = spacetype(P)
+    nmax = dim(P) - 1
+    0 <= filling <= nmax || throw(ArgumentError("filling $filling needs nmax ≥ filling, got nmax = $nmax"))
+    pP = basis_order(P, [U1Irrep(n - filling) for n in 0:nmax])   # TensorKit basis order of |0⟩, …, |nmax⟩
+    v = zeros(ComplexF64, nmax + 1)
+    v[filling + 1] = 1
+    W = TensorMap(reshape(v[pP], 1, nmax + 1, 1), oneunit(S) ⊗ P ← oneunit(S))
+    site_ps, sectors = site_sectors(Hs, ps, L)
+    return FiniteDisorderMPS([[W for _ in p] for p in site_ps], site_ps, sectors)
+end
+
 bond_dimensions(ψ::FiniteDisorderMPS) = [dim(space(ψ[i,1], 3)) for i in 1:length(ψ)-1]
 
 struct Groundstate_FiniteNormalizedITE <: AbstractAlgorithm

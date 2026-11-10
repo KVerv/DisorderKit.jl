@@ -86,6 +86,28 @@ function random_bose_hubbard(ts::Vector{Float64}, Us::Vector{Float64}, μs::Vect
     return DisorderMPOHam(fill(A, length(sectors)), [-t * R for (μ, U, t) in sectors], fill(L, length(sectors)), Ds)
 end
 
+# Bose-Hubbard chain with correlated hopping and potential disorder,
+#   H_w = -Σ t_{wᵢ} (b†ᵢbᵢ₊₁ + h.c.) + U/2 Σ nᵢ(nᵢ-1) - Σ μ_{wᵢ} nᵢ,   t_{wᵢ} ∈ {t(1-Ω), t(1+Ω)}, μ_{wᵢ} ∈ {μ-Δ, μ+Δ},
+# where the label wᵢ of site i sets both μᵢ and the hopping of bond (i, i+1). Hopping and potential are correlated by
+# r ∈ (-1, 1): P = (1+r)/4 if both are high or both low, (1-r)/4 otherwise. Identical values (Δ = 0 or Ω = 0) are merged
+# into one with the marginal probability: 4 sectors for Δ, Ω > 0, 2 if one of them is 0, 1 if both are.
+# Returns (Hs, ps); the sectors run over Iterators.product(μs, [U], ts), μ fastest (column-major order of P):
+# for Δ, Ω > 0: 1 = (μ-Δ, t(1-Ω)), 2 = (μ+Δ, t(1-Ω)), 3 = (μ-Δ, t(1+Ω)), 4 = (μ+Δ, t(1+Ω)).
+# symmetry and filling are passed to random_bose_hubbard (U1Irrep: particle number conserving tensors at the given filling).
+function correlated_bose_hubbard(t::Real, U::Real, μ::Real, Δ::Real, Ω::Real, r::Real; nmax::Int = 3,
+                                 symmetry::Type{<:Sector} = Trivial, filling::Integer = 0)
+    -1 < r < 1 || throw(ArgumentError("r = $r must lie in (-1, 1): SRC requires strictly positive disorder probabilities"))
+    Δ >= 0 || throw(ArgumentError("Δ = $Δ must be ≥ 0"))
+    0 <= Ω <= 1 || throw(ArgumentError("Ω = $Ω must lie in [0, 1], so that the hopping t(1-Ω) is not negative"))
+    P = [(1+r)/4 (1-r)/4; (1-r)/4 (1+r)/4]           # P[a, b]: μ_a ∈ (μ-Δ, μ+Δ), t_b ∈ (t(1-Ω), t(1+Ω))
+    μs = iszero(Δ) ? [float(μ)] : [μ-Δ, μ+Δ]
+    iszero(Δ) && (P = sum(P; dims = 1))
+    ts = iszero(Ω) ? [float(t)] : [t*(1-Ω), t*(1+Ω)]
+    iszero(Ω) && (P = sum(P; dims = 2))
+    Hs = random_bose_hubbard(Float64.(ts), [Float64(U)], Float64.(μs); nmax, symmetry, filling)
+    return Hs, vec(P)
+end
+
 # Jordan MPO tensor W = [1 L D; 0 A R; 0 0 1] as a SparseBlockTensorMap (1 ⊕ V ⊕ 1) ⊗ P ← P ⊗ (1 ⊕ V ⊕ 1), 1 the unit space
 function jordan_mpo_tensor(A::AbstractTensorMap, R::AbstractTensorMap, L::AbstractTensorMap, D::AbstractTensorMap)
     P = space(D, 1)

@@ -1,4 +1,4 @@
-# Correlated Bose-Hubbard on an HTCondor pool
+# Bose-Hubbard sweeps on an HTCondor pool
 
 Condor versions of the correlated Bose-Hubbard PBS scripts (`hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh`,
 `hpc/submit_obs_BHCorr.sh`, `hpc/submit_plot_BHCorr.sh`), plus a dashboard on the laptop that drives them. The Julia
@@ -9,10 +9,32 @@ scripts are the same as on the PBS cluster; only the submission differs.
 | `dashboard/server.py`, `dashboard/index.html` | the dashboard (below): grid of the sweep, submit, gather, plot |
 | `sweep_BHCorr.sh <L>` | one job per (t, μ): the ITE and then the observables of the new state; both files come back |
 | `obs_BHCorr.sh <L>` | observables-only jobs, to recompute observables without rerunning the ITE |
+| `sweep_BHU1.sh <L>` | the same for the U(1) model (`hpc/BoseHubbardU1_NormalizedITE.jl`): one job per point (x, y) of any two axes |
+| `obs_BHU1.sh <L>` | observables-only jobs for the U(1) model (`hpc/observables_BoseHubbardU1_NormalizedITE.jl`) |
 | `plot_BHCorr.sh <L>` | the phase-diagram plot on the access point (manual use; the dashboard plots on the laptop) |
 | `run_julia.sh` | the job executable: installs Julia (juliaup) and the packages (`Pkg.instantiate()`, with a timeout and retries), runs the scripts |
 | `sweep_status.jl` | the state of every point of a sweep as JSON (used by the dashboard) |
 | `condor.local.env.example` | template for the connection settings (the real `condor.local.env` is gitignored) |
+
+## Models
+
+The dashboard drives two models (the selector at the top of the page):
+
+- **U(1) Bose-Hubbard, fixed filling** (`BHU1`, `hpc/BoseHubbardU1_NormalizedITE.jl`): the correlated Bose-Hubbard
+  chain with particle number conserving (U(1)-symmetric) tensors at fixed filling, N = filling·L, as in
+  `examples/symmetricBH.jl`. The mean μ only adds a constant at fixed N, so it is not a parameter; the site potentials
+  are ±Δ. **Any two of t, U, Δ, Ω, r** are the sweep axes, the others are fixed. The tag names the axes and the fixed
+  values, e.g. `t-Delta_U1.0_Omega0.0_r0.0_f1_nmax4_dtau0.05_D32` (built by the dashboard, passed to the scripts as
+  `TAG`); files: `data/BoseHubbardU1_NormalizedITE/<tag>/L<L>/t<t>/Delta<Δ>.jld2` and `_obs.csv`.
+- **Correlated Bose-Hubbard, no symmetry** (`BHCorr`, `hpc/BoseHubbardCorrelated_NormalizedITE.jl`): the original
+  t × μ phase-diagram sweeps, unchanged (same files, job attributes and plot script).
+
+**Observables** of the U(1) model are entries of a registry in `hpc/observables_BoseHubbardU1_NormalizedITE.jl`: each
+has a name, its CSV columns, a rule whether it applies to a point and a compute function, and `OBS` (Observables
+section of the page, empty = all) picks which to compute. Registered: `diagnostics` (E/L, ϵ_conv, max normalization
+residual, from the stored run) and `entropy` (S̄ = 𝔼_w[mean_k S_w(k)] and σ_S = 𝔼_w[std_k S_w(k)] over the bulk bonds,
+with standard errors). A new observable is a new registry entry; quantities that need several points (a derivative
+along an axis) are derived in the dashboard from the per-point values.
 
 ## Dashboard (recommended)
 
@@ -27,7 +49,9 @@ Nothing to install (Python standard library); the one-time setup on the access p
 
 The page shows:
 
-- a **grid** of the sweep (columns t/U, rows μ/U), one square per point: ✓ done (converged), ~ unconverged,
+- a **grid** of the sweep (columns the x axis, rows the y axis), one square per point, coloured by its job state or
+  (*Colour by*) by any observable of the model, with a colour bar; in that mode a small square marks points whose job
+  is not done and hatched cells have no value yet. Job states: ✓ done (converged), ~ unconverged,
   ▶ running, … queued, ! held, ✕ failed (job ended without a result), grey not submitted. A dot in the corner shows the
   observables (amber: outdated), a bar at the bottom that the result is still on the access point. Hover for ϵ_conv,
   steps, machine and run time; click for details and the job's log (live output for a running job). A running point

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dashboard for the correlated Bose-Hubbard sweeps on an HTCondor pool.
+"""Dashboard for the Bose-Hubbard sweeps on an HTCondor pool.
 
 Runs on the laptop and talks to the condor access point over one persistent ssh connection:
 
@@ -9,7 +9,12 @@ The connection settings (host, port, login, repo folder on the access point) are
 hpc/condor/condor.local.env (gitignored; asked for and written on the first start; template:
 hpc/condor/condor.local.env.example). Command-line flags override them.
 
-Workflow: every condor job runs the ITE and the observables of one point (hpc/condor/sweep_BHCorr.sh). *Gather*
+Models (MODELS below): BHCorr, the correlated Bose-Hubbard chain without symmetry on a t × μ grid
+(hpc/condor/sweep_BHCorr.sh), and BHU1, the same chain with U(1)-symmetric tensors at fixed filling, swept over any two
+of t, U, Δ, Ω, r (hpc/condor/sweep_BHU1.sh); the page picks the model, and colours the grid by job state or by an
+observable.
+
+Workflow: every condor job runs the ITE and the observables of one point. *Gather*
 copies finished results to this repo's data/ folder and then deletes them (and their logs) on the access point, so
 nothing piles up there. The laptop is the archive: the grid shows the laptop's and the access point's results together,
 *Submit* decides which points still need a run from both, *Recompute observables* uploads only the needed states and
@@ -40,10 +45,7 @@ from urllib.parse import parse_qs, urlparse
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 CONFIG = os.path.join(REPO, "hpc", "condor", "condor.local.env")
-MODEL = "BoseHubbardCorrelated_NormalizedITE"
-OBS_SCRIPT = "hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl"
-PLOT_SCRIPT = "hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl"
-JOB_ATTRS = ("ClusterId,ProcId,JobStatus,BHC_stage,BHC_tag,BHC_L,BHC_t,BHC_mu,BHC_points,RemoteHost,LastRemoteHost,"
+JOB_ATTRS = ("ClusterId,ProcId,JobStatus,BHC_model,BHC_stage,BHC_tag,BHC_L,BHC_t,BHC_mu,BHC_x,BHC_y,BHC_points,RemoteHost,LastRemoteHost,"
              "HoldReason,EnteredCurrentStatus,QDate,CompletionDate,ExitCode,RemoveReason,"
              "RemoteUserCpu,RemoteSysCpu,JobCurrentStartDate,RequestCpus,RequestMemory,ResidentSetSize,ResidentSetSize_RAW,"
              "RemoteWallClockTime,NumJobStarts")
@@ -53,23 +55,98 @@ GATHER_MIN_AGE = 2  # minutes: younger result files may still be written by cond
 
 RE_TAG = re.compile(r"^[A-Za-z0-9._+-]+$")
 RE_POINT = re.compile(r"^-?\d+\.\d{4}$")
+RE_AXIS = r"^(t|U|Delta|Omega|r)$"
 NUM = r"^[0-9.eE+-]+$"
 # Environment variables the actions may pass to the condor scripts, with the allowed values
 PARAMS = {
-    "U": NUM, "R": NUM, "DELTA": NUM, "OMEGA": NUM, "NMAX": r"^\d+$", "DTAU": NUM, "MAXD": r"^\d+$",
+    "T": NUM, "U": NUM, "R": NUM, "DELTA": NUM, "OMEGA": NUM, "FILLING": r"^\d+$", "NMAX": r"^\d+$", "DTAU": NUM,
+    "MAXD": r"^\d+$", "XAXIS": RE_AXIS, "YAXIS": RE_AXIS, "OBS": r"^[A-Za-z_,]*$",
     "MAXITER": r"^\d+$", "CONVTOL": NUM, "CROSS_WIDTH": r"^\d+$", "PPN": r"^\d+$", "OBS_THREADS": r"^\d+$",
     "MEM": r"^\d+(\.\d+)? ?[KMGT]?B?$", "DISK": r"^\d+(\.\d+)? ?[KMGT]?B?$",
     "REQUIREMENTS": r"^[A-Za-z0-9_ .<>=!&|()\"']*$", "NICE": r"^(TRUE|FALSE)$",
     "N_SAMPLES": r"^\d+$", "N_EDGE": r"^\d+$", "KAPPA_TOL": NUM, "SBSTD_TOL": NUM, "A2_TOL": NUM,
     "POINTS": r"^[0-9.\- ,]*$", "DRYRUN": r"^[01]$", "RESUME": r"^[01]$", "CHUNK": r"^[1-9]\d*$",
 }
-MODEL_PARAMS = ["U", "R", "DELTA", "OMEGA", "NMAX", "DTAU", "MAXD"]
-SCRIPT_PARAMS = {
-    "submit": MODEL_PARAMS + ["MAXITER", "CONVTOL", "CROSS_WIDTH", "N_SAMPLES", "N_EDGE", "PPN", "OBS_THREADS", "MEM",
-                              "DISK", "REQUIREMENTS", "NICE", "POINTS", "DRYRUN", "RESUME"],
-    "recompute_obs": MODEL_PARAMS + ["N_SAMPLES", "N_EDGE", "PPN", "MEM", "REQUIREMENTS", "NICE", "POINTS", "CHUNK"],
+# The models the dashboard drives. A sweep is (model, tag, L); its points are (x, y), the values of its two axes as in
+# the file names (%.4f): data/<dir>/<tag>/L<L>/<X><x>/<Y><y>.jld2 (and _obs.csv), X and Y the axis names.
+#   BHCorr  hpc/BoseHubbardCorrelated_NormalizedITE.jl: no symmetry, axes t and mu fixed, the tag set by the fixed
+#           parameters (built in the page and by the Julia script)
+#   BHU1    hpc/BoseHubbardU1_NormalizedITE.jl: U(1) tensors at fixed filling, any two of t, U, Delta, Omega, r as
+#           axes; the tag "<X>-<Y>_<fixed parameters>" is built here (bhu1_tag) and passed to the scripts as TAG
+_RES = ["PPN", "MEM", "REQUIREMENTS", "NICE", "POINTS"]
+MODELS = {
+    "BHCorr": {
+        "dir": "BoseHubbardCorrelated_NormalizedITE",
+        "obs_script": "hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl",
+        "plot_script": "hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl",
+        "scripts": {"submit": "hpc/condor/sweep_BHCorr.sh", "recompute_obs": "hpc/condor/obs_BHCorr.sh"},
+        "attrs": ("BHC_t", "BHC_mu"),                   # job attributes with the point values
+        "select": "",                                   # extra ClassAd constraint for its jobs
+        "prefix": {"ite": "BHC_L{L}", "obs": "BHC_obs_L{L}"},
+        "grid": ("TS", "MUS"),                          # the page's value lists of the two axes
+        "status_args": "",                              # arguments of hpc/condor/sweep_status.jl
+        "obs_marker": "t = {x}, μ = {y}",               # point marker in the observables log
+        "model_params": ["U", "R", "DELTA", "OMEGA", "NMAX", "DTAU", "MAXD"],
+        "extra": {"submit": [], "recompute_obs": []},
+        "plot_params": ["KAPPA_TOL", "SBSTD_TOL", "A2_TOL"],
+    },
+    "BHU1": {
+        "dir": "BoseHubbardU1_NormalizedITE",
+        "obs_script": "hpc/observables_BoseHubbardU1_NormalizedITE.jl",
+        "plot_script": None,                            # heatmaps in the page instead
+        "scripts": {"submit": "hpc/condor/sweep_BHU1.sh", "recompute_obs": "hpc/condor/obs_BHU1.sh"},
+        "attrs": ("BHC_x", "BHC_y"),
+        "select": ' && BHC_model =?= "BHU1"',
+        "prefix": {"ite": "BHU1_L{L}", "obs": "BHU1_obs_L{L}"},
+        "grid": ("XS", "YS"),
+        "status_args": "--model BHU1 ",
+        "obs_marker": "{X} = {x}, {Y} = {y}",
+        "model_params": ["T", "U", "DELTA", "OMEGA", "R", "FILLING", "NMAX", "DTAU", "MAXD"],
+        "extra": {"submit": ["XAXIS", "YAXIS", "OBS"], "recompute_obs": ["XAXIS", "YAXIS", "OBS"]},
+        "plot_params": [],
+    },
 }
-SCRIPT = {"submit": "hpc/condor/sweep_BHCorr.sh", "recompute_obs": "hpc/condor/obs_BHCorr.sh"}
+BHU1_AXES = {"t": "T", "U": "U", "Delta": "DELTA", "Omega": "OMEGA", "r": "R"}   # axis name => parameter
+COMMON = {"submit": ["MAXITER", "CONVTOL", "CROSS_WIDTH", "N_SAMPLES", "N_EDGE", "OBS_THREADS", "DISK", "DRYRUN", "RESUME"] + _RES,
+          "recompute_obs": ["N_SAMPLES", "N_EDGE", "CHUNK"] + _RES}
+
+
+def model_of(name):
+    if name not in MODELS:
+        raise ValueError(f"unknown model {name!r}")
+    return MODELS[name]
+
+
+def script_params(model, action):
+    m = MODELS[model]
+    return m["model_params"] + m["extra"][action] + COMMON[action]
+
+
+def bhu1_tag(values):
+    """Tag of a BHU1 sweep: "<X>-<Y>_" and the fixed parameters (the two swept ones left out), values verbatim, e.g.
+    t-Delta_U1.0_Omega0.0_r0.0_f1_nmax4_dtau0.05_D32. The page builds the same string (tagOf) to name the sweep."""
+    X, Y = values["XAXIS"], values["YAXIS"]
+    if X == Y:
+        raise ValueError("the two sweep axes must differ")
+    fixed = [f"{a}{values[BHU1_AXES[a]]}" for a in ("t", "U", "Delta", "Omega", "r") if a not in (X, Y)]
+    return "_".join([f"{X}-{Y}", *fixed, f"f{values['FILLING']}", f"nmax{values['NMAX']}", f"dtau{values['DTAU']}",
+                     f"D{values['MAXD']}"])
+
+
+def axes_of(model, tag):
+    """Names of the two axes of a sweep."""
+    if model == "BHCorr":
+        return "t", "mu"
+    m = re.match(r"^([A-Za-z]+)-([A-Za-z]+)_", tag)
+    if not m:
+        raise ValueError(f"tag {tag!r} does not start with <X>-<Y>_")
+    return m.group(1), m.group(2)
+
+
+def point_file(model, tag, L, x, y, suffix=".jld2"):
+    """Relative path of a point's state (suffix .jld2) or observables (_obs.csv) file."""
+    X, Y = axes_of(model, tag)
+    return f"data/{MODELS[model]['dir']}/{tag}/L{L}/{X}{x}/{Y}{y}{suffix}"
 
 
 # ---- configuration (kept out of the repo)
@@ -270,25 +347,31 @@ def parse_progress(out, err):
     return res
 
 
-def merge(remote, local, queue, history, obs_version="", n_edge=None):
-    """One record per point from the access point's files (remote), the laptop's files (local), the queue and the
-    history. A state on the access point is newer than the laptop's copy (it is gathered later)."""
+def status_key(p):
+    """(x, y) of a point of sweep_status.jl (older versions on the access point write t and mu)."""
+    return (p["x"], p["y"]) if "x" in p else (p["t"], p["mu"])
+
+
+def merge(remote, local, queue, history, obs_version="", n_edge=None, attrs=("BHC_t", "BHC_mu")):
+    """One record per point (x, y) from the access point's files (remote), the laptop's files (local), the queue and
+    the history (jobs matched through the point attributes attrs). A state on the access point is newer than the
+    laptop's copy (it is gathered later)."""
     points = {}
 
     def entry(key):
-        return points.setdefault(key, {"t": key[0], "mu": key[1], "remote": None, "local": None})
+        return points.setdefault(key, {"x": key[0], "y": key[1], "remote": None, "local": None})
 
     for where, st in (("remote", remote), ("local", local)):
         for p in st.get("points", []):
-            entry((p["t"], p["mu"]))[where] = p
-    for t, mu in remote.get("planned", []):
-        entry((t, mu))
+            entry(status_key(p))[where] = p
+    for x, y in remote.get("planned", []):
+        entry((x, y))
     active = {"ite": {}, "obs": {}}
     for j in queue:
         stage = j.get("BHC_stage")
         if stage not in active or j.get("JobStatus") == 3:
             continue
-        for key in job_points(j):
+        for key in job_points(j, attrs):
             entry(key)
             old = active[stage].get(key)
             if old is None or (j.get("ClusterId", 0), j.get("ProcId", 0)) > (old.get("ClusterId", 0), old.get("ProcId", 0)):
@@ -299,7 +382,7 @@ def merge(remote, local, queue, history, obs_version="", n_edge=None):
         if stage not in last:
             continue
         rank = (j.get("CompletionDate") or j.get("EnteredCurrentStatus") or 0, j.get("ClusterId", 0))
-        for key in job_points(j):
+        for key in job_points(j, attrs):
             entry(key)
             if key not in last[stage] or rank > last[stage][key][0]:
                 last[stage][key] = (rank, j)
@@ -317,10 +400,11 @@ def merge(remote, local, queue, history, obs_version="", n_edge=None):
         f = r if r.get("state") else l            # the state that counts: the access point's (newer) or the laptop's
         o = r if r.get("obs") else l               # observables: likewise
         where = [w for w, x in (("laptop", l), ("access point", r)) if x.get("state") or x.get("obs")]
-        rec = {"t": p["t"], "mu": p["mu"], "eps": f.get("eps"), "nsteps": f.get("nsteps"), "maxiter": f.get("maxiter"), "resumed_from": f.get("resumed_from"),
+        rec = {"x": p["x"], "y": p["y"], "eps": f.get("eps"), "nsteps": f.get("nsteps"), "maxiter": f.get("maxiter"), "resumed_from": f.get("resumed_from"),
                "convtol": f.get("convtol"), "mtime": f.get("mtime"), "has_state": bool(f.get("state")),
                "n_edge": o.get("n_edge"), "obs_version": o.get("obs_version"), "where": where,
-               "on_remote": bool(r.get("state") or r.get("obs")), "reason": None, "job": None, "obs_job": None}
+               "on_remote": bool(r.get("state") or r.get("obs")), "reason": None, "job": None, "obs_job": None,
+               "values": o.get("values") or {}}
         j = active["ite"].get(key)
         if j is not None:
             rec["state"], rec["job"] = QUEUE_STATE.get(j.get("JobStatus"), "idle"), job_info(j)
@@ -352,27 +436,28 @@ def merge(remote, local, queue, history, obs_version="", n_edge=None):
         else:
             rec["obs"] = "none"
         out.append(rec)
-    out.sort(key=lambda x: (float(x["t"]), float(x["mu"])))
+    out.sort(key=lambda r: (float(r["x"]), float(r["y"])))
     return out
 
 
-def job_points(j):
-    """The points (t, mu) of a job: BHC_points "t1_mu1,t2_mu2,..." (observables jobs of several points, see
-    hpc/condor/obs_BHCorr.sh), else BHC_t and BHC_mu (ITE jobs, older observables jobs)."""
+def job_points(j, attrs=("BHC_t", "BHC_mu")):
+    """The points (x, y) of a job: BHC_points "x1_y1,x2_y2,..." (observables jobs of several points), else the point
+    attributes attrs (BHC_t and BHC_mu, or BHC_x and BHC_y)."""
     pts = j.get("BHC_points")
     if isinstance(pts, str) and pts:
         return [tuple(x.split("_", 1)) for x in pts.split(",") if "_" in x]
-    key = (j.get("BHC_t"), j.get("BHC_mu"))
+    key = (j.get(attrs[0]), j.get(attrs[1]))
     return [] if None in key else [key]
 
 
-def point_constraint(t, mu):
-    """ClassAd constraint matching the jobs of the point (t, mu), single-point or with BHC_points."""
-    return f'((BHC_t =?= "{t}" && BHC_mu =?= "{mu}") || stringListMember("{t}_{mu}", BHC_points) =?= true)'
+def point_constraint(x, y, attrs=("BHC_t", "BHC_mu")):
+    """ClassAd constraint matching the jobs of the point (x, y), single-point or with BHC_points."""
+    a, b = attrs
+    return f'(({a} =?= "{x}" && {b} =?= "{y}") || stringListMember("{x}_{y}", BHC_points) =?= true)'
 
 
 def parse_progress_dump(text):
-    """Output of Dashboard.progress's remote loop: @@JOB <id> <stage> <t> <mu>, @@OUT <stdout>, @@ERR <stderr>."""
+    """Output of Dashboard.progress's remote loop: @@JOB <id> <stage> <x> <y>, @@OUT <stdout>, @@ERR <stderr>."""
     jobs, cur, part = [], None, None
     for line in text.splitlines():
         if line.startswith("@@JOB ") or line == "@@END":
@@ -382,7 +467,7 @@ def parse_progress_dump(text):
             if line != "@@END":
                 parts = line.split()
                 cur = {"id": parts[1], "stage": parts[2] if len(parts) > 2 else None,
-                       "t": parts[3] if len(parts) > 3 else None, "mu": parts[4] if len(parts) > 4 else None,
+                       "x": parts[3] if len(parts) > 3 else None, "y": parts[4] if len(parts) > 4 else None,
                        "out": [], "err": []}
         elif cur is not None and line in ("@@OUT", "@@ERR"):
             part = cur["out"] if line == "@@OUT" else cur["err"]
@@ -398,7 +483,7 @@ def parse_progress_dump(text):
 
 
 def needs_run(p, maxiter, convtol, force=False):
-    """Same rule as `hpc/BoseHubbardCorrelated_NormalizedITE.jl --status`, on the merged record of a point."""
+    """Same rule as the ITE scripts' --status, on the merged record of a point."""
     if p.get("state") in ("idle", "running", "held"):
         return None                                   # in the queue
     if force or not p.get("has_state"):
@@ -455,48 +540,56 @@ class Dashboard:
 
     # ---- queries
 
-    def condor_constraint(self, tag, L):
-        return f'BHC_tag =?= "{tag}" && BHC_L =?= {int(L)}'
+    @staticmethod
+    def check_sweep(model, tag, L):
+        model_of(model)
+        if not RE_TAG.match(tag):
+            raise ValueError("bad tag")
+        axes_of(model, tag)
+        return int(L)
 
-    def obs_version(self):
-        p = subprocess.run(["git", "-C", REPO, "hash-object", OBS_SCRIPT], capture_output=True, text=True)
+    def condor_constraint(self, model, tag, L):
+        return f'BHC_tag =?= "{tag}" && BHC_L =?= {int(L)}' + MODELS[model]["select"]
+
+    def obs_version(self, model):
+        p = subprocess.run(["git", "-C", REPO, "hash-object", MODELS[model]["obs_script"]], capture_output=True, text=True)
         return p.stdout.strip() if p.returncode == 0 else ""
 
-    def local_scan(self, tag, L):
+    def local_scan(self, model, tag, L):
         """sweep_status.jl on the laptop's data (cached until the folder changes)."""
-        folder = os.path.join(self.args.gather_dest, "data", MODEL, tag, f"L{L}")
+        folder = os.path.join(self.args.gather_dest, "data", MODELS[model]["dir"], tag, f"L{L}")
         sig = [0, 0.0]
         for root, _, files in os.walk(folder):
             for name in files:
                 sig[0] += 1
                 sig[1] = max(sig[1], os.path.getmtime(os.path.join(root, name)))
         sig = tuple(sig)
-        hit = self.local_cache.get((tag, L))
+        hit = self.local_cache.get((model, tag, L))
         if hit and hit[0] == sig:
             return hit[1]
         if sig[0] == 0:
             res = {"points": [], "planned": []}
         else:
             p = subprocess.run([*self.local_julia, f"--project={REPO}", "--startup-file=no",
-                                os.path.join(REPO, "hpc", "condor", "sweep_status.jl"), tag, str(L)],
+                                os.path.join(REPO, "hpc", "condor", "sweep_status.jl"),
+                                *shlex.split(MODELS[model]["status_args"]), tag, str(L)],
                                cwd=self.args.gather_dest, capture_output=True, text=True, timeout=600)
             res = parse_json_section(p.stdout, None)
             if res is None:
                 raise RuntimeError("reading the laptop's data failed: " + (p.stderr.strip().splitlines() or ["?"])[-1])
-        self.local_cache[(tag, L)] = (sig, res)
+        self.local_cache[(model, tag, L)] = (sig, res)
         return res
 
-    def status(self, tag, L, n_edge=None, fresh=False):
-        if not RE_TAG.match(tag):
-            raise ValueError("bad tag")
-        L = int(L)
-        key = (tag, L, n_edge)
+    def status(self, model, tag, L, n_edge=None, fresh=False):
+        L = self.check_sweep(model, tag, L)
+        m = MODELS[model]
+        key = (model, tag, L, n_edge)
         with self.lock:
             hit = self.cache.get(key)
             if hit and not fresh and time.time() - hit[0] < 10:
                 return hit[1]
-        c = shlex.quote(self.condor_constraint(tag, L))
-        cmd = (f"echo @@STATUS; {self.remote.julia} --project=. --startup-file=no hpc/condor/sweep_status.jl {tag} {L} 2>/dev/null; "
+        c = shlex.quote(self.condor_constraint(model, tag, L))
+        cmd = (f"echo @@STATUS; {self.remote.julia} --project=. --startup-file=no hpc/condor/sweep_status.jl {m['status_args']}{tag} {L} 2>/dev/null; "
                f"echo @@QUEUE; command -v condor_q >/dev/null && condor_q \"$USER\" -constraint {c} -json -attributes {JOB_ATTRS} 2>/dev/null; "
                f"echo @@HISTORY; command -v condor_history >/dev/null && condor_history \"$USER\" -constraint {c} -json -attributes {JOB_ATTRS} -limit 3000 2>/dev/null; "
                f"echo @@END")
@@ -507,65 +600,89 @@ class Dashboard:
         remote = parse_json_section(s.get("STATUS", ""), {"points": [], "planned": []})
         queue = parse_json_section(s.get("QUEUE", ""), [])
         history = parse_json_section(s.get("HISTORY", ""), [])
-        local = self.local_scan(tag, L)
-        points = merge(remote, local, queue, history, self.obs_version(), n_edge)
+        local = self.local_scan(model, tag, L)
+        points = merge(remote, local, queue, history, self.obs_version(model), n_edge, m["attrs"])
         counts, obs_counts = {}, {}
         for p in points:
             counts[p["state"]] = counts.get(p["state"], 0) + 1
             obs_counts[p["obs"]] = obs_counts.get(p["obs"], 0) + 1
-        plot = os.path.join(self.args.gather_dest, "plots", f"{MODEL}_{tag}_L{L}.png")
-        res = {"tag": tag, "L": L, "points": points, "counts": counts, "obs_counts": obs_counts,
+        plot = self.plot_file(model, tag, L)
+        res = {"model": model, "tag": tag, "L": L, "axes": list(axes_of(model, tag)), "points": points, "counts": counts,
+               "obs_counts": obs_counts,
                "clusters": sorted({j.get("ClusterId") for j in queue if j.get("ClusterId") is not None}),
                "queue_size": len(queue), "time": time.time(),
                "to_gather": sum(1 for p in points if p["on_remote"] and p["state"] not in ("idle", "running", "held")
                                 and p["obs"] not in ("idle", "running", "held")),
                "on_laptop": sum(1 for p in points if "laptop" in p["where"]),
                "stalled": sum(1 for p in points if p["state"] == "running" and (p["job"] or {}).get("stalled")),
-               "plot_mtime": os.path.getmtime(plot) if os.path.isfile(plot) else None}
+               "plot_mtime": os.path.getmtime(plot) if plot and os.path.isfile(plot) else None}
         with self.lock:
             self.cache[key] = (time.time(), res)
         return res
 
     def sweeps(self):
-        cmd = (f"echo @@LIST; {self.remote.julia} --project=. --startup-file=no hpc/condor/sweep_status.jl --list 2>/dev/null; "
-               f"echo @@QUEUE; command -v condor_q >/dev/null && condor_q \"$USER\" -constraint 'BHC_tag =!= undefined' "
-               f"-af BHC_tag BHC_L 2>/dev/null; echo @@END")
+        """Every sweep of every model: on the access point, on the laptop or in the queue."""
+        lists = "".join(f"echo @@LIST_{name}; {self.remote.julia} --project=. --startup-file=no hpc/condor/sweep_status.jl "
+                        f"{m['status_args']}--list 2>/dev/null; " for name, m in MODELS.items())
+        cmd = (lists + "echo @@QUEUE; command -v condor_q >/dev/null && condor_q \"$USER\" -constraint 'BHC_tag =!= undefined' "
+               "-af BHC_model BHC_tag BHC_L 2>/dev/null; echo @@END")
         rc, out, err = self.remote.run(cmd, timeout=120)
         if rc == 255 and not self.args.local:
             raise ConnectionError(err.strip() or "ssh connection lost")
         s = sections(out)
         found = {}
-        for x in parse_json_section(s.get("LIST", ""), []):
-            found[(x["tag"], x["L"])] = {**x, "n_states": 0, "on_remote": x["n_states"]}
+        for name in MODELS:
+            for x in parse_json_section(s.get(f"LIST_{name}", ""), []):
+                found[(name, x["tag"], x["L"])] = {**x, "model": name, "n_states": 0, "on_remote": x["n_states"]}
         # the laptop's sweeps (the archive)
-        root = os.path.join(self.args.gather_dest, "data", MODEL)
-        for tag in sorted(os.listdir(root)) if os.path.isdir(root) else []:
-            for Ldir in os.listdir(os.path.join(root, tag)):
-                if not re.match(r"^L\d+$", Ldir):
+        for name, m in MODELS.items():
+            root = os.path.join(self.args.gather_dest, "data", m["dir"])
+            for tag in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+                try:
+                    X, Y = axes_of(name, tag)
+                except ValueError:
                     continue
-                folder = os.path.join(root, tag, Ldir)
-                states = [f for _, _, fs in os.walk(folder) for f in fs if re.match(r"^mu-?[\d.]+\.jld2$", f)]
-                x = found.setdefault((tag, int(Ldir[1:])), {"tag": tag, "L": int(Ldir[1:]), "on_remote": 0, "n_obs": 0})
-                x["n_states"] = len(states)
-                x["mtime"] = max(x.get("mtime", 0), os.path.getmtime(folder))
-        queue_lines = [line.split() for line in s.get("QUEUE", "").splitlines()]
-        for parts in queue_lines:
-            if len(parts) == 2 and parts[1].isdigit():
-                found.setdefault((parts[0], int(parts[1])), {"tag": parts[0], "L": int(parts[1]), "n_states": 0,
-                                                              "on_remote": 0, "n_obs": 0, "mtime": time.time()})
-        for (tag, L), x in found.items():
-            x["queued"] = sum(1 for parts in queue_lines if parts == [tag, str(L)])
+                for Ldir in os.listdir(os.path.join(root, tag)):
+                    if not re.match(r"^L\d+$", Ldir):
+                        continue
+                    folder = os.path.join(root, tag, Ldir)
+                    states = [f for _, _, fs in os.walk(folder) for f in fs if re.match(rf"^{Y}-?[\d.]+\.jld2$", f)]
+                    x = found.setdefault((name, tag, int(Ldir[1:])), {"model": name, "tag": tag, "L": int(Ldir[1:]),
+                                                                       "on_remote": 0, "n_obs": 0})
+                    x["n_states"] = len(states)
+                    x["axes"] = [X, Y]
+                    x["mtime"] = max(x.get("mtime", 0), os.path.getmtime(folder))
+        queued = {}
+        for parts in (line.split() for line in s.get("QUEUE", "").splitlines()):
+            if len(parts) == 3 and parts[2].isdigit():
+                name = parts[0] if parts[0] in MODELS else "BHCorr"   # jobs without BHC_model are BHCorr jobs
+                k = (name, parts[1], int(parts[2]))
+                queued[k] = queued.get(k, 0) + 1
+                if k not in found:
+                    try:
+                        ax = list(axes_of(name, parts[1]))
+                    except ValueError:
+                        continue
+                    found[k] = {"model": name, "tag": parts[1], "L": int(parts[2]), "axes": ax, "n_states": 0,
+                                "on_remote": 0, "n_obs": 0, "mtime": time.time()}
+        for k, x in found.items():
+            x["queued"] = queued.get(k, 0)
             x.setdefault("n_states", 0)
+            x.setdefault("axes", list(axes_of(*k[:2])))
         return sorted(found.values(), key=lambda x: -x.get("mtime", 0))
 
-    def log(self, tag, L, t, mu, stage):
-        if not (RE_TAG.match(tag) and RE_POINT.match(t) and RE_POINT.match(mu)):
+    def log(self, model, tag, L, x, y, stage):
+        L = self.check_sweep(model, tag, L)
+        if not (RE_POINT.match(x) and RE_POINT.match(y)):
             raise ValueError("bad point")
-        L = int(L)
-        d = f"logs/{MODEL}/{tag}/L{L}/condor" + ("/obs" if stage == "obs" else "")
-        prefix = f"BHC_obs_L{L}" if stage == "obs" else f"BHC_L{L}"
+        m = MODELS[model]
+        X, Y = axes_of(model, tag)
+        d = f"logs/{m['dir']}/{tag}/L{L}/condor" + ("/obs" if stage == "obs" else "")
+        prefix = m["prefix"]["obs" if stage == "obs" else "ite"].format(L=L)
+        marker = m["obs_marker"].format(X=X, Y=Y, x=x, y=y)
         # A running job's files on the access point stay empty until it ends: show its live output instead
-        pc = f'{self.condor_constraint(tag, L)} && BHC_stage =?= "{"obs" if stage == "obs" else "ite"}" && {point_constraint(t, mu)}'
+        pc = (f'{self.condor_constraint(model, tag, L)} && BHC_stage =?= "{"obs" if stage == "obs" else "ite"}" && '
+              f'{point_constraint(x, y, m["attrs"])}')
         c = shlex.quote(pc + " && JobStatus == 2")
         cmd = (f"id=$(condor_q \"$USER\" -constraint {c} -format '%d.' ClusterId -format '%d\\n' ProcId 2>/dev/null | head -1); "
                f"if [ -n \"$id\" ]; then echo \"== job $id is running: live stdout (condor_tail)\"; "
@@ -575,42 +692,45 @@ class Dashboard:
                + (f"id=$(condor_history \"$USER\" -constraint {shlex.quote(pc)} -limit 1 -format '%d.' ClusterId "
                   f"-format '%d\\n' ProcId 2>/dev/null | head -1); "
                   f"f=; [ -n \"$id\" ] && f=$(ls {d}/{prefix}_$id.err 2>/dev/null); "
-                  # its setup and the section of this point (from its \"== … point k of n: t = …, μ = …\" marker)
+                  # its setup and the section of this point (from its \"== … point k of n: <marker>\" line)
                   f"if [ -n \"$f\" ]; then o=\"${{f%.err}}.out\"; echo \"== $o (job $id, setup and this point)\"; "
-                  f"awk -v m=\"t = {t}, μ = {mu}\" '/^== .* point [0-9]+ of [0-9]+: / {{ s = index($0, m) > 0; p = 1 }} !p || s' "
+                  f"awk -v m={shlex.quote(marker)} '/^== .* point [0-9]+ of [0-9]+: / {{ s = index($0, m) > 0; p = 1 }} !p || s' "
                   f"\"$o\" | tail -n 80; echo; echo \"== $f\"; tail -n 60 \"$f\"; exit 0; fi; " if stage == "obs" else "") +
-               f"f=$(ls -t {d}/{prefix}_t{t}_mu{mu}_*.err 2>/dev/null | head -1); "
+               f"f=$(ls -t {d}/{prefix}_{X}{x}_{Y}{y}_*.err 2>/dev/null | head -1); "
                f"if [ -z \"$f\" ]; then echo 'No log files for this point on the access point (gathered points have no logs left).'; exit 0; fi; "
                f"o=\"${{f%.err}}.out\"; echo \"== $o\"; tail -n 60 \"$o\" 2>/dev/null; echo; echo \"== $f\"; tail -n 60 \"$f\"")
         rc, out, err = self.remote.run(cmd, timeout=60)
         return out + err
 
-    def progress(self, tag, L, t=None, mu=None):
+    def progress(self, model, tag, L, x=None, y=None):
         """Phase and ITE step of the running jobs of a sweep (or of one point), from their live output."""
-        if not RE_TAG.match(tag) or (t is not None and not (RE_POINT.match(t) and RE_POINT.match(mu))):
+        L = self.check_sweep(model, tag, L)
+        if x is not None and not (RE_POINT.match(x) and RE_POINT.match(y)):
             raise ValueError("bad point")
-        L = int(L)
-        c = self.condor_constraint(tag, L) + " && JobStatus == 2"
-        if t is not None:
-            c += " && " + point_constraint(t, mu)
-        cmd = (f"condor_q \"$USER\" -constraint {shlex.quote(c)} -af ClusterId ProcId BHC_stage BHC_t BHC_mu 2>/dev/null | "
-               "while read c p st t mu; do echo \"@@JOB $c.$p $st $t $mu\"; echo @@OUT; "
+        m = MODELS[model]
+        c = self.condor_constraint(model, tag, L) + " && JobStatus == 2"
+        if x is not None:
+            c += " && " + point_constraint(x, y, m["attrs"])
+        a, b = m["attrs"]
+        cmd = (f"condor_q \"$USER\" -constraint {shlex.quote(c)} -af ClusterId ProcId BHC_stage {a} {b} 2>/dev/null | "
+               "while read c p st x y; do echo \"@@JOB $c.$p $st $x $y\"; echo @@OUT; "
                "timeout 30 condor_tail -maxbytes 20000 $c.$p 2>&1 < /dev/null; echo; echo @@ERR; "
                "timeout 30 condor_tail -stderr -maxbytes 20000 $c.$p 2>&1 < /dev/null; echo; done; echo @@END")
         rc, out, err = self.remote.run(cmd, timeout=300)
         if rc == 255 and not self.args.local:
             raise ConnectionError(err.strip() or "ssh connection lost")
         jobs = parse_progress_dump(out)
-        if t is not None:
-            for j in jobs:   # observables jobs of several points have no BHC_t, BHC_mu
-                if j.get("t") in (None, "undefined"):
-                    j["t"], j["mu"] = t, mu
+        if x is not None:
+            for j in jobs:   # observables jobs of several points have no point attributes
+                if j.get("x") in (None, "undefined"):
+                    j["x"], j["y"] = x, y
         return {"time": time.time(), "jobs": jobs}
 
-    def plot_file(self, tag, L):
-        if not RE_TAG.match(tag):
-            raise ValueError("bad tag")
-        return os.path.join(self.args.gather_dest, "plots", f"{MODEL}_{tag}_L{int(L)}.png")
+    def plot_file(self, model, tag, L):
+        """The phase-diagram PNG of the plot script (models without one: None)."""
+        if not MODELS[model]["plot_script"]:
+            return None
+        return os.path.join(self.args.gather_dest, "plots", f"{MODELS[model]['dir']}_{tag}_L{int(L)}.png")
 
     # ---- actions (one at a time, output streamed to the page)
 
@@ -685,25 +805,44 @@ class Dashboard:
         emit("$ Pkg.instantiate() (access point)")
         return self.remote.stream(f"{self.remote.julia} --project=. --startup-file=no -e 'using Pkg; Pkg.instantiate()' 2>&1", emit)
 
-    def _grid(self, params):
-        ts = [f"{float(x):.4f}" for x in str(params.get("TS", "")).split()]
-        ms = [f"{float(x):.4f}" for x in str(params.get("MUS", "")).split()]
-        return [(t, m) for t in ts for m in ms]
+    @staticmethod
+    def _grid(model, params):
+        kx, ky = MODELS[model]["grid"]
+        xs = [f"{float(v):.4f}" for v in str(params.get(kx, "")).split()]
+        ys = [f"{float(v):.4f}" for v in str(params.get(ky, "")).split()]
+        return [(x, y) for x in xs for y in ys]
+
+    def _values(self, model, tag, params, action):
+        """Checked environment of an action's script; for BHU1 also TAG, after checking that the parameters give the
+        selected sweep's tag (the page and bhu1_tag agree)."""
+        values = self._check(params, script_params(model, action))
+        if model == "BHU1":
+            for k in ("XAXIS", "YAXIS", "FILLING", "NMAX", "DTAU", "MAXD"):
+                if k not in values:
+                    raise ValueError(f"{k} is not set")
+            fixed = {k: values.get(k, "") for k in MODELS["BHU1"]["model_params"]}
+            want = bhu1_tag({**fixed, "XAXIS": values["XAXIS"], "YAXIS": values["YAXIS"]})
+            if want != tag:
+                raise ValueError(f"the parameters give the tag {want}, not the selected sweep {tag}")
+            values["TAG"] = tag
+        return values
 
     def _action(self, task, action, params, emit):
-        tag, L = params.get("tag", ""), params.get("L", "")
-        if not (RE_TAG.match(tag) and str(L).isdigit()):
+        model, tag, L = params.get("model", "BHCorr"), params.get("tag", ""), params.get("L", "")
+        if not (model in MODELS and RE_TAG.match(tag) and str(L).isdigit()):
             raise ValueError("no sweep selected")
         L = int(L)
+        m = MODELS[model]
+        script = m["scripts"].get(action if action != "preview" else "submit")
         n_edge = int(params["N_EDGE"]) if str(params.get("N_EDGE", "")).isdigit() else None
         if action in ("submit", "preview", "recompute_obs") and n_edge is not None and L < 2 * n_edge + 3:
             raise ValueError(f"N_EDGE = {n_edge} leaves fewer than 2 bulk bonds for L = {L} (need L ≥ 2·N_EDGE + 3)")
         if action in ("submit", "preview"):
-            values = self._check(params, SCRIPT_PARAMS["submit"])
+            values = self._values(model, tag, params, "submit")
             maxiter, convtol = int(values.get("MAXITER", 2000)), float(values.get("CONVTOL", 1e-6))
-            st = self.status(tag, L, n_edge, fresh=True)
-            known = {(p["t"], p["mu"]): p for p in st["points"]}
-            grid = self._grid(params) or list(known)
+            st = self.status(model, tag, L, n_edge, fresh=True)
+            known = {(p["x"], p["y"]): p for p in st["points"]}
+            grid = self._grid(model, params) or list(known)
             force = params.get("FORCE") == "1"
             todo, nrun, nrerun, nresume, nskip, nqueued = [], 0, 0, 0, 0, 0
             upload = []   # states of resumed points that are only on the laptop
@@ -724,7 +863,7 @@ class Dashboard:
                  f"{nrerun} rerun from scratch for the new CONVTOL), {nskip} done, {nqueued} in the queue")
             if not todo:
                 return 0
-            values["POINTS"] = ",".join(f"{t} {m}" for t, m in todo)
+            values["POINTS"] = ",".join(f"{x} {y}" for x, y in todo)
             values["RESUME"] = "0" if force else "1"
             if action == "preview":
                 values["DRYRUN"] = "1"
@@ -733,19 +872,19 @@ class Dashboard:
             else:
                 if upload:
                     emit(f"Uploading {len(upload)} state(s) from the laptop to the access point, to resume them ...")
-                    rel = [f"data/{MODEL}/{tag}/L{L}/t{t}/mu{m}.jld2" for t, m in upload]
+                    rel = [point_file(model, tag, L, x, y) for x, y in upload]
                     rc = self._rsync(rel, self.args.gather_dest + "/", self.remote.path(), emit)
                     if rc != 0:
                         return rc
                 rc = self._sync(params, emit, task)
                 if rc != 0:
                     return rc
-            cmd = f"env {self._env(values)} bash {SCRIPT['submit']} {L} 2>&1"
-            emit(f"$ bash {SCRIPT['submit']} {L}  ({len(todo)} points)")
+            cmd = f"env {self._env(values)} bash {script} {L} 2>&1"
+            emit(f"$ bash {script} {L}  ({len(todo)} points)")
             return self.remote.stream(cmd, emit)
         if action == "recompute_obs":
-            values = self._check(params, SCRIPT_PARAMS["recompute_obs"])
-            st = self.status(tag, L, n_edge, fresh=True)
+            values = self._values(model, tag, params, "recompute_obs")
+            st = self.status(model, tag, L, n_edge, fresh=True)
             todo = [p for p in st["points"] if p["has_state"] and p["obs"] in ("none", "outdated", "failed")
                     and p["state"] not in ("idle", "running", "held")]
             emit(f"{len(todo)} point(s) need observables (missing, outdated or failed)")
@@ -754,28 +893,31 @@ class Dashboard:
             upload = [p for p in todo if "laptop" in p["where"] and not p["on_remote"]]
             if upload:
                 emit(f"Uploading {len(upload)} state(s) from the laptop to the access point ...")
-                rel = [f"data/{MODEL}/{tag}/L{L}/t{p['t']}/mu{p['mu']}.jld2" for p in upload]
+                rel = [point_file(model, tag, L, p["x"], p["y"]) for p in upload]
                 rc = self._rsync(rel, self.args.gather_dest + "/", self.remote.path(), emit)
                 if rc != 0:
                     return rc
             rc = self._sync(params, emit, task)
             if rc != 0:
                 return rc
-            values["POINTS"] = ",".join(f"{p['t']} {p['mu']}" for p in todo)
-            emit(f"$ bash {SCRIPT['recompute_obs']} {L}  ({len(todo)} points)")
-            return self.remote.stream(f"env {self._env(values)} bash {SCRIPT['recompute_obs']} {L} 2>&1", emit)
+            values["POINTS"] = ",".join(f"{p['x']} {p['y']}" for p in todo)
+            emit(f"$ bash {script} {L}  ({len(todo)} points)")
+            return self.remote.stream(f"env {self._env(values)} bash {script} {L} 2>&1", emit)
         if action in ("remove_held", "remove_all"):
-            c = self.condor_constraint(tag, L) + (" && JobStatus == 5" if action == "remove_held" else "")
+            c = self.condor_constraint(model, tag, L) + (" && JobStatus == 5" if action == "remove_held" else "")
             cmd = f"condor_rm \"$USER\" -constraint {shlex.quote(c)} 2>&1"
             emit(f"$ condor_rm (jobs of this sweep{', held only' if action == 'remove_held' else ''})")
             return self.remote.stream(cmd, emit)
         if action == "gather":
-            return self._gather(tag, L, emit)
+            return self._gather(model, tag, L, emit)
         if action == "plot":
-            values = self._check(params, MODEL_PARAMS + ["KAPPA_TOL", "SBSTD_TOL", "A2_TOL"])
+            if not m["plot_script"]:
+                raise ValueError("this model has no plot script: its observables are shown as heatmaps in the grid")
+            values = self._check(params, m["model_params"] + m["plot_params"])
             env = {**os.environ, **values, "DATA_DIR": "data"}
-            cmd = [*self.local_julia, f"--project={os.path.join(REPO, 'examples')}", "--startup-file=no", os.path.join(REPO, PLOT_SCRIPT), str(L)]
-            emit(f"$ julia {PLOT_SCRIPT} {L}  (on the laptop, data in {self.args.gather_dest}/data)")
+            cmd = [*self.local_julia, f"--project={os.path.join(REPO, 'examples')}", "--startup-file=no",
+                   os.path.join(REPO, m["plot_script"]), str(L)]
+            emit(f"$ julia {m['plot_script']} {L}  (on the laptop, data in {self.args.gather_dest}/data)")
             return stream(cmd, emit, cwd=self.args.gather_dest, env=env)
         raise ValueError(f"unknown action {action}")
 
@@ -791,15 +933,19 @@ class Dashboard:
         finally:
             os.unlink(listfile)
 
-    def _gather(self, tag, L, emit):
+    def _gather(self, model, tag, L, emit):
         """Copy the finished results of this sweep to the laptop, then delete them and their logs on the access point."""
-        data = f"data/{MODEL}/{tag}/L{L}"
-        logs = f"logs/{MODEL}/{tag}/L{L}/condor"
-        c = shlex.quote(self.condor_constraint(tag, L))
+        m = MODELS[model]
+        X, Y = axes_of(model, tag)
+        data = f"data/{m['dir']}/{tag}/L{L}"
+        logs = f"logs/{m['dir']}/{tag}/L{L}/condor"
+        ite, obs = m["prefix"]["ite"].format(L=L), m["prefix"]["obs"].format(L=L)
+        a, b = m["attrs"]
+        c = shlex.quote(self.condor_constraint(model, tag, L))
         # Result files older than GATHER_MIN_AGE min of points without a job in the queue (any stage)
-        cmd = (f"echo @@FILES; [ -d {data} ] && find {data} -type f \\( -name 'mu*.jld2' -o -name 'mu*_obs.csv' \\) "
+        cmd = (f"echo @@FILES; [ -d {data} ] && find {data} -type f \\( -name '{Y}*.jld2' -o -name '{Y}*_obs.csv' \\) "
                f"-mmin +{GATHER_MIN_AGE}; "
-               f"echo @@ACTIVE; command -v condor_q >/dev/null && condor_q \"$USER\" -constraint {c} -af BHC_t BHC_mu BHC_points 2>/dev/null; "
+               f"echo @@ACTIVE; command -v condor_q >/dev/null && condor_q \"$USER\" -constraint {c} -af {a} {b} BHC_points 2>/dev/null; "
                f"echo @@END")
         rc, out, err = self.remote.run(cmd, timeout=120)
         if rc == 255 and not self.args.local:
@@ -809,14 +955,14 @@ class Dashboard:
         for line in s.get("ACTIVE", "").splitlines():
             parts = line.split()
             if len(parts) == 3:
-                job = {k: v for k, v in zip(("BHC_t", "BHC_mu", "BHC_points"), parts) if v != "undefined"}
-                active.update(job_points(job))
+                job = {k: v for k, v in zip((a, b, "BHC_points"), parts) if v != "undefined"}
+                active.update(job_points(job, m["attrs"]))
         files, points = [], set()
         for path in s.get("FILES", "").splitlines():
-            m = re.match(rf"^{re.escape(data)}/t(-?\d+\.\d{{4}})/mu(-?\d+\.\d{{4}})(_obs\.csv|\.jld2)$", path.strip())
-            if m and (m.group(1), m.group(2)) not in active:
+            mt = re.match(rf"^{re.escape(data)}/{X}(-?\d+\.\d{{4}})/{Y}(-?\d+\.\d{{4}})(_obs\.csv|\.jld2)$", path.strip())
+            if mt and (mt.group(1), mt.group(2)) not in active:
                 files.append(path.strip())
-                points.add((m.group(1), m.group(2)))
+                points.add((mt.group(1), mt.group(2)))
         if not files:
             emit("Nothing to gather: no finished results on the access point (results younger than "
                  f"{GATHER_MIN_AGE} min or of points still in the queue wait for the next Gather).")
@@ -833,17 +979,17 @@ class Dashboard:
             return 1
         emit(f"Copied to {os.path.join(self.args.gather_dest, data)}")
         # Logs of the gathered points, and (if no job of this sweep is left) the cluster logs, points and submit files
-        rm = [f"rm -f {logs}/BHC_L{L}_t{t}_mu{m}_*.out {logs}/BHC_L{L}_t{t}_mu{m}_*.err "
-              f"{logs}/obs/BHC_obs_L{L}_t{t}_mu{m}_*.out {logs}/obs/BHC_obs_L{L}_t{t}_mu{m}_*.err" for t, m in sorted(points)]
+        rm = [f"rm -f {logs}/{ite}_{X}{x}_{Y}{y}_*.out {logs}/{ite}_{X}{x}_{Y}{y}_*.err "
+              f"{logs}/obs/{obs}_{X}{x}_{Y}{y}_*.out {logs}/obs/{obs}_{X}{x}_{Y}{y}_*.err" for x, y in sorted(points)]
         if not active:
-            rm.append(f"rm -f {logs}/*.log {logs}/points_*.txt {logs}/*.submit {logs}/obs/*.log {logs}/obs/points_*.txt "
-                      f"{logs}/obs/*.submit")
-        rm.append(f"for d in {data} logs/{MODEL}/{tag}; do [ -d \"$d\" ] && find \"$d\" -type d -empty -delete; done; true")
+            rm.append(f"rm -f {logs}/*.log {logs}/points_*.txt {logs}/resume_*.txt {logs}/*.submit {logs}/obs/*.log "
+                      f"{logs}/obs/points_*.txt {logs}/obs/*.submit")
+        rm.append(f"for d in {data} logs/{m['dir']}/{tag}; do [ -d \"$d\" ] && find \"$d\" -type d -empty -delete; done; true")
         rc, _, err = self.remote.run("; ".join(rm), timeout=120)
         emit(f"Deleted the logs of {len(points)} gathered point(s) on the access point"
              + ("" if active else ", and the cluster logs and submit files (no job of this sweep left)")
              + ("" if rc == 0 else f" (with errors: {err.strip()})"))
-        self.local_cache.pop((tag, L), None)
+        self.local_cache.pop((model, tag, L), None)
         return 0
 
     def info(self):
@@ -884,14 +1030,17 @@ def make_handler(dash):
                     return self._send(200, dash.sweeps())
                 if u.path == "/api/status":
                     n_edge = int(q["n_edge"]) if q.get("n_edge", "").isdigit() else None
-                    return self._send(200, dash.status(q["tag"], q["L"], n_edge, q.get("fresh") == "1"))
+                    return self._send(200, dash.status(q.get("model", "BHCorr"), q["tag"], q["L"], n_edge, q.get("fresh") == "1"))
                 if u.path == "/api/log":
-                    return self._send(200, {"text": dash.log(q["tag"], q["L"], q["t"], q["mu"], q.get("stage", "ite"))})
+                    return self._send(200, {"text": dash.log(q.get("model", "BHCorr"), q["tag"], q["L"], q["x"], q["y"],
+                                                             q.get("stage", "ite"))})
                 if u.path == "/api/progress":
-                    return self._send(200, dash.progress(q["tag"], q["L"], q.get("t"), q.get("mu")))
+                    return self._send(200, dash.progress(q.get("model", "BHCorr"), q["tag"], q["L"], q.get("x"), q.get("y")))
                 if u.path == "/api/plot":
-                    path = dash.plot_file(q["tag"], q["L"])
-                    if not os.path.isfile(path):
+                    model = q.get("model", "BHCorr")
+                    dash.check_sweep(model, q["tag"], q["L"])
+                    path = dash.plot_file(model, q["tag"], q["L"])
+                    if not path or not os.path.isfile(path):
                         return self._send(404, {"error": "no plot yet"})
                     with open(path, "rb") as f:
                         return self._send(200, f.read(), "image/png")
@@ -946,7 +1095,7 @@ def selftest():
                {"ClusterId": 4, "ProcId": 0, "JobStatus": 4, "ExitCode": 0, "CompletionDate": 90, "BHC_stage": "ite",
                 "BHC_t": "0.1000", "BHC_mu": "0.2000", "RemoteWallClockTime": 5400.0, "NumJobStarts": 2,
                 "RequestMemory": 6144, "ResidentSetSize": 3145728}]
-    recs = {(p["t"], p["mu"]): p for p in merge(remote, local, queue, history, "v2", 2)}
+    recs = {(p["x"], p["y"]): p for p in merge(remote, local, queue, history, "v2", 2)}
     got = {k: (p["state"], p["obs"]) for k, p in recs.items()}
     want = {("0.1000", "0.2000"): ("done", "done"), ("0.1000", "0.4000"): ("unconverged", "outdated"),
             ("0.2000", "0.2000"): ("running", "none"), ("0.3000", "0.2000"): ("held", "none"),
@@ -978,7 +1127,7 @@ def selftest():
                      "BHC_points": "0.1000_0.2000,0.3000_0.4000", "RemoteWallClockTime": 900.0},
                     {"ClusterId": 3, "ProcId": 0, "JobStatus": 4, "ExitCode": 0, "CompletionDate": 80, "BHC_stage": "obs",
                      "BHC_t": "0.5000", "BHC_mu": "0.2000"}]
-    r2 = {(p["t"], p["mu"]): p for p in merge(remote, local, q2, h2, "v2", 2)}
+    r2 = {(p["x"], p["y"]): p for p in merge(remote, local, q2, h2, "v2", 2)}
     assert r2[("0.2000", "0.2000")]["obs"] == "running" and r2[("0.1000", "0.4000")]["obs"] == "running"
     assert r2[("0.2000", "0.2000")]["obs_job"]["id"] == "11.0"
     assert r2[("0.1000", "0.2000")]["obs"] == "done" and r2[("0.1000", "0.2000")]["obs_job"]["id"] == "10.1"   # its point ok, another failed
@@ -1012,7 +1161,7 @@ def selftest():
     dump = ("@@JOB 7.1 ite 0.1000 0.5000\n@@OUT\n" + old_out + "\n\n@@ERR\n\n"
             "@@JOB 7.2 ite 0.2000 0.5000\n@@OUT\n" + new_out + "\n@@ERR\n" + ite_err + "\n@@END\n")
     jobs = parse_progress_dump(dump)
-    assert [(j["id"], j["t"], j["phase"]) for j in jobs] == [("7.1", "0.1000", "setup: Pkg.instantiate"),
+    assert [(j["id"], j["x"], j["phase"]) for j in jobs] == [("7.1", "0.1000", "setup: Pkg.instantiate"),
                                                               ("7.2", "0.2000", "setup: Pkg.instantiate (attempt 1 of 3)")]
     # stall flag: 27 s CPU in 19 h
     ji = job_info({"ClusterId": 1, "ProcId": 0, "JobStatus": 2, "JobCurrentStartDate": 1000, "RemoteUserCpu": 20,
@@ -1029,6 +1178,44 @@ def selftest():
                    "ResidentSetSize": 2500000, "ResidentSetSize_RAW": 2171020}, now=2000)
     assert ji["mem_peak"] == 2442 and abs(ji["mem_frac"] - 2442 / 8192) < 1e-12 and abs(ji["mem_now"] - 2171020 / 1024) < 1e-9
     assert "mem_req" not in job_info({"ClusterId": 1, "ProcId": 0, "JobStatus": 1})
+    # ---- BHU1: free axes, tag built here, points matched through BHC_x / BHC_y
+    fixed = {"T": "0.1", "U": "1.0", "DELTA": "0.0", "OMEGA": "0.0", "R": "0.0", "FILLING": "1", "NMAX": "4",
+             "DTAU": "0.05", "MAXD": "32"}
+    tag = bhu1_tag({**fixed, "XAXIS": "t", "YAXIS": "Delta"})
+    assert tag == "t-Delta_U1.0_Omega0.0_r0.0_f1_nmax4_dtau0.05_D32", tag
+    assert bhu1_tag({**fixed, "XAXIS": "Omega", "YAXIS": "r"}) == "Omega-r_t0.1_U1.0_Delta0.0_f1_nmax4_dtau0.05_D32"
+    assert axes_of("BHU1", tag) == ("t", "Delta") and axes_of("BHCorr", "U1.0_r0.0") == ("t", "mu")
+    assert point_file("BHU1", tag, 8, "0.1000", "0.3000") == \
+        f"data/BoseHubbardU1_NormalizedITE/{tag}/L8/t0.1000/Delta0.3000.jld2"
+    assert point_file("BHCorr", "U1.0_x", 6, "0.1000", "0.2000", "_obs.csv") == \
+        "data/BoseHubbardCorrelated_NormalizedITE/U1.0_x/L6/t0.1000/mu0.2000_obs.csv"
+    try:
+        bhu1_tag({**fixed, "XAXIS": "t", "YAXIS": "t"})
+        raise AssertionError("equal axes accepted")
+    except ValueError:
+        pass
+    u_remote = {"points": [{"x": "0.1000", "y": "0.3000", "state": True, "converged": True, "eps": 1e-8, "obs": True,
+                            "n_edge": 1, "obs_version": "w", "error": None, "values": {"S_bar": 0.21, "S_bstd": 0.05}}],
+                "planned": [["0.1000", "0.3000"], ["0.2000", "0.3000"]]}
+    u_queue = [{"ClusterId": 20, "ProcId": 0, "JobStatus": 2, "BHC_model": "BHU1", "BHC_stage": "ite",
+                "BHC_x": "0.2000", "BHC_y": "0.3000"}]
+    u = {(p["x"], p["y"]): p for p in merge(u_remote, {"points": []}, u_queue, [], "w", 1, MODELS["BHU1"]["attrs"])}
+    assert (u[("0.1000", "0.3000")]["state"], u[("0.1000", "0.3000")]["obs"]) == ("done", "done")
+    assert u[("0.1000", "0.3000")]["values"]["S_bar"] == 0.21 and u[("0.2000", "0.3000")]["state"] == "running"
+    assert point_constraint("0.1", "0.2", ("BHC_x", "BHC_y")) == \
+        '((BHC_x =?= "0.1" && BHC_y =?= "0.2") || stringListMember("0.1_0.2", BHC_points) =?= true)'
+    assert "XAXIS" in script_params("BHU1", "submit") and "T" in script_params("BHU1", "submit")
+    assert "XAXIS" not in script_params("BHCorr", "submit") and "TS" not in script_params("BHCorr", "submit")
+    # the parameters must give the selected sweep's tag
+    d = Dashboard.__new__(Dashboard)
+    v = d._values("BHU1", tag, {**fixed, "XAXIS": "t", "YAXIS": "Delta", "MAXITER": "100"}, "submit")
+    assert v["TAG"] == tag and v["XAXIS"] == "t" and v["MAXITER"] == "100"
+    try:
+        d._values("BHU1", tag, {**fixed, "U": "2.0", "XAXIS": "t", "YAXIS": "Delta"}, "submit")
+        raise AssertionError("tag mismatch accepted")
+    except ValueError:
+        pass
+    assert Dashboard._grid("BHU1", {"XS": "0.1 0.2", "YS": "0"}) == [("0.1000", "0.0000"), ("0.2000", "0.0000")]
     print("selftest ok")
 
 

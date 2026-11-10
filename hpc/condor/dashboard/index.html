@@ -152,8 +152,22 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
 .jobs { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 10px; }
 .jobs th { text-align: left; font-weight: 600; color: var(--ink-3); font-size: 11.5px; padding: 4px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .jobs td { padding: 5px 8px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; vertical-align: top; }
-.jobs tr[data-t] { cursor: pointer; }
-.jobs tr[data-t]:hover td { background: var(--surface-2); }
+.jobs tr[data-x] { cursor: pointer; }
+.jobs tr[data-x]:hover td { background: var(--surface-2); }
+/* heatmap: cells coloured by an observable */
+.cell.val { color: transparent; }
+.cell.nodata { background: var(--surface-2); background-image: repeating-linear-gradient(45deg, transparent 0 3px, var(--line) 3px 4px); }
+.cell .smark { position: absolute; left: 2px; top: 2px; width: 6px; height: 6px; border-radius: 2px; box-shadow: 0 0 0 1.5px var(--surface); }
+.cell .smark.none { display: none; }
+.cell .smark.idle { background: var(--s-idle); } .cell .smark.running { background: var(--s-running); }
+.cell .smark.held, .cell .smark.failed { background: var(--s-failed); } .cell .smark.unconverged { background: var(--s-unconverged); }
+.cell .smark.done { display: none; }
+.cbar { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; color: var(--ink-2); }
+.cbar .ramp { height: 10px; flex: 0 1 280px; border-radius: 3px; }
+.cbar b { color: var(--ink); font-weight: 600; }
+.gridhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; font-size: 12.5px; color: var(--ink-2); }
+.fields .axis { display: grid; grid-template-columns: 1fr; }
+.m-only { display: none; }
 .jobs .warn { color: var(--warn); font-weight: 600; }
 .jobswrap { overflow-x: auto; }
 </style>
@@ -161,6 +175,10 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
 <body>
 <header>
   <h1><span class="logo"></span>Condor sweeps</h1>
+  <select id="modelSel" title="Model: which simulation the sweep runs">
+    <option value="BHU1">U(1) Bose-Hubbard · fixed filling · any two axes</option>
+    <option value="BHCorr">Correlated Bose-Hubbard · no symmetry · t × μ</option>
+  </select>
   <select id="sweepSel" title="Sweeps on the laptop, on the access point or in the queue"></select>
   <span class="tagline" id="tagNow"></span>
   <span class="spacer"></span>
@@ -176,12 +194,15 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
 <main>
   <div class="col">
     <section class="card" id="gridCard">
-      <h2>Sweep · correlated Bose-Hubbard, <span id="Lnow"></span></h2>
+      <h2>Sweep · <span id="modelNow"></span>, <span id="Lnow"></span></h2>
       <div class="chips" id="chips"></div>
       <div class="progress" id="progress"></div>
       <div class="progress-label" id="progressLabel"></div>
       <div class="stats" id="stats"></div>
+      <div class="gridhead"><label for="colorSel">Colour by</label> <select id="colorSel"></select>
+        <span class="muted" id="colorHint"></span></div>
       <div class="gridwrap"><div id="grid"></div></div>
+      <div class="cbar" id="cbar"></div>
     </section>
     <section class="card" id="jobsCard">
       <h2>Running jobs <span class="spacer"></span><span class="muted" id="jobsTime" style="text-transform:none;letter-spacing:0;font-weight:400"></span>
@@ -189,7 +210,7 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
       <p class="hint" style="margin:0">Reads the live output of every running job (condor_tail): setup phase, ITE iteration and step, and how long it is in it. A warning marker on a running point means it used almost no CPU for more than 30 minutes (stuck).</p>
       <div class="jobswrap" id="jobsBox"></div>
     </section>
-    <section class="card plot">
+    <section class="card plot m-only m-BHCorr">
       <h2>Phase diagram <span class="muted" id="plotTime" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h2>
       <div id="plotBox"></div>
     </section>
@@ -204,7 +225,7 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
       <div class="action"><span class="name"><span class="step">2</span>Gather data</span>
         <button class="btn primary" data-act="gather">Gather<span class="count" id="gatherCount">0</span></button>
         <span class="desc" id="gatherDesc">Copies finished results to the laptop, then deletes them and their logs on the access point. A file is only deleted after it was copied completely.</span></div>
-      <div class="action"><span class="name"><span class="step">3</span>Phase-diagram plot</span>
+      <div class="action m-only m-BHCorr"><span class="name"><span class="step">3</span>Phase-diagram plot</span>
         <button class="btn" data-act="plot">Plot</button>
         <span class="desc">Runs the plot script on the laptop's data (κ, density fluctuation δn, |⟨a⟩|², ρ, S_bstd, phases from κ and S_bstd, |⟨a⟩|² only for low κ with high S_bstd), using KAPPA_TOL, SBSTD_TOL and A2_TOL below.</span></div>
       <div class="action"><span class="name">Recompute observables</span>
@@ -234,24 +255,31 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
         <div class="fields">
           <label>L <input type="number" id="L" min="3" value="6"></label>
           <label class="wide" style="grid-column:auto / span 2"><span>&nbsp;</span><span class="muted" id="gridCount"></span></label>
-          <label>t/U from <input type="text" id="t0" value="0.02"></label>
-          <label>to <input type="text" id="t1" value="0.30"></label>
-          <label>step <input type="text" id="tstep" value="0.02"></label>
-          <label>μ/U from <input type="text" id="m0" value="0"></label>
-          <label>to <input type="text" id="m1" value="1.6"></label>
-          <label>step <input type="text" id="mstep" value="0.1"></label>
-        </div></details>
+          <label>x axis (columns) <select id="XAXIS"><option>t</option><option>U</option><option>Delta</option><option>Omega</option><option>r</option></select></label>
+          <label>from <input type="text" id="x0" value="0.02"></label>
+          <label>to <input type="text" id="x1" value="0.30"></label>
+          <label>step <input type="text" id="xstep" value="0.02"></label>
+          <label>y axis (rows) <select id="YAXIS"><option>t</option><option>U</option><option selected>Delta</option><option>Omega</option><option>r</option></select></label>
+          <label>from <input type="text" id="y0" value="0"></label>
+          <label>to <input type="text" id="y1" value="0.6"></label>
+          <label>step <input type="text" id="ystep" value="0.1"></label>
+        </div>
+        <p class="hint m-only m-BHU1">Choose any two of t, U, Δ, Ω, r; the other parameters are fixed in Model. Values are formatted with 4 decimals in the file names.</p>
+        <p class="hint m-only m-BHCorr">This model sweeps t/U (columns) and μ/U (rows).</p></details>
       <details open><summary>Model <span class="muted">(sets the run tag)</span></summary>
         <div class="fields">
+          <label class="m-only m-BHU1">t <input type="text" id="T" value="0.1"></label>
           <label>U <input type="text" id="U" value="1.0"></label>
-          <label>R <input type="text" id="R" value="0.0"></label>
           <label>Δ (DELTA) <input type="text" id="DELTA" value="0.0"></label>
           <label>Ω (OMEGA) <input type="text" id="OMEGA" value="0.0"></label>
+          <label>r (R) <input type="text" id="R" value="0.0"></label>
+          <label class="m-only m-BHU1">filling <input type="text" id="FILLING" value="1"></label>
           <label>NMAX <input type="text" id="NMAX" value="4"></label>
           <label>DTAU <input type="text" id="DTAU" value="0.05"></label>
           <label>MAXD <input type="text" id="MAXD" value="16"></label>
         </div>
-        <p class="hint">Values are used verbatim in the run tag (write 0.0, not 0, to match earlier runs).</p></details>
+        <p class="hint">Values are used verbatim in the run tag (write 0.0, not 0, to match earlier runs).
+          <span class="m-only m-BHU1">The two swept parameters are greyed out. At fixed filling N = filling·L the mean μ only adds a constant, so it is not a parameter; the site potentials are ±Δ.</span></p></details>
       <details><summary>Convergence</summary>
         <div class="fields">
           <label>MAXITER <input type="text" id="MAXITER" value="2000"></label>
@@ -263,10 +291,11 @@ pre.log { font-family: var(--mono); font-size: 11.5px; background: var(--field);
         <div class="fields">
           <label>N_SAMPLES <input type="text" id="N_SAMPLES" value="1000"></label>
           <label>N_EDGE <input type="text" id="N_EDGE" value="2"></label>
-          <span></span>
-          <label>KAPPA_TOL <input type="text" id="KAPPA_TOL" value="0.05"></label>
-          <label>SBSTD_TOL <input type="text" id="SBSTD_TOL" value="0.05"></label>
-          <label>A2_TOL <input type="text" id="A2_TOL" value="0.05"></label>
+          <label class="m-only m-BHU1" title="Observables to compute (comma separated, empty: all that apply). Registered: diagnostics, entropy">OBS <input type="text" id="OBS" value="" placeholder="all"></label>
+          <span class="m-only m-BHCorr"></span>
+          <label class="m-only m-BHCorr">KAPPA_TOL <input type="text" id="KAPPA_TOL" value="0.05"></label>
+          <label class="m-only m-BHCorr">SBSTD_TOL <input type="text" id="SBSTD_TOL" value="0.05"></label>
+          <label class="m-only m-BHCorr">A2_TOL <input type="text" id="A2_TOL" value="0.05"></label>
         </div></details>
       <details><summary>Resources per job</summary>
         <div class="fields">
@@ -304,24 +333,43 @@ const LABEL = Object.fromEntries(STATES.map(s => [s[0], s[1]]));
 const GLYPH = Object.fromEntries(STATES.map(s => [s[0], s[2]]));
 const OBS_LABEL = { done: "computed", outdated: "outdated (other script version or N_EDGE)", idle: "queued", running: "running",
   held: "held", failed: "failed", none: "not computed" };
-const FIELDS = ["L", "t0", "t1", "tstep", "m0", "m1", "mstep", "U", "R", "DELTA", "OMEGA", "NMAX", "DTAU", "MAXD",
-  "MAXITER", "CONVTOL", "CROSS_WIDTH", "PPN", "OBS_PPN", "OBS_CHUNK", "MEM", "REQUIREMENTS", "N_SAMPLES", "N_EDGE", "KAPPA_TOL", "SBSTD_TOL", "A2_TOL"];
+// The models (the server's MODELS has their scripts). observables: [CSV column, label, error column, log scale]
+const AXIS_PARAM = { t: "T", U: "U", Delta: "DELTA", Omega: "OMEGA", r: "R" };
+const MODELS = {
+  BHU1: { name: "U(1) Bose-Hubbard, fixed filling", params: ["T", "U", "DELTA", "OMEGA", "R", "FILLING", "NMAX", "DTAU", "MAXD"],
+    grid: ["XS", "YS"], plot: false,
+    axisLabel: { t: "t", U: "U", Delta: "Δ", Omega: "Ω", r: "r" },
+    observables: [["S_bar", "S̄  (bond-averaged entanglement entropy)", "S_bar_err"], ["S_bstd", "σ_S  (bond-to-bond std of S)", "S_bstd_err"],
+      ["E", "E/L  (energy density)"], ["eps_conv", "ϵ_conv  (convergence error)", null, true],
+      ["residual_max", "max |log Z(w)|  (normalization residual)", null, true]] },
+  BHCorr: { name: "correlated Bose-Hubbard", params: ["U", "R", "DELTA", "OMEGA", "NMAX", "DTAU", "MAXD"],
+    grid: ["TS", "MUS"], plot: true, fixedAxes: ["t", "mu"],
+    axisLabel: { t: "t/U", mu: "μ/U" },
+    observables: [["rho", "ρ  (density)"], ["S_avg", "S̄  (bulk entanglement entropy)"], ["S_bstd", "σ_S  (bond-to-bond std of S)", "S_bstd_err"],
+      ["dn", "δn  (density fluctuation)", "dn_err"], ["a2", "|⟨a⟩|²"], ["varS_avg", "Var[S]  (disorder variance)"],
+      ["eps_conv", "ϵ_conv  (convergence error)", null, true]] },
+};
+const FIELDS = ["L", "x0", "x1", "xstep", "y0", "y1", "ystep", "XAXIS", "YAXIS", "T", "U", "R", "DELTA", "OMEGA", "FILLING", "NMAX",
+  "DTAU", "MAXD", "MAXITER", "CONVTOL", "CROSS_WIDTH", "PPN", "OBS_PPN", "OBS_CHUNK", "MEM", "REQUIREMENTS", "N_SAMPLES", "N_EDGE",
+  "OBS", "KAPPA_TOL", "SBSTD_TOL", "A2_TOL"];
 const CHECKS = ["FORCE", "NICE"];
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
 let status = null, selected = null, sweeps = [], task = null, taskSeen = 0, loading = false;
-let progress = new Map(), progressTime = null;   // live phase/step of running jobs, by "t|mu" (from /api/progress)
+let progress = new Map(), progressTime = null;   // live phase/step of running jobs, by "x|y" (from /api/progress)
+let model = store.get("model", "BHU1");
+if (!MODELS[model]) model = "BHU1";
 
 // ---- theme
 function setTheme(t) {
   if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
   store.set("theme", t);
   document.querySelectorAll("#themeSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.theme === t)));
+  render();
 }
 document.querySelectorAll("#themeSeg button").forEach(b => b.onclick = () => setTheme(b.dataset.theme));
-setTheme(store.get("theme", "auto"));
 
 // ---- parameters
 function form() {
@@ -331,13 +379,36 @@ function form() {
   return f;
 }
 function setForm(f) {
+  // forms saved before the generic axes: t0/t1/tstep, m0/m1/mstep
+  const old = { t0: "x0", t1: "x1", tstep: "xstep", m0: "y0", m1: "y1", mstep: "ystep" };
+  for (const [o, n] of Object.entries(old)) if (f[o] !== undefined && f[n] === undefined) f[n] = f[o];
   for (const k of FIELDS) if (f[k] !== undefined) $(k).value = f[k];
   for (const k of CHECKS) if (f[k] !== undefined) $(k).checked = f[k];
 }
-const tagOf = (f) => `U${f.U}_r${f.R}_Delta${f.DELTA}_Omega${f.OMEGA}_nmax${f.NMAX}_dtau${f.DTAU}_D${f.MAXD}`;
-function parseTag(tag) {
-  const m = tag.match(/^U(.+)_r(.+)_Delta(.+)_Omega(.+)_nmax(\d+)_dtau(.+)_D(\d+)$/);
-  return m ? { U: m[1], R: m[2], DELTA: m[3], OMEGA: m[4], NMAX: m[5], DTAU: m[6], MAXD: m[7] } : null;
+function axesOf(m, f) { return MODELS[m].fixedAxes || [f.XAXIS, f.YAXIS]; }
+const axisLabel = (m, a) => MODELS[m].axisLabel[a] || a;
+// Tags: BHCorr as built by hpc/BoseHubbardCorrelated_NormalizedITE.jl; BHU1 as bhu1_tag in server.py (the server checks it)
+function tagOf(m, f) {
+  if (m === "BHCorr") return `U${f.U}_r${f.R}_Delta${f.DELTA}_Omega${f.OMEGA}_nmax${f.NMAX}_dtau${f.DTAU}_D${f.MAXD}`;
+  const [X, Y] = axesOf(m, f);
+  const fixed = ["t", "U", "Delta", "Omega", "r"].filter(a => a !== X && a !== Y).map(a => `${a}${f[AXIS_PARAM[a]]}`);
+  return [`${X}-${Y}`, ...fixed, `f${f.FILLING}`, `nmax${f.NMAX}`, `dtau${f.DTAU}`, `D${f.MAXD}`].join("_");
+}
+function parseTag(m, tag) {
+  if (m === "BHCorr") {
+    const r = tag.match(/^U(.+)_r(.+)_Delta(.+)_Omega(.+)_nmax(\d+)_dtau(.+)_D(\d+)$/);
+    return r ? { U: r[1], R: r[2], DELTA: r[3], OMEGA: r[4], NMAX: r[5], DTAU: r[6], MAXD: r[7] } : null;
+  }
+  const parts = tag.split("_"), ax = (parts.shift() || "").match(/^([A-Za-z]+)-([A-Za-z]+)$/);
+  if (!ax) return null;
+  const out = { XAXIS: ax[1], YAXIS: ax[2] };
+  const key = { t: "T", U: "U", Delta: "DELTA", Omega: "OMEGA", r: "R", f: "FILLING", nmax: "NMAX", dtau: "DTAU", D: "MAXD" };
+  for (const p of parts) {
+    const r = p.match(/^(Delta|Omega|dtau|nmax|t|U|r|f|D)(.+)$/);
+    if (!r) return null;
+    out[key[r[1]]] = r[2];
+  }
+  return out;
 }
 function seq(a, b, s) {
   a = parseFloat(a); b = parseFloat(b); s = parseFloat(s);
@@ -345,9 +416,38 @@ function seq(a, b, s) {
   const n = Math.floor((b - a) / s + 1e-9) + 1;
   return Array.from({ length: Math.min(n, 400) }, (_, i) => (a + i * s).toFixed(4));
 }
-function current() { const f = form(); return { tag: tagOf(f), L: parseInt(f.L, 10), f }; }
-function saveForm() { const c = current(); store.set("form", c.f); store.set(`sweep:${c.tag}:L${c.L}`, c.f); }
-function plannedGrid(f) { return { ts: seq(f.t0, f.t1, f.tstep), ms: seq(f.m0, f.m1, f.mstep) }; }
+function current() { const f = form(); return { model, tag: tagOf(model, f), L: parseInt(f.L, 10), f, axes: axesOf(model, f) }; }
+function saveForm() { const c = current(); store.set("model", model); store.set(`form:${model}`, c.f); store.set(`sweep:${model}:${c.tag}:L${c.L}`, c.f); }
+function plannedGrid(f) { return { xs: seq(f.x0, f.x1, f.xstep), ys: seq(f.y0, f.y1, f.ystep) }; }
+const mine = (c) => status && status.model === c.model && status.tag === c.tag && status.L === c.L;
+const sweepQuery = (c) => `model=${c.model}&tag=${encodeURIComponent(c.tag)}&L=${c.L}`;
+
+// Model-dependent parts of the page: fields of the other model hidden, the swept parameters greyed out
+function applyModel() {
+  $("modelSel").value = model;
+  document.querySelectorAll(".m-only").forEach(el => el.style.display = el.classList.contains(`m-${model}`) ? "" : "none");
+  const c = current(), fixed = MODELS[model].fixedAxes;
+  for (const k of ["XAXIS", "YAXIS"]) $(k).disabled = !!fixed;
+  if (fixed) {
+    for (const [k, a] of [["XAXIS", "t"], ["YAXIS", "mu"]]) {
+      if (![...$(k).options].some(o => o.value === a)) $(k).add(new Option(a, a));
+      $(k).value = a;
+    }
+  } else {
+    for (const k of ["XAXIS", "YAXIS"]) [...$(k).options].filter(o => o.value === "mu").forEach(o => o.remove());
+    if (!AXIS_PARAM[$("XAXIS").value]) $("XAXIS").value = "t";
+    if (!AXIS_PARAM[$("YAXIS").value] || $("YAXIS").value === $("XAXIS").value)
+      $("YAXIS").value = Object.keys(AXIS_PARAM).find(a => a !== $("XAXIS").value);
+  }
+  for (const [a, k] of Object.entries(AXIS_PARAM)) {
+    const swept = !fixed && c.axes.includes(a);
+    $(k).disabled = swept;
+    $(k).title = swept ? "swept: the values come from the sweep grid" : "";
+  }
+  const obs = MODELS[model].observables, sel = $("colorSel"), want = store.get(`color:${model}`, "state");
+  sel.innerHTML = `<option value="state">job state</option>` + obs.map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join("");
+  sel.value = obs.some(o => o[0] === want) ? want : "state";
+}
 
 // ---- data
 async function api(path, opts) {
@@ -380,20 +480,21 @@ async function loadSweeps() {
   renderSweepSel();
 }
 function renderSweepSel() {
-  const c = current(), sel = $("sweepSel"), key = `${c.tag}|${c.L}`;
-  const opts = sweeps.map(s => [`${s.tag}|${s.L}`, `L=${s.L} · ${s.tag} · ${s.n_states} on laptop` +
+  const c = current(), sel = $("sweepSel"), key = `${c.model}|${c.tag}|${c.L}`;
+  const opts = sweeps.filter(s => s.model === c.model).map(s => [`${s.model}|${s.tag}|${s.L}`, `L=${s.L} · ${s.tag} · ${s.n_states} on laptop` +
     (s.on_remote ? ` · ${s.on_remote} to gather` : "") + (s.queued ? ` · ${s.queued} in queue` : "")]);
   if (!opts.some(o => o[0] === key)) opts.unshift([key, `L=${c.L} · ${c.tag} · new sweep (from the parameters)`]);
-  sel.innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+  sel.innerHTML = opts.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
   sel.value = key;
 }
 async function refresh(fresh) {
   if (loading) return;
-  loading = true;
   const c = current();
+  if (c.axes[0] === c.axes[1]) { render(); return; }
+  loading = true;
   $("updated").innerHTML = '<span class="spin"></span> updating…';
   try {
-    status = await api(`/api/status?tag=${encodeURIComponent(c.tag)}&L=${c.L}&n_edge=${encodeURIComponent(c.f.N_EDGE)}${fresh ? "&fresh=1" : ""}`);
+    status = await api(`/api/status?${sweepQuery(c)}&n_edge=${encodeURIComponent(c.f.N_EDGE)}${fresh ? "&fresh=1" : ""}`);
     $("updated").textContent = "updated " + new Date(status.time * 1000).toLocaleTimeString();
     if (!$("banner").textContent.startsWith("No ")) banner("");
   } catch (e) {
@@ -401,32 +502,62 @@ async function refresh(fresh) {
     banner(e.message);
   } finally { loading = false; }
   render();
-  // keep the step of the selected running point current
-  const sp = selected && pointsShown().find(p => p.t === selected.t && p.mu === selected.mu);
+  const sp = selected && pointsShown().find(p => p.x === selected.x && p.y === selected.y);
   if (sp && sp.state === "running") loadPointProgress(sp);
+}
+
+// ---- colour scale (sequential, one hue, light → dark; dark mode runs the other way so small values recede)
+const RAMP = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"];
+const isDark = () => document.documentElement.dataset.theme === "dark" ||
+  (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
+function rampColor(u) {
+  const stops = isDark() ? [...RAMP].reverse() : RAMP;
+  u = Math.min(1, Math.max(0, u)) * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(u)), t = u - i;
+  const h = (s) => [1, 3, 5].map(k => parseInt(s.slice(k, k + 2), 16));
+  const a = h(stops[i]), b = h(stops[i + 1]);
+  return `rgb(${a.map((v, k) => Math.round(v + t * (b[k] - v))).join(",")})`;
+}
+function colorSpec(pts) {
+  const key = $("colorSel").value;
+  if (key === "state") return null;
+  const o = MODELS[model].observables.find(x => x[0] === key) || [key, key];
+  const log = !!o[3];
+  const val = (p) => { const v = p.values && p.values[key]; return Number.isFinite(v) && (!log || v > 0) ? (log ? Math.log10(v) : v) : null; };
+  const vs = pts.map(val).filter(v => v !== null);
+  const lo = vs.length ? Math.min(...vs) : 0, hi = vs.length ? Math.max(...vs) : 1;
+  return { key, label: o[1], err: o[2], log, val, lo, hi, n: vs.length,
+           color: (p) => { const v = val(p); return v === null ? null : rampColor(hi > lo ? (v - lo) / (hi - lo) : 0.5); } };
+}
+function fmtVal(v) {
+  if (!Number.isFinite(v)) return "–";
+  const a = Math.abs(v);
+  return a !== 0 && (a < 1e-3 || a >= 1e4) ? v.toExponential(2) : (+v.toPrecision(4)).toString();
 }
 
 // ---- rendering
 function pointsShown() {
   const c = current(), map = new Map();
-  const { ts, ms } = plannedGrid(c.f);
-  for (const t of ts) for (const mu of ms) map.set(`${t}|${mu}`, { t, mu, state: "none", obs: "none", where: [] });
-  if (status && status.tag === c.tag && status.L === c.L)
-    for (const p of status.points) map.set(`${p.t}|${p.mu}`, p);
+  const { xs, ys } = plannedGrid(c.f);
+  for (const x of xs) for (const y of ys) map.set(`${x}|${y}`, { x, y, state: "none", obs: "none", where: [], values: {} });
+  if (mine(c)) for (const p of status.points) map.set(`${p.x}|${p.y}`, p);
   return [...map.values()];
 }
 function render() {
+  if (!$("modelSel")) return;
   const c = current();
   $("tagNow").textContent = c.tag;
+  $("modelNow").textContent = MODELS[model].name;
   $("Lnow").textContent = `L = ${c.L}`;
   const pts = pointsShown();
-  const { ts, ms } = plannedGrid(c.f);
-  $("gridCount").textContent = `${ts.length} × ${ms.length} = ${ts.length * ms.length} points`;
+  const { xs, ys } = plannedGrid(c.f);
+  const same = c.axes[0] === c.axes[1];
+  $("gridCount").textContent = same ? "choose two different axes" :
+    `${xs.length} (${axisLabel(model, c.axes[0])}) × ${ys.length} (${axisLabel(model, c.axes[1])}) = ${xs.length * ys.length} points`;
   const counts = {}; for (const p of pts) counts[p.state] = (counts[p.state] || 0) + 1;
   const obsDone = pts.filter(p => p.obs === "done").length;
   const obsTodo = pts.filter(p => p.has_state && ["none", "outdated", "failed"].includes(p.obs) && !["idle", "running", "held"].includes(p.state)).length;
-  const mine = status && status.tag === c.tag && status.L === c.L;
-  const toGather = mine ? status.to_gather : 0, onLaptop = mine ? status.on_laptop : 0;
+  const toGather = mine(c) ? status.to_gather : 0, onLaptop = mine(c) ? status.on_laptop : 0;
   $("chips").innerHTML = STATES.map(([k, l, g]) =>
     `<span class="chip"><span class="sw cell ${k}" style="animation:none">${g}</span>${l} <b>${counts[k] || 0}</b></span>`).join("");
   const n = pts.length || 1;
@@ -435,66 +566,84 @@ function render() {
     `<span style="width:${100 * counts[k] / n}%;background:var(--s-${k})" title="${LABEL[k]}: ${counts[k]}"></span>`).join("");
   const finished = (counts.done || 0) + (counts.unconverged || 0);
   $("progressLabel").innerHTML = `<span>${finished} of ${pts.length} points finished (${counts.done || 0} converged)</span>` +
-    `<span>${mine && status.clusters.length ? "condor clusters " + status.clusters.join(", ") : "no jobs in the queue"}</span>`;
+    `<span>${mine(c) && status.clusters.length ? "condor clusters " + status.clusters.join(", ") : "no jobs in the queue"}</span>`;
   $("stats").innerHTML = `<span>On the laptop <b>${onLaptop}</b></span><span>Waiting on the access point <b>${toGather}</b></span>` +
     `<span>Observables computed <b>${obsDone}</b>${obsTodo ? ` · missing/outdated <b>${obsTodo}</b>` : ""}</span>` +
-    (mine && status.stalled ? `<span class="warnText">Running but no CPU use (stuck?) <b>${status.stalled}</b></span>` : "") +
+    (mine(c) && status.stalled ? `<span class="warnText">Running but no CPU use (stuck?) <b>${status.stalled}</b></span>` : "") +
     `<span class="muted">corner dot: observables (amber = outdated) · bottom bar: still on the access point · amber corner: stuck?</span>`;
   $("gatherCount").textContent = toGather;
   $("obsCount").textContent = obsTodo;
-  renderGrid(pts);
-  renderPlot(c);
+  renderGrid(pts, c);
+  if (MODELS[model].plot) renderPlot(c);
   const busy = task && !task.done;
-  document.querySelectorAll("[data-act]").forEach(b => b.disabled = busy);
-  if (!busy) {
+  document.querySelectorAll("[data-act]").forEach(b => b.disabled = busy || same);
+  if (!busy && !same) {
     const q = (k) => document.querySelector(`[data-act="${k}"]`);
     q("remove_held").disabled = !counts.held;
     q("recompute_obs").disabled = !obsTodo;
-    q("plot").disabled = !onLaptop;
+    q("plot").disabled = !onLaptop || !MODELS[model].plot;
     q("remove_all").disabled = !((counts.idle || 0) + (counts.running || 0) + (counts.held || 0));
     q("gather").disabled = !toGather;
   }
-  if (selected) showPoint(pts.find(p => p.t === selected.t && p.mu === selected.mu) || selected, false);
+  if (selected) showPoint(pts.find(p => p.x === selected.x && p.y === selected.y) || selected, false);
 }
 let plotKey = "";
 function renderPlot(c) {
-  const mt = status && status.tag === c.tag && status.L === c.L ? status.plot_mtime : null;
+  const mt = mine(c) ? status.plot_mtime : null;
   const key = `${c.tag}|${c.L}|${mt}`;
   if (key === plotKey) return;
   plotKey = key;
   $("plotTime").textContent = mt ? "· made " + new Date(mt * 1000).toLocaleString() : "";
   $("plotBox").innerHTML = mt
-    ? `<img alt="Phase diagram of ${esc(c.tag)}, L = ${c.L}" src="/api/plot?tag=${encodeURIComponent(c.tag)}&L=${c.L}&v=${mt}">`
+    ? `<img alt="Phase diagram of ${esc(c.tag)}, L = ${c.L}" src="/api/plot?${sweepQuery(c)}&v=${mt}">`
     : `<div class="placeholder">No plot yet. Gather the data, then press <b>Plot</b>.</div>`;
 }
-function renderGrid(pts) {
-  const tset = [...new Set(pts.map(p => p.t))].sort((a, b) => a - b);
-  const mset = [...new Set(pts.map(p => p.mu))].sort((a, b) => b - a);
-  const g = $("grid");
-  if (!tset.length) { g.innerHTML = '<div class="empty">No points: set the sweep grid in Parameters.</div>'; return; }
+function renderGrid(pts, c) {
+  const xset = [...new Set(pts.map(p => p.x))].sort((a, b) => a - b);
+  const yset = [...new Set(pts.map(p => p.y))].sort((a, b) => b - a);
+  const g = $("grid"), spec = colorSpec(pts);
+  $("colorHint").textContent = spec ? (spec.n ? `${spec.n} point(s) with a value${spec.log ? " · log scale" : ""}` : "no values yet: gather the data") : "";
+  if (!xset.length) { g.innerHTML = '<div class="empty">No points: set the sweep grid in Parameters.</div>'; $("cbar").innerHTML = ""; return; }
   const avail = $("gridCard").clientWidth - 32 - 70;
-  const fitH = Math.floor((window.innerHeight - 360) / (mset.length + 1)) - 2;   // whole grid visible without scrolling
-  const size = Math.max(14, Math.min(44, Math.floor(avail / tset.length) - 2, Math.max(fitH, 22)));
+  const fitH = Math.floor((window.innerHeight - 360) / (yset.length + 1)) - 2;
+  const size = Math.max(14, Math.min(44, Math.floor(avail / xset.length) - 2, Math.max(fitH, 22)));
   const every = Math.ceil(42 / (size + 2));
-  const byKey = new Map(pts.map(p => [`${p.t}|${p.mu}`, p]));
-  let html = `<div style="display:inline-block"><div class="grid" style="grid-template-columns: 56px repeat(${tset.length}, ${size}px)">`;
-  mset.forEach((mu, i) => {
-    html += `<span class="tick" style="justify-self:end;padding-right:6px">${i % Math.ceil(16 / (size + 2)) === 0 ? (+mu).toFixed(2) : ""}</span>`;
-    for (const t of tset) {
-      const p = byKey.get(`${t}|${mu}`);
+  const byKey = new Map(pts.map(p => [`${p.x}|${p.y}`, p]));
+  const [X, Y] = c.axes;
+  let html = `<div style="display:inline-block"><div class="grid" style="grid-template-columns: 56px repeat(${xset.length}, ${size}px)">`;
+  yset.forEach((y, i) => {
+    html += `<span class="tick" style="justify-self:end;padding-right:6px">${i % Math.ceil(16 / (size + 2)) === 0 ? (+y).toFixed(2) : ""}</span>`;
+    for (const x of xset) {
+      const p = byKey.get(`${x}|${y}`);
       if (!p) { html += `<span></span>`; continue; }
-      const sel = selected && selected.t === t && selected.mu === mu ? " sel" : "";
-      const glyph = size >= 18 ? GLYPH[p.state] : "";
+      const sel = selected && selected.x === x && selected.y === y ? " sel" : "";
       const obs = p.obs && p.obs !== "none" ? `<span class="obs ${p.obs}"></span>` : "";
       const rem = p.on_remote && !["idle", "running", "held"].includes(p.state) ? `<span class="remote"></span>` : "";
       const stalled = p.state === "running" && p.job && p.job.stalled;
       const stall = stalled ? `<span class="stall"></span>` : "";
-      html += `<button class="cell ${p.state}${sel}" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.42)}px" data-t="${t}" data-mu="${mu}" aria-label="t=${t} μ=${mu}: ${LABEL[p.state]}${stalled ? " (no CPU use)" : ""}">${glyph}${obs}${rem}${stall}</button>`;
+      const label = `${axisLabel(model, X)}=${x} ${axisLabel(model, Y)}=${y}: ${LABEL[p.state]}${stalled ? " (no CPU use)" : ""}`;
+      const dims = `width:${size}px;height:${size}px;font-size:${Math.round(size * 0.42)}px`;
+      if (spec) {
+        const col = spec.color(p);
+        const v = p.values && p.values[spec.key];
+        html += `<button class="cell ${col ? "val" : "nodata"}${sel}" style="${dims}${col ? `;background:${col}` : ""}" data-x="${x}" data-y="${y}" ` +
+          `aria-label="${esc(label)}${col ? `, ${esc(spec.label)} ${fmtVal(v)}` : ", no value"}"><span class="smark ${p.state}"></span>${rem}${stall}</button>`;
+      } else {
+        const glyph = size >= 18 ? GLYPH[p.state] : "";
+        html += `<button class="cell ${p.state}${sel}" style="${dims}" data-x="${x}" data-y="${y}" aria-label="${esc(label)}">${glyph}${obs}${rem}${stall}</button>`;
+      }
     }
   });
-  html += `<span></span>` + tset.map((t, i) => `<span class="tick">${i % every === 0 ? (+t).toFixed(2) : ""}</span>`).join("");
-  html += `</div><div style="display:flex;justify-content:space-between;margin-top:4px;padding-left:20px"><span class="axislabel">rows: μ/U</span><span class="axislabel">columns: t/U</span></div></div>`;
+  html += `<span></span>` + xset.map((x, i) => `<span class="tick">${i % every === 0 ? (+x).toFixed(2) : ""}</span>`).join("");
+  html += `</div><div style="display:flex;justify-content:space-between;margin-top:4px;padding-left:20px"><span class="axislabel">rows: ${esc(axisLabel(model, Y))}</span>` +
+    `<span class="axislabel">columns: ${esc(axisLabel(model, X))}</span></div></div>`;
   g.innerHTML = html;
+  if (spec && spec.n) {
+    const stops = Array.from({ length: 11 }, (_, k) => rampColor(k / 10)).join(",");
+    const show = (v) => fmtVal(spec.log ? 10 ** v : v);
+    $("cbar").innerHTML = `<b>${esc(spec.label)}</b><span>${show(spec.lo)}</span><span class="ramp" style="background:linear-gradient(90deg,${stops})"></span>` +
+      `<span>${show(spec.hi)}</span><span class="muted">${spec.log ? "log scale · " : ""}hatched: no value · small square: job not done</span>`;
+  } else $("cbar").innerHTML = "";
 }
 function fmt(x, d = 2) { return x === null || x === undefined ? "–" : Number(x).toExponential(d); }
 function since(s) {
@@ -502,7 +651,6 @@ function since(s) {
   const m = Math.round((Date.now() / 1000 - s) / 60);
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
 }
-// minutes since a HH:MM:SS time stamp of today (of the execute node, same time zone), or since yesterday if in the future
 function agoHms(hms) {
   if (!hms) return null;
   const [h, m, sec] = hms.split(":").map(Number), d = new Date();
@@ -543,8 +691,15 @@ function memText(job) {
   return parts.join(" · ");
 }
 function kv(p) {
-  const rows = [["Point", `t/U = ${p.t}, μ/U = ${p.mu}`], ["State", LABEL[p.state]]];
+  const [X, Y] = current().axes;
+  const rows = [["Point", `${axisLabel(model, X)} = ${p.x}, ${axisLabel(model, Y)} = ${p.y}`], ["State", LABEL[p.state]]];
   if (p.reason) rows.push(["Why", p.reason]);
+  for (const [k, l, e] of MODELS[model].observables) {
+    const v = p.values && p.values[k];
+    if (!Number.isFinite(v)) continue;
+    const err = e && p.values[e];
+    rows.push([l.split("  ")[0], fmtVal(v) + (Number.isFinite(err) && err > 0 ? ` ± ${fmtVal(err)}` : "")]);
+  }
   if (p.eps !== undefined && p.eps !== null) rows.push(["ϵ_conv", `${fmt(p.eps)} (tol ${fmt(p.convtol, 0)})`]);
   if (p.nsteps !== undefined && p.nsteps !== null) rows.push(["Steps", `${p.nsteps} of max ${p.maxiter ?? "?"}` +
     (p.resumed_from > 0 ? ` (resumed after ${p.resumed_from})` : "")]);
@@ -553,7 +708,7 @@ function kv(p) {
     rows.push(["CPU", `${p.job.cores_used.toFixed(2)} of ${p.job.cpus ?? "?"} cores on average over ${dur(p.job.wall)}` +
       (p.job.stalled ? " · almost no CPU use: probably stuck" : "")]);
     if (memText(p.job)) rows.push(["Memory", memText(p.job)]);
-    const pr = progress.get(`${p.t}|${p.mu}`);
+    const pr = progress.get(`${p.x}|${p.y}`);
     rows.push(["Current step", pr ? stepText(pr) : "not read yet (click the point, or Check running jobs)"]);
   }
   if (p.job && ["held", "failed"].includes(p.state) && memText(p.job)) rows.push(["Memory", memText(p.job)]);
@@ -575,11 +730,11 @@ function kv(p) {
 }
 const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 function showPoint(p, scroll) {
-  selected = { t: p.t, mu: p.mu };
+  selected = { x: p.x, y: p.y };
   $("pointCard").style.display = "";
-  $("pointKv").innerHTML = kv(p).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("");
+  $("pointKv").innerHTML = kv(p).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
   document.querySelectorAll(".cell.sel").forEach(c => c.classList.remove("sel"));
-  const el = document.querySelector(`.cell[data-t="${p.t}"][data-mu="${p.mu}"]`);
+  const el = document.querySelector(`.cell[data-x="${p.x}"][data-y="${p.y}"]`);
   if (el) el.classList.add("sel");
   if (scroll) $("pointCard").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -588,7 +743,7 @@ async function showLog(stage) {
   const c = current(), pre = $("pointLog");
   pre.style.display = ""; pre.textContent = "loading…";
   try {
-    const r = await api(`/api/log?tag=${encodeURIComponent(c.tag)}&L=${c.L}&t=${selected.t}&mu=${selected.mu}&stage=${stage}`);
+    const r = await api(`/api/log?${sweepQuery(c)}&x=${selected.x}&y=${selected.y}&stage=${stage}`);
     pre.textContent = r.text || "(empty)";
     pre.scrollTop = pre.scrollHeight;
   } catch (e) { pre.textContent = e.message; }
@@ -598,11 +753,12 @@ async function showLog(stage) {
 $("grid").addEventListener("mousemove", (e) => {
   const el = e.target.closest(".cell"), tip = $("tip");
   if (!el) { tip.style.display = "none"; return; }
-  const p = pointsShown().find(q => q.t === el.dataset.t && q.mu === el.dataset.mu);
+  const p = pointsShown().find(q => q.x === el.dataset.x && q.y === el.dataset.y);
   if (!p) return;
+  const [X, Y] = current().axes;
   tip.innerHTML = `<div class="h"><span class="cell ${p.state}" style="width:14px;height:14px;font-size:9px;animation:none">${GLYPH[p.state]}</span>${LABEL[p.state]}</div><dl class="kv">` +
-    kv(p).slice(2).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("") +
-    `</dl><div class="muted" style="margin-top:4px">t/U ${p.t} · μ/U ${p.mu} · click for details</div>`;
+    kv(p).slice(2).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("") +
+    `</dl><div class="muted" style="margin-top:4px">${esc(axisLabel(model, X))} ${p.x} · ${esc(axisLabel(model, Y))} ${p.y} · click for details</div>`;
   tip.style.display = "block";
   const x = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8), y = Math.min(e.clientY + 14, window.innerHeight - tip.offsetHeight - 8);
   tip.style.left = x + "px"; tip.style.top = y + "px";
@@ -611,27 +767,27 @@ $("grid").addEventListener("mouseleave", () => $("tip").style.display = "none");
 $("grid").addEventListener("click", (e) => {
   const el = e.target.closest(".cell");
   if (!el) return;
-  const p = pointsShown().find(q => q.t === el.dataset.t && q.mu === el.dataset.mu);
+  const p = pointsShown().find(q => q.x === el.dataset.x && q.y === el.dataset.y);
   $("pointLog").style.display = "none";
   if (p) showPoint(p, true);
   if (p && p.state === "running") loadPointProgress(p);
 });
 async function loadPointProgress(p) {
-  const c = current(), key = `${p.t}|${p.mu}`;
+  const c = current(), key = `${p.x}|${p.y}`;
   if (!progress.has(key)) { progress.set(key, { phase: "loading…" }); render(); }
   try {
-    const r = await api(`/api/progress?tag=${encodeURIComponent(c.tag)}&L=${c.L}&t=${p.t}&mu=${p.mu}`);
+    const r = await api(`/api/progress?${sweepQuery(c)}&x=${p.x}&y=${p.y}`);
     const j = r.jobs.find(x => x.stage === "ite") || r.jobs[0];
-    if (j) progress.set(`${p.t}|${p.mu}`, j); else progress.delete(`${p.t}|${p.mu}`);
-    if (selected && selected.t === p.t && selected.mu === p.mu) render();
-  } catch (e) { progress.set(`${p.t}|${p.mu}`, { phase: "progress unavailable: " + e.message }); render(); }
+    if (j) progress.set(key, j); else progress.delete(key);
+    if (selected && selected.x === p.x && selected.y === p.y) render();
+  } catch (e) { progress.set(key, { phase: "progress unavailable: " + e.message }); render(); }
 }
 async function loadAllProgress() {
   const c = current(), btn = $("jobsBtn");
   btn.disabled = true; $("jobsTime").innerHTML = '<span class="spin"></span> reading the live output…';
   try {
-    const r = await api(`/api/progress?tag=${encodeURIComponent(c.tag)}&L=${c.L}`);
-    progress = new Map(r.jobs.filter(j => j.stage === "ite").map(j => [`${j.t}|${j.mu}`, j]));
+    const r = await api(`/api/progress?${sweepQuery(c)}`);
+    progress = new Map(r.jobs.filter(j => j.stage === "ite").map(j => [`${j.x}|${j.y}`, j]));
     progressTime = r.time;
     renderJobs(r.jobs);
     $("jobsTime").textContent = `${r.jobs.length} running · read ${new Date(r.time * 1000).toLocaleTimeString()}`;
@@ -641,12 +797,13 @@ async function loadAllProgress() {
 }
 function renderJobs(jobs) {
   if (!jobs.length) { $("jobsBox").innerHTML = '<p class="muted">No running jobs in this sweep.</p>'; return; }
-  const pts = new Map(pointsShown().map(p => [`${p.t}|${p.mu}`, p]));
+  const [X, Y] = current().axes;
+  const pts = new Map(pointsShown().map(p => [`${p.x}|${p.y}`, p]));
   const rows = jobs.map(j => {
-    const p = pts.get(`${j.t}|${j.mu}`), job = p && (j.stage === "obs" ? p.obs_job : p.job) || {};
+    const p = pts.get(`${j.x}|${j.y}`), job = p && (j.stage === "obs" ? p.obs_job : p.job) || {};
     const since = j.phase === "ITE" && j.step_since ? j.step_since : j.phase_since, inStep = agoHms(since);
     return { j, job, inStep, cells: [
-      `t ${j.t} · μ ${j.mu}${j.stage === "obs" ? " (obs)" : ""}`,
+      `${esc(axisLabel(model, X))} ${esc(j.x)} · ${esc(axisLabel(model, Y))} ${esc(j.y)}${j.stage === "obs" ? " (obs)" : ""}`,
       esc(j.id) + (job.host ? `<br><span class="muted">${esc(job.host.replace(/^slot\d+(_\d+)?@/, ""))}</span>` : ""),
       job.wall ? dur(job.wall) : "",
       job.wall ? `<span class="${job.stalled ? "warn" : ""}">${job.cores_used.toFixed(2)} / ${job.cpus ?? "?"}</span>` : "",
@@ -661,14 +818,14 @@ function renderJobs(jobs) {
   rows.sort((a, b) => (b.inStep ?? -1) - (a.inStep ?? -1));
   $("jobsBox").innerHTML = `<table class="jobs"><thead><tr><th>Point</th><th>Job</th><th>Runtime</th><th>CPU (cores)</th>` +
     `<th>RAM (% of request)</th><th>Iteration</th><th>Phase / step</th><th>In it since</th></tr></thead><tbody>` +
-    rows.map(r => `<tr data-t="${r.j.t}" data-mu="${r.j.mu}">${r.cells.map(x => `<td>${x}</td>`).join("")}</tr>`).join("") +
+    rows.map(r => `<tr data-x="${esc(r.j.x)}" data-y="${esc(r.j.y)}">${r.cells.map(x => `<td>${x}</td>`).join("")}</tr>`).join("") +
     `</tbody></table>`;
 }
 $("jobsBtn").onclick = loadAllProgress;
 $("jobsBox").addEventListener("click", (e) => {
-  const tr = e.target.closest("tr[data-t]");
+  const tr = e.target.closest("tr[data-x]");
   if (!tr) return;
-  const p = pointsShown().find(q => q.t === tr.dataset.t && q.mu === tr.dataset.mu);
+  const p = pointsShown().find(q => q.x === tr.dataset.x && q.y === tr.dataset.y);
   $("pointLog").style.display = "none";
   if (p) showPoint(p, true);
 });
@@ -677,14 +834,15 @@ $("logObs").onclick = () => showLog("obs");
 
 // ---- actions
 function params(action, extra = {}) {
-  const c = current(), f = c.f, { ts, ms } = plannedGrid(f);
-  const p = { tag: c.tag, L: String(c.L), U: f.U, R: f.R, DELTA: f.DELTA, OMEGA: f.OMEGA, NMAX: f.NMAX, DTAU: f.DTAU, MAXD: f.MAXD,
-    N_EDGE: f.N_EDGE };
+  const c = current(), f = c.f, M = MODELS[model], { xs, ys } = plannedGrid(f);
+  const p = { model, tag: c.tag, L: String(c.L), N_EDGE: f.N_EDGE };
+  for (const k of M.params) p[k] = f[k];
+  if (model === "BHU1") Object.assign(p, { XAXIS: f.XAXIS, YAXIS: f.YAXIS, OBS: f.OBS });
+  const res = { MEM: f.MEM, REQUIREMENTS: f.REQUIREMENTS, NICE: f.NICE ? "TRUE" : "FALSE" };
   if (action === "submit" || action === "preview")
-    Object.assign(p, { TS: ts.join(" "), MUS: ms.join(" "), MAXITER: f.MAXITER, CONVTOL: f.CONVTOL, CROSS_WIDTH: f.CROSS_WIDTH,
-      N_SAMPLES: f.N_SAMPLES, PPN: f.PPN, MEM: f.MEM, REQUIREMENTS: f.REQUIREMENTS, NICE: f.NICE ? "TRUE" : "FALSE", FORCE: f.FORCE ? "1" : "0" });
-  if (action === "recompute_obs")
-    Object.assign(p, { N_SAMPLES: f.N_SAMPLES, PPN: f.OBS_PPN, CHUNK: f.OBS_CHUNK, MEM: f.MEM, REQUIREMENTS: f.REQUIREMENTS, NICE: f.NICE ? "TRUE" : "FALSE" });
+    Object.assign(p, res, { [M.grid[0]]: xs.join(" "), [M.grid[1]]: ys.join(" "), MAXITER: f.MAXITER, CONVTOL: f.CONVTOL,
+      CROSS_WIDTH: f.CROSS_WIDTH, N_SAMPLES: f.N_SAMPLES, PPN: f.PPN, FORCE: f.FORCE ? "1" : "0" });
+  if (action === "recompute_obs") Object.assign(p, res, { N_SAMPLES: f.N_SAMPLES, PPN: f.OBS_PPN, CHUNK: f.OBS_CHUNK });
   if (action === "plot") Object.assign(p, { KAPPA_TOL: f.KAPPA_TOL, SBSTD_TOL: f.SBSTD_TOL, A2_TOL: f.A2_TOL });
   return Object.assign(p, extra);
 }
@@ -731,25 +889,44 @@ async function pollTask() {
 }
 
 // ---- wiring
-function onParamsChanged() { saveForm(); renderSweepSel(); render(); clearTimeout(onParamsChanged.t); onParamsChanged.t = setTimeout(() => refresh(false), 600); }
-FIELDS.concat(CHECKS).forEach(k => $(k).addEventListener("change", onParamsChanged));
-$("sweepSel").onchange = () => {
-  const [tag, L] = $("sweepSel").value.split("|");
-  const saved = store.get(`sweep:${tag}:L${L}`, null);
-  setForm(Object.assign(form(), saved || {}, parseTag(tag) || {}, { L }));
+function resetSweepView() {
   selected = null; $("pointCard").style.display = "none";
   progress = new Map(); $("jobsBox").innerHTML = ""; $("jobsTime").textContent = "";
+}
+function onParamsChanged() { applyModel(); saveForm(); renderSweepSel(); render(); clearTimeout(onParamsChanged.t); onParamsChanged.t = setTimeout(() => refresh(false), 600); }
+FIELDS.concat(CHECKS).forEach(k => $(k).addEventListener("change", onParamsChanged));
+$("colorSel").onchange = () => { store.set(`color:${model}`, $("colorSel").value); render(); };
+function switchModel(m, overrides = {}) {
+  saveForm();
+  model = m;
+  setForm(Object.assign(form(), store.get(`form:${m}`, {}), overrides));
+  status = null; resetSweepView();
+  onParamsChanged();
+}
+$("modelSel").onchange = () => switchModel($("modelSel").value);
+$("sweepSel").onchange = () => {
+  const [m, tag, L] = $("sweepSel").value.split("|");
+  const saved = store.get(`sweep:${m}:${tag}:L${L}`, null);
+  if (m !== model) { saveForm(); model = m; }
+  setForm(Object.assign(form(), store.get(`form:${m}`, {}), saved || {}, parseTag(m, tag) || {}, { L }));
+  status = null; resetSweepView();
   onParamsChanged();
 };
 $("refreshBtn").onclick = () => { refresh(true); loadSweeps(); loadInfo(); };
 window.addEventListener("resize", () => render());
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(false); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => render());
 
-setForm(store.get("form", {}));
-{ // ?tag=...&L=... opens that sweep (bookmarkable)
-  const q = new URLSearchParams(location.search), tag = q.get("tag"), L = q.get("L");
-  if (tag && L && parseTag(tag)) setForm(Object.assign(form(), store.get(`sweep:${tag}:L${L}`, {}), parseTag(tag), { L }));
+setForm(Object.assign({}, store.get(model === "BHCorr" ? "form" : "__none__", {}), store.get(`form:${model}`, {})));
+{ // ?model=...&tag=...&L=... opens that sweep (bookmarkable; without model: BHCorr, as before)
+  const q = new URLSearchParams(location.search), tag = q.get("tag"), L = q.get("L"), m = q.get("model") || (tag ? "BHCorr" : null);
+  if (m && MODELS[m] && tag && L && parseTag(m, tag)) {
+    model = m;
+    setForm(Object.assign(form(), store.get(`form:${m}`, {}), store.get(`sweep:${m}:${tag}:L${L}`, {}), parseTag(m, tag), { L }));
+  }
 }
+applyModel();
+setTheme(store.get("theme", "auto"));
 render();
 (async () => {
   await loadInfo();
