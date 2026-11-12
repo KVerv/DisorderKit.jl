@@ -11,7 +11,7 @@
 # Run parameters (U, R, DELTA, OMEGA, NMAX, DTAU, MAXD, DATA_DIR) and their defaults are set below; override them from the caller's
 # environment. They are written into the job script, hpc/plot_BoseHubbardCorrelated_NormalizedITE.jl has no defaults.
 # Output: <DATA_DIR>/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/observables.csv and
-#   plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png (one figure: κ, δn (spatial density fluctuation), |⟨a⟩|², ρ, S_bstd and the MI/SF/BG
+#   plots/BoseHubbardCorrelated_NormalizedITE_<run tag>_L<L>.png (one figure: κ, K (effective Luttinger parameter), |⟨a⟩|², ρ, S_bstd and the MI/SF/BG
 #   classification with the thresholds KAPPA_TOL, SBSTD_TOL and A2_TOL, see below)
 # Logs: logs/BoseHubbardCorrelated_NormalizedITE/<run tag>/L<L>/plot/
 

@@ -11,7 +11,7 @@ using TensorKit, DisorderKit, LinearAlgebra, Printf, CairoMakie, Random
 
 # Model
 L = 10
-U = 4.0
+U = 1.0
 t = 0.5                                          # hopping (t/U)
 Δ = 0.25                                          # μᵢ uniform in [-Δ, Δ] (keep 2Δ < U: at 2Δ = U moving a boson
                                                  # from μ = -Δ to a neighbouring μ = +Δ costs nothing, the gap closes
@@ -22,10 +22,10 @@ nmax = 4                                         # at most nmax bosons per site
 ps = fill(1/q, q)
 
 # Normalized ITE
-Δτ = 0.05                                         # with order = 2 the time step error is far below the cap error
-maxD = [50 => 16, 50 => 32, 100 => 64]                                       # one bond basis carries the conditional states of all words: at
+Δτ = 0.02                                         # with order = 2 the time step error is far below the cap error
+maxD = [500 => 16, 50 => 32, 100 => 64]                                       # one bond basis carries the conditional states of all words: at
                                                  # maxD = 16 the cap dominates the error (L = 4: 3e-5 in E/L, 5e-6 at 32)
-maxiter = 200
+maxiter = 500
 convtol = 1e-7
 
 Hs = DisorderKit.random_bose_hubbard([t], [U], μs; nmax, symmetry = U1Irrep, filling = 1)
@@ -83,11 +83,33 @@ println("\ntypical word μ_w = ", μs[word_typ])
 println("S_w(k) = ", round.(S_typ; digits = 4), ",  bond average = ", round(S_typ_avg; digits = 4))
 @printf("S_w(L/2) over %d samples: mean %.4f, std %.4f\n", n_samples, S_mid_avg, S_mid_std)
 
+# Number fluctuations F(l) = 𝔼_w[Var_w(N_A)] of a block A of l sites in the middle of the chain, N_A = Σ_{i∈A} nᵢ: the
+# quantum fluctuations of every conditional state ψ_w, then averaged over the disorder (the disorder fluctuations of
+# ⟨N_A⟩_w are not included). All words are enumerated if there are at most n_samples of them, otherwise sampled.
+# l ≤ L-2: a block of L-1 sites touches a wall (X below diverges), and l = L has Var(N) = 0 exactly (N = L)
+charges = collect(0:nmax)[pP]                    # boson number of every dense physical basis state
+ls = collect(1:L-2)
+blocks = [((L - l) ÷ 2 + 1):((L - l) ÷ 2 + l) for l in ls]
+F_l, F_err = DisorderKit.average_block_fluctuations(ψ; blocks, charges, n_samples, rng)
+
+# Luttinger parameter from bosonization on an open chain (DisorderKit.luttinger_parameter): F = K/(2π²) X + c with
+# X = ln[d(2x₁) d(2x₂) d(x₂-x₁)² / d(x₁+x₂)²] for the block between the cuts x₁ = a-1 and x₂ = b, which reduces to
+# F = (K/π²) ln l + c far from the walls. Fitted over the blocks with l ≥ 2 whose edges are at least edge_min sites from
+# the walls. In a gapped (Mott) phase F saturates and K → 0. At L = 10 only a few blocks qualify, so K is a rough estimate
+edge_min = 2
+K_fit, F_c, X_l, fit = DisorderKit.luttinger_parameter(F_l, blocks, L; edge_min)
+length(fit) >= 2 || error("fewer than 2 blocks qualify for the fit of K: increase L or lower edge_min")
+println("\nblock number fluctuations (centered blocks):")
+for (k, l) in enumerate(ls)
+    @printf("  l = %2d  sites %-6s  F = %.6f ± %.1e   X = %+.4f\n", l, "$(first(blocks[k])):$(last(blocks[k]))", F_l[k], F_err[k], X_l[k])
+end
+@printf("Luttinger parameter K = %.4f (fit over l = %s, F = K/(2π²) X + %.4f)\n", K_fit, join(ls[fit], ", "), F_c)
+
 # Figure: the evolution (energy, convergence, normalization, ranks) and the final state (density, charge structure)
 τs = Δτ .* (1:length(info.Es))
 E_final = info.Es[end]
 set_theme!(theme_latexfonts())
-fig = Figure(backgroundcolor = :white, fontsize = 24, size = (1600, 2400))
+fig = Figure(backgroundcolor = :white, fontsize = 24, size = (1600, 3000))
 Label(fig[0, 1:2], L"$L=%$L$, $t/U=%$t$, $Δ/U=%$Δ$ ($q=%$q$), filling 1, $D_{\max}=%$maxD$, $Δτ=%$Δτ$"; fontsize = 28)
 
 ax1 = Axis(fig[1, 1]; xlabel = L"τ", ylabel = L"E/L")
@@ -151,5 +173,20 @@ hist!(ax8, S_mid; bins = 40, normalization = :pdf)
 vlines!(ax8, [S_mid_avg]; color = :black, linestyle = :dash, label = L"\mathrm{mean}")
 vlines!(ax8, [S_typ[k_mid]]; color = Makie.wong_colors()[2], label = L"\mathrm{typical\ sample}")
 axislegend(ax8; position = :rt)
+
+# Block number fluctuations against the block length, and against the bosonization variable X with the fit for K
+ax9 = Axis(fig[5, 1]; xlabel = L"\mathrm{block\ length}\ l", ylabel = L"F(l) = \overline{\langle N_A^2 \rangle - \langle N_A \rangle^2}",
+           xticks = ls, title = L"\mathrm{centered\ block}")
+any(>(0), F_err) && errorbars!(ax9, ls, F_l, F_err; whiskerwidth = 8)
+scatterlines!(ax9, ls, F_l; markersize = 12)
+
+ax10 = Axis(fig[5, 2]; xlabel = L"X = \ln[d(2x_1)\, d(2x_2)\, d(l)^2 / d(x_1+x_2)^2]", ylabel = L"F(l)",
+            title = L"K = %$(round(K_fit; digits = 3))")
+scatter!(ax10, X_l, F_l; markersize = 12, label = L"\mathrm{data}")
+scatter!(ax10, X_l[fit], F_l[fit]; markersize = 16, marker = :circle, color = :transparent, strokewidth = 2,
+         strokecolor = :black, label = L"\mathrm{fitted}")
+Xs = range(extrema(X_l)...; length = 50)
+lines!(ax10, Xs, K_fit / (2π^2) .* Xs .+ F_c; color = Makie.wong_colors()[2], label = L"K/(2π^2)\, X + c")
+axislegend(ax10; position = :lt)
 
 fig

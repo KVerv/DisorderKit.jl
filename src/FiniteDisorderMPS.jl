@@ -469,6 +469,148 @@ function conditional_density(ρ::FiniteDisorderMPS, word::AbstractVector{Int}, c
     end
 end
 
+# Number fluctuations Var_w(N_A) = ⟨N_A²⟩_w - ⟨N_A⟩_w² of the conditional state ψ_w of word w for every block A = a:b in
+# blocks, with N_A = Σ_{i∈A} n_i and n = charges the U(1) charge of every physical basis state (in the order of the dense
+# tensors, as in conditional_density). The blocks are grouped by their left edge a: one sweep from a carries three
+# accumulators with the moments 0, 1 and 2 of N_A,
+#   G0′ = Σ_s A_s† G0 A_s,   G1′ = Σ_s A_s† (G1 + n_s G0) A_s,   G2′ = Σ_s A_s† (G2 + 2 n_s G1 + n_s² G0) A_s,
+# and closes them with the right environment at every right edge b of the group, so blocks with a common left edge cost
+# one sweep. All accumulators of a site are divided by one common factor, which cancels in the ratios, so ψ_w does not
+# have to be normalized.
+#
+# project = true first projects ψ_w onto its most likely total charge N* (as conditional_entanglement_entropy with
+# charges): a conditional state that mixes particle numbers would otherwise add the global number fluctuations to
+# Var(N_A). The environments are then charge resolved (_charge_environments) and the accumulators are keyed by the total
+# charge of sites 1..i, so that at the right edge only the sectors with total charge N* are kept
+function conditional_block_fluctuations(ρ::FiniteDisorderMPS, word::AbstractVector{Int}, charges,
+                                        blocks::AbstractVector{<:UnitRange{<:Integer}}; project::Bool = false)
+    L = length(word)
+    all(b -> 1 <= first(b) <= last(b) <= L, blocks) || throw(ArgumentError("blocks should be nonempty ranges within 1:$L"))
+    As = [convert(Array, ρ[i, p]) for (i, p) in enumerate(word)]   # A[a, s, b]
+    all(size(A, 2) == length(charges) for A in As) || throw(ArgumentError("charges should have one entry per physical basis state"))
+    F = zeros(Float64, length(blocks))
+    moments(Z, N1, N2) = (N1 /= Z; max(N2 / Z - N1^2, 0.0))
+
+    if !project
+        rescale(G) = (m = LinearAlgebra.norm(G, Inf); m > 0 ? G ./ m : G)
+        lefts = Vector{Matrix{ComplexF64}}(undef, L)    # lefts[i]: sites 1..i-1
+        rights = Vector{Matrix{ComplexF64}}(undef, L)   # rights[i]: sites i+1..L
+        lefts[1] = ones(ComplexF64, 1, 1)
+        for i in 1:L-1
+            lefts[i+1] = rescale(sum(As[i][:, s, :]' * lefts[i] * As[i][:, s, :] for s in axes(As[i], 2)))
+        end
+        rights[L] = ones(ComplexF64, 1, 1)
+        for i in L:-1:2
+            rights[i-1] = rescale(sum(As[i][:, s, :] * rights[i] * As[i][:, s, :]' for s in axes(As[i], 2)))
+        end
+        for a in unique(first.(blocks))
+            group = findall(b -> first(b) == a, blocks)
+            G0 = lefts[a]
+            G1, G2 = zero(G0), zero(G0)
+            for i in a:maximum(last(blocks[k]) for k in group)
+                nb = size(As[i], 3)
+                G0′, G1′, G2′ = zeros(ComplexF64, nb, nb), zeros(ComplexF64, nb, nb), zeros(ComplexF64, nb, nb)
+                for (s, n) in enumerate(charges)
+                    A = As[i][:, s, :]
+                    G0′ .+= A' * G0 * A
+                    G1′ .+= A' * (G1 .+ n .* G0) * A
+                    G2′ .+= A' * (G2 .+ 2n .* G1 .+ n^2 .* G0) * A
+                end
+                m = LinearAlgebra.norm(G0′, Inf)
+                m > 0 || throw(DomainError(m, "conditional state of the word vanishes"))
+                G0, G1, G2 = G0′ ./ m, G1′ ./ m, G2′ ./ m
+                for k in group
+                    last(blocks[k]) == i || continue
+                    R = rights[i]
+                    F[k] = moments(real(tr(G0 * R)), real(tr(G1 * R)), real(tr(G2 * R)))
+                end
+            end
+        end
+        return F
+    end
+
+    # Projected onto the most likely total charge N*
+    lefts, rights = _charge_environments(ρ, word, charges)   # lefts[i]: sites 1..i-1, rights[i]: sites i..L, by charge
+    Nstar = argmax(N -> real(tr(lefts[end][N])), collect(keys(lefts[end])))
+    for a in unique(first.(blocks))
+        group = findall(b -> first(b) == a, blocks)
+        # Accumulators keyed by the total charge c of sites 1..i (the charge c₀ left of the block plus N_A)
+        G0 = Dict(c => copy(G) for (c, G) in lefts[a])
+        G1 = Dict(c => zero(G) for (c, G) in lefts[a])
+        G2 = Dict(c => zero(G) for (c, G) in lefts[a])
+        for i in a:maximum(last(blocks[k]) for k in group)
+            nb = size(As[i], 3)
+            new() = Dict{Int, Matrix{ComplexF64}}()
+            G0′, G1′, G2′ = new(), new(), new()
+            for c in keys(G0), (s, n) in enumerate(charges)
+                A = As[i][:, s, :]
+                for (D, X) in ((G0′, G0[c]), (G1′, G1[c] .+ n .* G0[c]), (G2′, G2[c] .+ 2n .* G1[c] .+ n^2 .* G0[c]))
+                    acc = get!(() -> zeros(ComplexF64, nb, nb), D, c + n)
+                    acc .+= A' * X * A
+                end
+            end
+            m = maximum(G -> LinearAlgebra.norm(G, Inf), values(G0′))
+            m > 0 || throw(DomainError(m, "conditional state of the word vanishes"))
+            G0 = Dict(c => G ./ m for (c, G) in G0′)
+            G1 = Dict(c => G ./ m for (c, G) in G1′)
+            G2 = Dict(c => G ./ m for (c, G) in G2′)
+            for k in group
+                last(blocks[k]) == i || continue
+                R = rights[i+1]
+                Z = N1 = N2 = 0.0
+                for (c, G) in G0
+                    haskey(R, Nstar - c) || continue
+                    Z += real(tr(G * R[Nstar - c]))
+                    N1 += real(tr(G1[c] * R[Nstar - c]))
+                    N2 += real(tr(G2[c] * R[Nstar - c]))
+                end
+                F[k] = moments(Z, N1, N2)
+            end
+        end
+    end
+    return F
+end
+
+# Disorder average F(A) = 𝔼_w[Var_w(N_A)] of the block number fluctuations of conditional_block_fluctuations (the quantum
+# fluctuations of every ψ_w, not the disorder fluctuations of ⟨N_A⟩_w) for every block in blocks, and its standard error.
+# As in average_entanglement_entropy, if there are at most n_samples words they are all enumerated (exact, zero error),
+# otherwise n_samples words are sampled
+function average_block_fluctuations(ρ::FiniteDisorderMPS; blocks::AbstractVector{<:UnitRange{<:Integer}}, charges,
+                                    n_samples::Int = 1000, rng::AbstractRNG = Random.default_rng(), project::Bool = false)
+    fluct(word) = conditional_block_fluctuations(ρ, word, charges, blocks; project)
+    if prod(float.(length.(ρ.ps))) <= n_samples
+        F = zeros(Float64, length(blocks))
+        for word in ProgressBar(Iterators.product(eachindex.(ρ.ps)...))
+            w = prod(ρ.ps[i][p] for (i, p) in enumerate(word))
+            iszero(w) && continue
+            F .+= w .* fluct(collect(word))
+        end
+        return F, zeros(Float64, length(blocks))
+    end
+    Fs = reduce(hcat, [fluct(sample_word(rng, ρ.ps)) for _ in ProgressBar(1:n_samples)])
+    return vec(mean(Fs; dims = 2)), vec(std(Fs; dims = 2)) ./ sqrt(n_samples)
+end
+
+# Effective Luttinger parameter from the block number fluctuations F[k] of the blocks [k] (sites a:b) of an open chain of
+# L sites. Bosonization with hard walls at 0 and L+1 (L′ = L+1) gives, for the block between the cuts x₁ = a-1 and x₂ = b,
+#   F = K/(2π²) X + c,   X = ln[d(2x₁) d(2x₂) d(x₂-x₁)² / d(x₁+x₂)²],   d(x) = (2L′/π) sin(πx/(2L′)),
+# which reduces to F = (K/π²) ln l + c far from the walls. K and c from a linear least-squares fit of F against X over the
+# blocks with at least lmin sites whose edges are at least edge_min sites from the walls (single sites and cuts next to a
+# wall carry large lattice corrections). Returns (K, c, X, fit) with fit the indices of the fitted blocks; K = c = NaN if
+# fewer than 2 blocks qualify. In a gapped phase F saturates and K → 0
+function luttinger_parameter(F::AbstractVector{<:Real}, blocks::AbstractVector{<:UnitRange{<:Integer}}, L::Int;
+                             lmin::Int = 2, edge_min::Int = 2)
+    length(F) == length(blocks) || throw(ArgumentError("F and blocks should have the same length"))
+    Lp = L + 1
+    d(x) = (2Lp / π) * sin(π * x / (2Lp))
+    X = [log(d(2(first(b) - 1)) * d(2last(b)) * d(length(b))^2 / d(first(b) - 1 + last(b))^2) for b in blocks]
+    fit = findall(k -> length(blocks[k]) >= lmin && first(blocks[k]) - 1 >= edge_min && L - last(blocks[k]) >= edge_min &&
+                       isfinite(X[k]) && isfinite(F[k]), eachindex(blocks))
+    length(unique(X[fit])) >= 2 || return NaN, NaN, X, fit
+    slope, c = hcat(X[fit], ones(length(fit))) \ F[fit]
+    return 2π^2 * slope, c, X, fit
+end
+
 # Disorder average 𝔼_w[δn_w] of the spatial density fluctuation within one realization,
 #   δn_w = sqrt((1/N_s) Σ_{i ∈ sites} (⟨n_i⟩_w - n̄_w)²),   n̄_w = (1/N_s) Σ_{i ∈ sites} ⟨n_i⟩_w,
 # over the sites in `sites` (nothing: all sites; N_s of them), with ⟨n_i⟩_w from conditional_density. Returns

@@ -234,7 +234,7 @@ html:not(.models-ready) .m-only { display: none; }   /* until applyModel shows t
             <label><span id="pyLabel">y</span> min <input type="text" id="PYMIN"></label>
             <label><span id="pyLabel2">y</span> max <input type="text" id="PYMAX"></label>
           </span></span>
-        <span class="desc m-only m-BHCorr">Runs the plot script on the laptop's data (κ, density fluctuation δn, |⟨a⟩|², ρ, S_bstd, phases from κ and S_bstd, |⟨a⟩|² only for low κ with high S_bstd), using KAPPA_TOL, SBSTD_TOL and A2_TOL below.</span></div>
+        <span class="desc m-only m-BHCorr">Runs the plot script on the laptop's data (κ, effective Luttinger parameter K, |⟨a⟩|², ρ, S_bstd, phases from κ and S_bstd, |⟨a⟩|² only for low κ with high S_bstd), using KAPPA_TOL, SBSTD_TOL and A2_TOL below.</span></div>
       <div class="action"><span class="name">Recompute observables</span>
         <button class="btn" data-act="recompute_obs">Recompute<span class="count" id="obsCount" style="background:var(--surface-3)">0</span></button>
         <span class="desc">For points whose observables are missing or outdated (changed observables script, or another N_EDGE). Uploads only those states and runs observables-only jobs, several points per job (Points per obs job); the simulation is not rerun. Gather afterwards.</span></div>
@@ -354,7 +354,7 @@ const MODELS = {
     grid: ["TS", "MUS"], plot: true, fixedAxes: ["t", "mu"],
     axisLabel: { t: "t/U", mu: "μ/U" },
     observables: [["rho", "ρ  (density)"], ["S_avg", "S̄  (bulk entanglement entropy)"], ["S_bstd", "σ_S  (bond-to-bond std of S)", "S_bstd_err"],
-      ["dn", "δn  (density fluctuation)", "dn_err"], ["a2", "|⟨a⟩|²"], ["varS_avg", "Var[S]  (disorder variance)"],
+      ["K", "K  (effective Luttinger parameter)"], ["a2", "|⟨a⟩|²"], ["varS_avg", "Var[S]  (disorder variance)"],
       ["eps_conv", "ϵ_conv  (convergence error)", null, true]] },
 };
 const FIELDS = ["L", "x0", "x1", "xstep", "y0", "y1", "ystep", "XAXIS", "YAXIS", "T", "U", "R", "DELTA", "OMEGA", "FILLING", "NMAX",

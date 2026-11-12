@@ -1,7 +1,8 @@
 # Phase diagram of a hpc/sweep_BoseHubbardCorrelated_NormalizedITE.sh run from the observables computed by
 # hpc/observables_BoseHubbardCorrelated_NormalizedITE.jl (submitted with hpc/submit_observables_BoseHubbardCorrelated_NormalizedITE.sh):
 # it reads the per-point files t<t>/mu<μ>_obs.csv, computes the compressibility κ = dρ/dμ (along μ at fixed t) and plots,
-# in one figure over (t/U, μ/U), κ, the spatial density fluctuation dn = 𝔼_w[sqrt((1/N_s) Σ_{i∈bulk} (⟨nᵢ⟩_w - n̄_w)²)],
+# in one figure over (t/U, μ/U), κ, the effective Luttinger parameter K (from the block number fluctuations, see the
+# observables script),
 # the quasicondensate density |⟨a⟩|², the density ρ, the bond-averaged entropy std S_bstd = 𝔼_w[std_k S_w(k)] and the
 # MI/SF/BG phase classification. The table and observables.csv also contain CV = S_bstd/S_avg.
 # t and μ are the mean values, the disorder values are t(1±Ω) and μ±Δ. No state is loaded, so the script is fast and
@@ -73,7 +74,7 @@ results = map(obsfiles) do file
         (; t = num("t_over_U"), μ = num("mu_over_U"), ρ = num("rho"), φ = num("a2"), varS = num("varS_avg"),
          Savg = num("S_avg"), Sinhom = num("S_inhom"),
          Sbstd = haskey(x, "S_bstd") ? num("S_bstd") : NaN,   # NaN for observables of an older format
-         dn = haskey(x, "dn") ? num("dn") : NaN,
+         K = haskey(x, "K") ? num("K") : NaN,   # NaN (white) for observables without K
          n_samples = parse(Int, x["n_samples"]), exact = parse(Bool, x["exact"]), nsteps = parse(Int, x["nsteps"]),
          ϵconv = num("eps_conv"), converged = parse(Bool, x["converged"]))
     catch e
@@ -85,14 +86,14 @@ results = filter(!isnothing, results)
 
 # Observables on the grid, 0 where there is no result (marked with a cross in the plot)
 grid() = zeros(length(ts), length(μs))
-ρs, φs, varSs, Savgs, Sinhoms, Sbstds, dns, κs = grid(), grid(), grid(), grid(), grid(), grid(), grid(), grid()
+ρs, φs, varSs, Savgs, Sinhoms, Sbstds, Ks, κs = grid(), grid(), grid(), grid(), grid(), grid(), grid(), grid()
 converged = fill(true, length(ts), length(μs))
 hasdata = fill(false, length(ts), length(μs))
 index(x) = (argmin(abs.(ts .- x.t)), argmin(abs.(μs .- x.μ)))
 for x in results
     i, j = index(x)
     ρs[i, j], φs[i, j], varSs[i, j], converged[i, j], hasdata[i, j] = x.ρ, x.φ, x.varS, x.converged, true
-    Savgs[i, j], Sinhoms[i, j], Sbstds[i, j], dns[i, j] = x.Savg, x.Sinhom, x.Sbstd, x.dn
+    Savgs[i, j], Sinhoms[i, j], Sbstds[i, j], Ks[i, j] = x.Savg, x.Sinhom, x.Sbstd, x.K
 end
 # Relative bond-to-bond fluctuation of the entropy, NaN (white) where S_avg = 0 and 0 where there is no result
 ratios = [hasdata[i, j] ? (iszero(Savgs[i, j]) ? NaN : Sbstds[i, j] / Savgs[i, j]) : 0.0 for i in eachindex(ts), j in eachindex(μs)]
@@ -118,12 +119,12 @@ end
 phases = [hasdata[i, j] ? classify(κs[i, j], Sbstds[i, j], φs[i, j]) : 0 for i in eachindex(ts), j in eachindex(μs)]
 
 println("Run tag $run_tag, L = $L ($folder)")
-println("    t/U      μ/U        ρ        κ   |⟨a⟩|²  ⟨Var S⟩      ⟨S⟩  Var_k S   std_k S   ratio       dn  samples   steps   ϵ_conv   converged  phase")
+println("    t/U      μ/U        ρ        κ   |⟨a⟩|²  ⟨Var S⟩      ⟨S⟩  Var_k S   std_k S   ratio        K  samples   steps   ϵ_conv   converged  phase")
 sort!(results; by = x -> (x.t, x.μ))
 for x in results
     i, j = index(x)
     @printf("%7.4f  %7.4f  %7.4f  %7.3f  %7.4f  %7.4f  %7.4f  %7.4f  %8.4f  %6.3f  %7.4f  %7s  %6d  %7.1e   %-9s  %s\n", ts[i], μs[j], ρs[i, j],
-            κs[i, j], φs[i, j], varSs[i, j], Savgs[i, j], Sinhoms[i, j], Sbstds[i, j], ratios[i, j], dns[i, j], x.exact ? "exact" : string(x.n_samples), x.nsteps, x.ϵconv, x.converged,
+            κs[i, j], φs[i, j], varSs[i, j], Savgs[i, j], Sinhoms[i, j], Sbstds[i, j], ratios[i, j], Ks[i, j], x.exact ? "exact" : string(x.n_samples), x.nsteps, x.ϵconv, x.converged,
             phasenames[phases[i, j]])
 end
 println("Phases with κ_tol = $κtol, S_bstd_tol = $sbstdtol, |⟨a⟩|²_tol = $a2tol: ", join(("$(n) $(count(==(k), phases))" for (k, n) in enumerate(phasenames)), ", "))
@@ -139,17 +140,17 @@ end
 
 csv = joinpath(folder, "observables.csv")
 open(csv, "w") do io
-    println(io, "t_over_U,mu_over_U,rho,kappa,a2,varS_avg,S_avg,S_inhom,S_bstd,S_bstd_over_S_avg,dn,n_samples,exact,nsteps,eps_conv,converged,phase")
+    println(io, "t_over_U,mu_over_U,rho,kappa,a2,varS_avg,S_avg,S_inhom,S_bstd,S_bstd_over_S_avg,K,n_samples,exact,nsteps,eps_conv,converged,phase")
     for x in results
         i, j = index(x)
         println(io, "$(ts[i]),$(μs[j]),$(ρs[i, j]),$(κs[i, j]),$(φs[i, j]),$(varSs[i, j]),$(Savgs[i, j]),$(Sinhoms[i, j]),",
-                "$(Sbstds[i, j]),$(ratios[i, j]),$(dns[i, j]),$(x.n_samples),$(x.exact),",
+                "$(Sbstds[i, j]),$(ratios[i, j]),$(Ks[i, j]),$(x.n_samples),$(x.exact),",
                 "$(x.nsteps),$(x.ϵconv),$(x.converged),$(phasenames[phases[i, j]])")
     end
 end
 println("Saved $csv")
 
-# Figure: 2×3 panels over (t/U, μ/U): κ, δn, |⟨a⟩|² (top), ρ, S_bstd and the phase classification
+# Figure: 2×3 panels over (t/U, μ/U): κ, K, |⟨a⟩|² (top), ρ, S_bstd and the phase classification
 # (bottom); unconverged points are marked with open circles, points without a result with crosses
 set_theme!(theme_latexfonts())
 fig = Figure(backgroundcolor = :white, fontsize = 30, size = (3200, 1700))
@@ -162,7 +163,7 @@ function markpoints!(ax, circlecolor)
                                     strokewidth = 1.5, markersize = 22)
 end
 panels = [(κs, L"κ = dρ/dμ", :viridis, (1, 1)),
-          (dns, L"δn = \mathbb{E}_w\left[\sqrt{\overline{(n_i-\bar{n})^2}}_{i\in\mathrm{bulk}}\right]", :inferno, (1, 2)),
+          (Ks, L"K_\mathrm{eff}\ \mathrm{(Luttinger\ parameter)}", :inferno, (1, 2)),
           (φs, L"|\langle a\rangle|^2", :plasma, (1, 3)),
           (ρs, L"ρ", :cividis, (2, 1)),
           (Sbstds, L"\mathbb{E}_w[\mathrm{std}_{k\in\mathrm{bulk}} S_w(k)]", :magma, (2, 2))]
