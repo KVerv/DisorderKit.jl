@@ -7,13 +7,13 @@
 # The evolution starts from the Mott product state |1 1 … 1⟩ and never leaves the N = L sector. This avoids the problem of
 # the unsymmetric runs (FiniteDisorderBoseHubbard.jl), where the evolution from a superposition of all particle numbers
 # only selects N through μ. At fixed N a uniform shift of μ only adds a constant, so only the disorder Δ matters.
-using TensorKit, DisorderKit, LinearAlgebra, Printf, CairoMakie
+using TensorKit, DisorderKit, LinearAlgebra, Printf, CairoMakie, Random
 
 # Model
 L = 10
-U = 1.5
+U = 4.0
 t = 0.5                                          # hopping (t/U)
-Δ = 1.5                                          # μᵢ uniform in [-Δ, Δ] (keep 2Δ < U: at 2Δ = U moving a boson
+Δ = 0.25                                          # μᵢ uniform in [-Δ, Δ] (keep 2Δ < U: at 2Δ = U moving a boson
                                                  # from μ = -Δ to a neighbouring μ = +Δ costs nothing, the gap closes
                                                  # and the imaginary time evolution becomes very slow) ...
 q = 2                                            # ... discretized to q equally likely values
@@ -23,9 +23,9 @@ ps = fill(1/q, q)
 
 # Normalized ITE
 Δτ = 0.05                                         # with order = 2 the time step error is far below the cap error
-maxD = [50 => 16, 25 => 32, 25 => 64]                                       # one bond basis carries the conditional states of all words: at
+maxD = [50 => 16, 50 => 32, 100 => 64]                                       # one bond basis carries the conditional states of all words: at
                                                  # maxD = 16 the cap dominates the error (L = 4: 3e-5 in E/L, 5e-6 at 32)
-maxiter = 100
+maxiter = 200
 convtol = 1e-7
 
 Hs = DisorderKit.random_bose_hubbard([t], [U], μs; nmax, symmetry = U1Irrep, filling = 1)
@@ -67,11 +67,27 @@ for (u, μ) in enumerate(μs)
     @printf("⟨n | μ = %+.3f⟩ = %.4f\n", μ, nμ)
 end
 
+# Entanglement entropy S_w(k) of the conditional state ψ_w on every bond k, for one typical disorder word w, and the
+# distribution of the middle-bond entropy S_w(L/2) over sampled words. Every ψ_w is in the N = L sector, so no charge
+# projection is needed
+rng = Random.MersenneTwister(1234)
+n_samples = 1000
+k_mid = L ÷ 2
+word_typ = DisorderKit.sample_word(rng, ψ.ps)
+S_typ = DisorderKit.conditional_entanglement_entropy(ψ, word_typ)
+S_mid = [DisorderKit.conditional_entanglement_entropy(ψ, DisorderKit.sample_word(rng, ψ.ps))[k_mid] for _ in 1:n_samples]
+S_typ_avg = sum(S_typ) / length(S_typ)
+S_mid_avg = sum(S_mid) / n_samples
+S_mid_std = sqrt(sum(abs2, S_mid .- S_mid_avg) / (n_samples - 1))
+println("\ntypical word μ_w = ", μs[word_typ])
+println("S_w(k) = ", round.(S_typ; digits = 4), ",  bond average = ", round(S_typ_avg; digits = 4))
+@printf("S_w(L/2) over %d samples: mean %.4f, std %.4f\n", n_samples, S_mid_avg, S_mid_std)
+
 # Figure: the evolution (energy, convergence, normalization, ranks) and the final state (density, charge structure)
 τs = Δτ .* (1:length(info.Es))
 E_final = info.Es[end]
 set_theme!(theme_latexfonts())
-fig = Figure(backgroundcolor = :white, fontsize = 24, size = (1600, 1800))
+fig = Figure(backgroundcolor = :white, fontsize = 24, size = (1600, 2400))
 Label(fig[0, 1:2], L"$L=%$L$, $t/U=%$t$, $Δ/U=%$Δ$ ($q=%$q$), filling 1, $D_{\max}=%$maxD$, $Δτ=%$Δτ$"; fontsize = 28)
 
 ax1 = Axis(fig[1, 1]; xlabel = L"τ", ylabel = L"E/L")
@@ -120,5 +136,20 @@ for c in charges
 end
 lines!(ax6, 1:L-1, dim.(bonds); color = :black, linestyle = :dash, label = L"\mathrm{total}")
 axislegend(ax6; position = :rt)
+
+# Entanglement entropy of one typical sample on every bond, and the distribution of the middle-bond entropy
+word_str = join([μ < 0 ? "-" : "+" for μ in μs[word_typ]])
+ax7 = Axis(fig[4, 1]; xlabel = L"\mathrm{bond}\ k", ylabel = L"S_w(k)", xticks = 1:L-1,
+           title = L"\mathrm{typical\ sample}\ \mathrm{sign}(μ_w) = %$word_str")
+scatterlines!(ax7, 1:L-1, S_typ; markersize = 12, label = L"S_w(k)")
+hlines!(ax7, [S_typ_avg]; color = :black, linestyle = :dash, label = L"\mathrm{bond\ average}")
+axislegend(ax7; position = :rt)
+
+ax8 = Axis(fig[4, 2]; xlabel = L"S_w(L/2)", ylabel = L"P(S_w(L/2))",
+           title = L"%$(n_samples)\ \mathrm{samples}")
+hist!(ax8, S_mid; bins = 40, normalization = :pdf)
+vlines!(ax8, [S_mid_avg]; color = :black, linestyle = :dash, label = L"\mathrm{mean}")
+vlines!(ax8, [S_typ[k_mid]]; color = Makie.wong_colors()[2], label = L"\mathrm{typical\ sample}")
+axislegend(ax8; position = :rt)
 
 fig

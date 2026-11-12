@@ -252,6 +252,7 @@ html:not(.models-ready) .m-only { display: none; }   /* until applyModel shows t
       <div style="margin-top:12px; display:flex; gap:8px">
         <button class="btn small" id="logIte">Job log</button>
         <button class="btn small" id="logObs">Observables-job log</button>
+        <button class="btn small m-only m-BHU1" id="recomputePoint" title="Resubmit this point from scratch with a new random seed, also if it is converged">Recompute point</button>
       </div>
       <pre class="log" id="pointLog" style="display:none"></pre>
     </section>
@@ -720,6 +721,7 @@ function kv(p) {
   if (p.eps !== undefined && p.eps !== null) rows.push(["ϵ_conv", `${fmt(p.eps)} (tol ${fmt(p.convtol, 0)})`]);
   if (p.nsteps !== undefined && p.nsteps !== null) rows.push(["Steps", `${p.nsteps} of max ${p.maxiter ?? "?"}` +
     (p.resumed_from > 0 ? ` (resumed after ${p.resumed_from})` : "")]);
+  if (p.seed !== undefined && p.seed !== null) rows.push(["Seed", String(p.seed)]);
   if (p.job) rows.push(["Job", `${p.job.id}${p.job.host ? " on " + p.job.host.replace(/^slot\d+(_\d+)?@/, "") : ""}${p.job.since && ["idle", "running", "held"].includes(p.state) ? ` · ${since(p.job.since)}` : ""}`]);
   if (p.state === "running" && p.job && p.job.wall) {
     rows.push(["CPU", `${p.job.cores_used.toFixed(2)} of ${p.job.cpus ?? "?"} cores on average over ${dur(p.job.wall)}` +
@@ -848,6 +850,12 @@ $("jobsBox").addEventListener("click", (e) => {
 });
 $("logIte").onclick = () => showLog("ite");
 $("logObs").onclick = () => showLog("obs");
+$("recomputePoint").onclick = () => {
+  if (!selected) return;
+  const [X, Y] = current().axes;
+  if (!confirm(`Recompute ${X} = ${selected.x}, ${Y} = ${selected.y} from scratch with a new random seed?\nThe stored state is overwritten.`)) return;
+  runAction("recompute_point", { POINT: `${selected.x} ${selected.y}`, SEED: String(1 + Math.floor(Math.random() * 2 ** 31)) });
+};
 
 // ---- actions
 function params(action, extra = {}) {
@@ -859,6 +867,8 @@ function params(action, extra = {}) {
   if (action === "submit" || action === "preview")
     Object.assign(p, res, { [M.grid[0]]: xs.join(" "), [M.grid[1]]: ys.join(" "), MAXITER: f.MAXITER, CONVTOL: f.CONVTOL,
       CROSS_WIDTH: f.CROSS_WIDTH, N_SAMPLES: f.N_SAMPLES, PPN: f.PPN, FORCE: f.FORCE ? "1" : "0" });
+  if (action === "recompute_point")
+    Object.assign(p, res, { MAXITER: f.MAXITER, CONVTOL: f.CONVTOL, CROSS_WIDTH: f.CROSS_WIDTH, N_SAMPLES: f.N_SAMPLES, PPN: f.PPN });
   if (action === "recompute_obs") Object.assign(p, res, { N_SAMPLES: f.N_SAMPLES, PPN: f.OBS_PPN, CHUNK: f.OBS_CHUNK });
   if (action === "plot" && model === "BHCorr") Object.assign(p, { KAPPA_TOL: f.KAPPA_TOL, SBSTD_TOL: f.SBSTD_TOL, A2_TOL: f.A2_TOL });
   if (action === "plot" && model === "BHU1") {
@@ -867,7 +877,7 @@ function params(action, extra = {}) {
   }
   return Object.assign(p, extra);
 }
-const TITLES = { submit: "Submit sweep", preview: "Preview (dry run)", remove_held: "Remove held jobs", recompute_obs: "Recompute observables",
+const TITLES = { submit: "Submit sweep", recompute_point: "Recompute point", preview: "Preview (dry run)", remove_held: "Remove held jobs", recompute_obs: "Recompute observables",
   plot: "Plot (on the laptop)", gather: "Gather data", remove_all: "Remove all jobs" };
 async function runAction(action, extra = {}) {
   const c = current();

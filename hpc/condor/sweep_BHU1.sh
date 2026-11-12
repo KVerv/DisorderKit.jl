@@ -11,6 +11,8 @@
 #   POINTS="0.0500 0.2000,0.1000 0.2000" exactly these points ("x y" pairs separated by commas; no status check)
 #   MAXITER=4000 ...                     continue the unconverged points up to 4000 steps in total
 #   FORCE=1 ...                          resubmit every point from scratch
+#   SEED=12345 ...                       seed of the randomized compression (default 20266001); with FORCE=1 and
+#                                        POINTS a rerun that does not reproduce the stored state
 #
 # Axes: XAXIS and YAXIS are two different ones of t, U, Delta, Omega, r; XS and YS their values (formatted %.4f in the
 # file names). The other parameters are fixed: T, U, DELTA, OMEGA, R (the swept ones are ignored), FILLING, NMAX, DTAU,
@@ -48,6 +50,7 @@ export MAXD="${MAXD:-32}"
 export MAXITER="${MAXITER:-2000}"
 export CONVTOL="${CONVTOL:-1e-6}"
 export CROSS_WIDTH="${CROSS_WIDTH:-32}"
+export SEED="${SEED:-20266001}"
 export DATA_DIR=data
 [ "${FORCE:-0}" = "1" ] && RESUME=0
 export RESUME="${RESUME:-1}"
@@ -146,7 +149,7 @@ UG_NAME = $UG_NAME
 executable          = hpc/condor/run_julia.sh
 transfer_executable = TRUE
 arguments           = "$script $L \$(x) \$(y) :: --threads=$OBS_THREADS $obsscript $L \$(x) \$(y)"
-environment         = "HOME=/tmp/\$(UG_NAME) JULIA_THREADS=$JULIA_THREADS BLAS_THREADS=$BLAS_THREADS TAG=$TAG XAXIS=$XAXIS YAXIS=$YAXIS T=$T U=$U DELTA=$DELTA OMEGA=$OMEGA R=$R FILLING=$FILLING NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD MAXITER=$MAXITER CONVTOL=$CONVTOL CROSS_WIDTH=$CROSS_WIDTH RESUME=$RESUME DATA_DIR=$DATA_DIR N_SAMPLES=$N_SAMPLES N_EDGE=$N_EDGE OBS=$OBS OBS_VERSION=$OBS_VERSION"
+environment         = "HOME=/tmp/\$(UG_NAME) JULIA_THREADS=$JULIA_THREADS BLAS_THREADS=$BLAS_THREADS TAG=$TAG XAXIS=$XAXIS YAXIS=$YAXIS T=$T U=$U DELTA=$DELTA OMEGA=$OMEGA R=$R FILLING=$FILLING NMAX=$NMAX DTAU=$DTAU MAXD=$MAXD MAXITER=$MAXITER CONVTOL=$CONVTOL CROSS_WIDTH=$CROSS_WIDTH SEED=$SEED RESUME=$RESUME DATA_DIR=$DATA_DIR N_SAMPLES=$N_SAMPLES N_EDGE=$N_EDGE OBS=$OBS OBS_VERSION=$OBS_VERSION"
 
 should_transfer_files   = TRUE
 preserve_relative_paths = TRUE

@@ -4,7 +4,7 @@
 # Usage (from the repo root):
 #   julia --project=. hpc/condor/sweep_status.jl [--model M] --list          all sweeps: [{tag, L, axes, n_states, n_obs, mtime}]
 #   julia --project=. hpc/condor/sweep_status.jl [--model M] <tag> <L>       one sweep:
-#     {tag, L, axes: [x, y], points: [{x, y, state, error, converged, eps, nsteps, maxiter, convtol, resumed_from, mtime,
+#     {tag, L, axes: [x, y], points: [{x, y, state, error, converged, eps, nsteps, maxiter, convtol, resumed_from, seed, mtime,
 #      obs, n_edge, obs_version, values}], planned: [[x, y], ...]}
 # Models (M):
 #   BHCorr (default)  data/BoseHubbardCorrelated_NormalizedITE/<tag>/L<L>/t<t>/mu<μ>.jld2, axes t and mu
@@ -107,6 +107,7 @@ function sweep_status(tag, L)
                     p["maxiter"] = params.maxiter
                     p["convtol"] = params.convtol
                     p["resumed_from"] = haskey(params, :resumed_from) ? params.resumed_from : 0
+                    p["seed"] = haskey(params, :seed) ? params.seed : nothing
                     p["converged"] = haskey(f, "converged") ? f["converged"] : (!isempty(ϵs) && last(ϵs) <= params.convtol)
                 end
             end

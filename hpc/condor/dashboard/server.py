@@ -67,7 +67,7 @@ PARAMS = {
     "REQUIREMENTS": r"^[A-Za-z0-9_ .<>=!&|()\"']*$", "NICE": r"^(TRUE|FALSE)$",
     "N_SAMPLES": r"^\d+$", "N_EDGE": r"^\d+$", "OBS_COL": RE_COL, "LOG": r"^[01]$", "XMIN": NUM, "XMAX": NUM,
     "YMIN": NUM, "YMAX": NUM, "KAPPA_TOL": NUM, "SBSTD_TOL": NUM, "A2_TOL": NUM,
-    "POINTS": r"^[0-9.\- ,]*$", "DRYRUN": r"^[01]$", "RESUME": r"^[01]$", "CHUNK": r"^[1-9]\d*$",
+    "POINTS": r"^[0-9.\- ,]*$", "SEED": r"^\d+$", "DRYRUN": r"^[01]$", "RESUME": r"^[01]$", "CHUNK": r"^[1-9]\d*$",
 }
 # The models the dashboard drives. A sweep is (model, tag, L); its points are (x, y), the values of its two axes as in
 # the file names (%.4f): data/<dir>/<tag>/L<L>/<X><x>/<Y><y>.jld2 (and _obs.csv), X and Y the axis names.
@@ -104,7 +104,7 @@ MODELS = {
         "status_args": "--model BHU1 ",
         "obs_marker": "{X} = {x}, {Y} = {y}",
         "model_params": ["T", "U", "DELTA", "OMEGA", "R", "FILLING", "NMAX", "DTAU", "MAXD"],
-        "extra": {"submit": ["XAXIS", "YAXIS", "OBS"], "recompute_obs": ["XAXIS", "YAXIS", "OBS"], "plot": ["XAXIS", "YAXIS"]},
+        "extra": {"submit": ["XAXIS", "YAXIS", "OBS", "SEED"], "recompute_obs": ["XAXIS", "YAXIS", "OBS"], "plot": ["XAXIS", "YAXIS"]},
         "plot_params": ["OBS_COL", "LOG", "XMIN", "XMAX", "YMIN", "YMAX"],
     },
 }
@@ -402,7 +402,7 @@ def merge(remote, local, queue, history, obs_version="", n_edge=None, attrs=("BH
         f = r if r.get("state") else l            # the state that counts: the access point's (newer) or the laptop's
         o = r if r.get("obs") else l               # observables: likewise
         where = [w for w, x in (("laptop", l), ("access point", r)) if x.get("state") or x.get("obs")]
-        rec = {"x": p["x"], "y": p["y"], "eps": f.get("eps"), "nsteps": f.get("nsteps"), "maxiter": f.get("maxiter"), "resumed_from": f.get("resumed_from"),
+        rec = {"x": p["x"], "y": p["y"], "eps": f.get("eps"), "nsteps": f.get("nsteps"), "maxiter": f.get("maxiter"), "resumed_from": f.get("resumed_from"), "seed": f.get("seed"),
                "convtol": f.get("convtol"), "mtime": f.get("mtime"), "has_state": bool(f.get("state")),
                "n_edge": o.get("n_edge"), "obs_version": o.get("obs_version"), "where": where,
                "on_remote": bool(r.get("state") or r.get("obs")), "reason": None, "job": None, "obs_job": None,
@@ -853,7 +853,7 @@ class Dashboard:
             raise ValueError("no sweep selected")
         L = int(L)
         m = MODELS[model]
-        script = m["scripts"].get(action if action != "preview" else "submit")
+        script = m["scripts"].get("submit" if action in ("preview", "recompute_point") else action)
         n_edge = int(params["N_EDGE"]) if str(params.get("N_EDGE", "")).isdigit() else None
         if action in ("submit", "preview", "recompute_obs") and n_edge is not None and L < 2 * n_edge + 3:
             raise ValueError(f"N_EDGE = {n_edge} leaves fewer than 2 bulk bonds for L = {L} (need L ≥ 2·N_EDGE + 3)")
@@ -902,6 +902,28 @@ class Dashboard:
             cmd = f"env {self._env(values)} bash {script} {L} 2>&1"
             emit(f"$ bash {script} {L}  ({len(todo)} points)")
             return self.remote.stream(cmd, emit)
+        if action == "recompute_point":
+            # One point from scratch (also a converged one), with the SEED the page drew, so the rerun does not
+            # reproduce the stored state. The stored state is overwritten.
+            if model != "BHU1":
+                raise ValueError("recomputing a single point is only implemented for BHU1")
+            values = self._values(model, tag, params, "submit")
+            if "SEED" not in values:
+                raise ValueError("SEED is not set")
+            pt = str(params.get("POINT", "")).split()
+            if len(pt) != 2:
+                raise ValueError("no point selected")
+            x, y = (f"{float(v):.4f}" for v in pt)
+            st = self.status(model, tag, L, n_edge, fresh=True)
+            p = next((q for q in st["points"] if (q["x"], q["y"]) == (x, y)), None)
+            if p is not None and p.get("state") in ("idle", "running", "held"):
+                raise ValueError(f"point {x} {y} still has a job in the queue ({p['state']}); remove it first")
+            values.update(POINTS=f"{x} {y}", FORCE="1", RESUME="0")
+            rc = self._sync(params, emit, task)
+            if rc != 0:
+                return rc
+            emit(f"$ bash {script} {L}  (point {x} {y} from scratch, SEED = {values['SEED']})")
+            return self.remote.stream(f"env {self._env(values)} bash {script} {L} 2>&1", emit)
         if action == "recompute_obs":
             values = self._values(model, tag, params, "recompute_obs")
             st = self.status(model, tag, L, n_edge, fresh=True)
@@ -1227,6 +1249,7 @@ def selftest():
     assert point_constraint("0.1", "0.2", ("BHC_x", "BHC_y")) == \
         '((BHC_x =?= "0.1" && BHC_y =?= "0.2") || stringListMember("0.1_0.2", BHC_points) =?= true)'
     assert "XAXIS" in script_params("BHU1", "submit") and "T" in script_params("BHU1", "submit")
+    assert "SEED" in script_params("BHU1", "submit") and "SEED" not in script_params("BHCorr", "submit")
     assert "XAXIS" not in script_params("BHCorr", "submit") and "TS" not in script_params("BHCorr", "submit")
     # the parameters must give the selected sweep's tag
     d = Dashboard.__new__(Dashboard)

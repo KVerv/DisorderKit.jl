@@ -22,7 +22,8 @@
 #
 # Environment (required): TAG (the sweep tag, built by the dashboard: it names the axes and the fixed parameters),
 #   XAXIS, YAXIS, T, U, DELTA, OMEGA, R, FILLING, NMAX, DTAU, MAXD, MAXITER, CONVTOL, CROSS_WIDTH, DATA_DIR
-# Optional: BLAS_THREADS (default: as many as Julia threads), RESUME (default 1)
+# Optional: BLAS_THREADS (default: as many as Julia threads), RESUME (default 1), SEED (default 20266001: seed of the
+#   randomized compression; a run from scratch with another SEED gives an independent ITE trajectory)
 #
 # Output: <DATA_DIR>/BoseHubbardU1_NormalizedITE/<TAG>/L<L>/<XAXIS><x>/<YAXIS><y>.jld2 with ψ, info (per-step
 #   diagnostics), converged, nsteps, params (all parameters and axes) and meta
@@ -110,6 +111,7 @@ maxD = parse(Int, param("MAXD"))
 maxiter = parse(Int, param("MAXITER"))
 convtol = parse(Float64, param("CONVTOL"))
 cross_width = parse(Int, param("CROSS_WIDTH"))
+seed0 = parse(Int, get(ENV, "SEED", "20266001"))
 Hs, ps = DisorderKit.correlated_bose_hubbard(t, U, 0.0, Δ, Ω, r; nmax, symmetry = U1Irrep, filling)
 
 # Initial state: the stored state if it can be continued (see the header), else the Mott state
@@ -136,7 +138,7 @@ n0 = stored === nothing ? 0 : stored.nsteps
 ψ0 = stored === nothing ? DisorderKit.mott_state(Hs, ps, L; filling) : stored.ψ
 println(stored === nothing ? "Starting from the Mott state ($why)" : "Resuming from $filename: $why, at most $(maxiter - n0) more steps")
 
-params = (; L, t, U, Δ, Ω, r, filling, nmax, ps, Δτ, maxD, maxiter, convtol, cross_width, resumed_from = n0,
+params = (; L, t, U, Δ, Ω, r, filling, nmax, ps, Δτ, maxD, maxiter, convtol, cross_width, resumed_from = n0, seed = seed0,
           axes = (xaxis, yaxis), tag)
 println("U(1) correlated Bose-Hubbard normalized ITE: L = $L, filling = $filling, t = $t, U = $U, Δ = $Δ, Ω = $Ω, r = $r, ",
         "nmax = $nmax, maxD = $maxD, Δτ = $Δτ (axes $xaxis × $yaxis)")
@@ -144,7 +146,7 @@ println("Output: $filename")
 
 to = TimerOutput()
 alg = DisorderKit.Groundstate_FiniteNormalizedITE(; maxD, order = 2, convtol, maxiter = maxiter - n0, cross_width, verbosity = 1,
-                                                  timer_output = to, seed = 20266001 + n0)
+                                                  timer_output = to, seed = seed0 + n0)
 walltime = @elapsed ψ, _, info = DisorderKit.groundstate(ψ0, Hs, Δτ, alg)
 
 info_nt = NamedTuple{fieldnames(typeof(info))}(Tuple(getfield(info, f) for f in fieldnames(typeof(info))))
