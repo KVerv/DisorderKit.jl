@@ -125,6 +125,16 @@ function jordan_mpo_tensor(A::AbstractTensorMap, R::AbstractTensorMap, L::Abstra
     return W
 end
 
+# Bulk time evolution MPO tensors of every disorder sector (time_evolution_MPO(Hs, dt)), opp[p] for sector p
+struct InfiniteDisorderMPO{T<:AbstractMPOTensor}
+    opp::Vector{T}
+end
+
+Base.getindex(T::InfiniteDisorderMPO, ix::Int) = T.opp[ix]
+Base.size(T::InfiniteDisorderMPO) = size(T.opp)
+Base.length(T::InfiniteDisorderMPO) = length(T.opp)
+Base.iterate(t::InfiniteDisorderMPO, i=1) = (i > length(t.opp)) ? nothing : (t[i], i + 1)
+
 # Imaginary time evolution MPO exp(-dt H_p) of every sector (TaylorCluster of order N)
 function time_evolution_MPO(Hs::DisorderMPOHam, dt::Real; N::Int = 1)
     Us = Vector{typeof(Hs.As[1])}(undef, length(Hs.Rs))   # dense MPO tensors

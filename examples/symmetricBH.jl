@@ -5,7 +5,7 @@
 # The particle number is conserved exactly: |n⟩ carries the U₁ charge n - 1 (random_bose_hubbard with symmetry = U1Irrep,
 # filling = 1), so a state with trivial boundary bonds (total charge 0) has exactly N = L bosons for every disorder word.
 # The evolution starts from the Mott product state |1 1 … 1⟩ and never leaves the N = L sector. This avoids the problem of
-# the unsymmetric runs (FiniteDisorderBoseHubbard.jl), where the evolution from a superposition of all particle numbers
+# the unsymmetric runs (hpc/BoseHubbard_NormalizedITE.jl), where the evolution from a superposition of all particle numbers
 # only selects N through μ. At fixed N a uniform shift of μ only adds a constant, so only the disorder Δ matters.
 using TensorKit, DisorderKit, LinearAlgebra, Printf, CairoMakie, Random
 
@@ -30,21 +30,11 @@ convtol = 1e-7
 
 Hs = DisorderKit.random_bose_hubbard([t], [U], μs; nmax, symmetry = U1Irrep, filling = 1)
 P = space(Hs.Ds[1], 1)                           # Rep[U₁](-1 => 1, 0 => 1, …, nmax-1 => 1): charge n - 1
-S = spacetype(P)
 pP = DisorderKit.basis_order(P, [U1Irrep(n - 1) for n in 0:nmax])   # TensorKit basis order of |0⟩, …, |nmax⟩
 n_op = TensorMap(ComplexF64.(diagm(0:nmax))[pP, pP], P ← P)
 
-# Mott product state |1⟩ on every site and in every disorder sector: charge 0 everywhere, trivial bonds
-function mott_state(Hs, ps, L)
-    v = zeros(ComplexF64, nmax + 1)
-    v[2] = 1                                     # |n = 1⟩
-    W = TensorMap(reshape(v[pP], 1, nmax + 1, 1), oneunit(S) ⊗ P ← oneunit(S))
-    site_ps, sectors = DisorderKit.site_sectors(Hs, ps, L)
-    return DisorderKit.FiniteDisorderMPS([[W for _ in p] for p in site_ps], site_ps, sectors)
-end
-
 alg = DisorderKit.Groundstate_FiniteNormalizedITE(; maxD, order = 2, convtol, maxiter, verbosity = 1)
-ψ, _, info = DisorderKit.groundstate(mott_state(Hs, ps, L), Hs, Δτ, alg)
+ψ, _, info = DisorderKit.groundstate(DisorderKit.mott_state(Hs, ps, L; filling = 1), Hs, Δτ, alg)   # from the Mott state |1 1 … 1⟩
 
 converged = info.ϵsconv[end] <= convtol
 converged || @warn "not converged after $maxiter steps (ϵ_conv = $(info.ϵsconv[end]))"
@@ -87,10 +77,9 @@ println("S_w(k) = ", round.(S_typ; digits = 4), ",  bond average = ", round(S_ty
 # quantum fluctuations of every conditional state ψ_w, then averaged over the disorder (the disorder fluctuations of
 # ⟨N_A⟩_w are not included). All words are enumerated if there are at most n_samples of them, otherwise sampled.
 # l ≤ L-2: a block of L-1 sites touches a wall (X below diverges), and l = L has Var(N) = 0 exactly (N = L)
-charges = collect(0:nmax)[pP]                    # boson number of every dense physical basis state
 ls = collect(1:L-2)
 blocks = [((L - l) ÷ 2 + 1):((L - l) ÷ 2 + l) for l in ls]
-F_l, F_err = DisorderKit.average_block_fluctuations(ψ; blocks, charges, n_samples, rng)
+F_l, F_err, _ = DisorderKit.disorder_average(w -> DisorderKit.conditional_block_fluctuations(ψ, w, n_op, blocks), ψ; n_samples, rng)
 
 # Luttinger parameter from bosonization on an open chain (DisorderKit.luttinger_parameter): F = K/(2π²) X + c with
 # X = ln[d(2x₁) d(2x₂) d(x₂-x₁)² / d(x₁+x₂)²] for the block between the cuts x₁ = a-1 and x₂ = b, which reduces to

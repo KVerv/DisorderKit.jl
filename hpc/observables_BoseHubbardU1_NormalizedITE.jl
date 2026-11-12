@@ -17,7 +17,7 @@
 #   entropy      S_bar = E_w[(1/|B|) Σ_{k ∈ B} S_w(k)]    disorder average of the bond-averaged entanglement entropy
 #                S_bstd = E_w[std_{k ∈ B} S_w(k)]          disorder average of its bond-to-bond standard deviation
 #                S_bar_err, S_bstd_err                    standard errors (0 if the words are enumerated)
-#                over the bulk bonds B = N_EDGE+1..L-N_EDGE-1 (DisorderKit.bond_averaged_entanglement_entropy). The
+#                over the bulk bonds B = N_EDGE+1..L-N_EDGE-1 (DisorderKit.disorder_average). The
 #                particle number is fixed, so no projection onto a particle number is needed. Words are enumerated
 #                exactly if ∏ᵢ qᵢ ≤ N_SAMPLES, else N_SAMPLES words are sampled
 #
@@ -56,8 +56,13 @@ function compute_diagnostics(ψ, data, ctx)
 end
 
 function compute_entropy(ψ, data, ctx)
-    S_bar, S_bar_err, S_bstd, S_bstd_err =
-        DisorderKit.bond_averaged_entanglement_entropy(ψ; n_samples = ctx.n_samples, rng = ctx.rng(), bonds = ctx.bulk_bonds)
+    # Per word: mean and std of S_w(k) over the bulk bonds; averaged over the words (enumerated or sampled)
+    function bulk_stats(w)
+        S_w = DisorderKit.conditional_entanglement_entropy(ψ, w)[ctx.bulk_bonds]
+        return [mean(S_w), std(S_w)]
+    end
+    avg, err, _ = DisorderKit.disorder_average(bulk_stats, ψ; n_samples = ctx.n_samples, rng = ctx.rng())
+    S_bar, S_bar_err, S_bstd, S_bstd_err = avg[1], err[1], avg[2], err[2]
     return (; S_bar, S_bar_err, S_bstd, S_bstd_err)
 end
 
@@ -140,7 +145,7 @@ if status_only
 end
 
 # ---- Observables
-using TensorKit, DisorderKit, LinearAlgebra, Random, JLD2, Printf, Dates
+using TensorKit, DisorderKit, LinearAlgebra, Random, JLD2, Printf, Dates, StatsBase
 
 function compute_point(x_str, y_str)
     statefile, obsfile = point_files(x_str, y_str)

@@ -60,7 +60,8 @@ results = map(files) do f
     ρ, φ = disorder_average_observables(data["ψ"])
     # Disorder-averaged entanglement entropy on every bond, its standard error (zero if the words are enumerated) and
     # its disorder variance, of the conditional states projected onto their most likely particle number
-    S, S_err, S_var = DisorderKit.average_entanglement_entropy(data["ψ"]; n_samples, rng = Xoshiro(1), charges = 0:nmax)
+    S, S_err, S_var = DisorderKit.disorder_average(w -> DisorderKit.conditional_entanglement_entropy(data["ψ"], w; charges = 0:nmax),
+                                                   data["ψ"]; n_samples, rng = Xoshiro(1))
     p = data["params"]
     (; μ = p.μ, U = p.U, t = p.t, ρ, φ, S, S_err, S_var, nsteps = data["nsteps"], converged = data["converged"],
      ϵconv = data["info"].ϵsconv[end])
