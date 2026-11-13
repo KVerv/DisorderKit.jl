@@ -96,7 +96,7 @@ Results are written to `<file>.tmp` and moved in place at the end, so a file tha
 
 # HPC scripts: disordered Bose-Hubbard chain with normalized ITE
 
-The HPC version of `examples/FiniteDisorderBoseHubbard.jl`: ground states of
+Ground states of
 
     H_w = -Σ t_{wᵢ} (b†ᵢbᵢ₊₁ + h.c.) + U/2 Σ nᵢ(nᵢ-1) - μ Σ nᵢ,   t_{wᵢ} ∈ {t, t/3} with probability 1/2 each,
 
@@ -129,7 +129,7 @@ Run parameters (environment, defaults set in the submit scripts; the Julia scrip
 `N_SAMPLES` (10000, disorder words are enumerated exactly if ∏ᵢ qᵢ ≤ `N_SAMPLES`, qᵢ the number of sectors of site i), `S_MUS` ("0.3 0.6 1.0", the μ/U values
 whose disorder-averaged entanglement entropy profile S(k) and its disorder variance Var[S](k) are plotted in the right
 panels; the nearest grid points are used). S and Var[S] are those of the conditional states projected onto their most
-likely particle number (`average_entanglement_entropy(ψ; charges = 0:nmax)`): the ITE states are superpositions of
+likely particle number (`disorder_average` of `conditional_entanglement_entropy(ψ, w; charges = 0:nmax)`): the ITE states are superpositions of
 neighbouring particle numbers, which would lower S in the bulk. The profile and variance on every bond are also stored in `observables.csv`
 as the columns `S_1..S_{L-1}` and `varS_1..varS_{L-1}`. To run the plot
 script directly, set these yourself, e.g. `T=0.16 U=1.0 NMAX=4 DTAU=0.05 MAXD=16 DATA_DIR=$VSC_DATA/data N_SAMPLES=10000 S_MUS="0.3 0.6 1.0" julia --project=. hpc/plot_BoseHubbard_NormalizedITE.jl 6`.

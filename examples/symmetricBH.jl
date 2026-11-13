@@ -5,7 +5,7 @@
 # The particle number is conserved exactly: |n⟩ carries the U₁ charge n - 1 (random_bose_hubbard with symmetry = U1Irrep,
 # filling = 1), so a state with trivial boundary bonds (total charge 0) has exactly N = L bosons for every disorder word.
 # The evolution starts from the Mott product state |1 1 … 1⟩ and never leaves the N = L sector. This avoids the problem of
-# the unsymmetric runs (FiniteDisorderBoseHubbard.jl), where the evolution from a superposition of all particle numbers
+# the unsymmetric runs (hpc/BoseHubbard_NormalizedITE.jl), where the evolution from a superposition of all particle numbers
 # only selects N through μ. At fixed N a uniform shift of μ only adds a constant, so only the disorder Δ matters.
 using TensorKit, DisorderKit, LinearAlgebra, Printf, CairoMakie, Random
 
@@ -30,21 +30,11 @@ convtol = 1e-7
 
 Hs = DisorderKit.random_bose_hubbard([t], [U], μs; nmax, symmetry = U1Irrep, filling = 1)
 P = space(Hs.Ds[1], 1)                           # Rep[U₁](-1 => 1, 0 => 1, …, nmax-1 => 1): charge n - 1
-S = spacetype(P)
 pP = DisorderKit.basis_order(P, [U1Irrep(n - 1) for n in 0:nmax])   # TensorKit basis order of |0⟩, …, |nmax⟩
 n_op = TensorMap(ComplexF64.(diagm(0:nmax))[pP, pP], P ← P)
 
-# Mott product state |1⟩ on every site and in every disorder sector: charge 0 everywhere, trivial bonds
-function mott_state(Hs, ps, L)
-    v = zeros(ComplexF64, nmax + 1)
-    v[2] = 1                                     # |n = 1⟩
-    W = TensorMap(reshape(v[pP], 1, nmax + 1, 1), oneunit(S) ⊗ P ← oneunit(S))
-    site_ps, sectors = DisorderKit.site_sectors(Hs, ps, L)
-    return DisorderKit.FiniteDisorderMPS([[W for _ in p] for p in site_ps], site_ps, sectors)
-end
-
 alg = DisorderKit.Groundstate_FiniteNormalizedITE(; maxD, order = 2, convtol, maxiter, verbosity = 1)
-ψ, _, info = DisorderKit.groundstate(mott_state(Hs, ps, L), Hs, Δτ, alg)
+ψ, _, info = DisorderKit.groundstate(DisorderKit.mott_state(Hs, ps, L; filling = 1), Hs, Δτ, alg)   # from the Mott state |1 1 … 1⟩
 
 converged = info.ϵsconv[end] <= convtol
 converged || @warn "not converged after $maxiter steps (ϵ_conv = $(info.ϵsconv[end]))"
@@ -83,21 +73,41 @@ println("\ntypical word μ_w = ", μs[word_typ])
 println("S_w(k) = ", round.(S_typ; digits = 4), ",  bond average = ", round(S_typ_avg; digits = 4))
 @printf("S_w(L/2) over %d samples: mean %.4f, std %.4f\n", n_samples, S_mid_avg, S_mid_std)
 
+# Effective Luttinger parameter from the block fluctuations F[k] of the particle number in the blocks[k] (sites a:b) of
+# an open chain of L sites. Bosonization with hard walls at 0 and L+1 (L′ = L+1) gives, for the block between the cuts
+# x₁ = a-1 and x₂ = b,
+#   F = K/(2π²) X + c,   X = ln[d(2x₁) d(2x₂) d(x₂-x₁)² / d(x₁+x₂)²],   d(x) = (2L′/π) sin(πx/(2L′)),
+# which reduces to F = (K/π²) ln l + c far from the walls. K and c from a linear least-squares fit of F against X over the
+# blocks with at least lmin sites whose edges are at least edge_min sites from the walls (single sites and cuts next to a
+# wall carry large lattice corrections). Returns (K, c, X, fit) with fit the indices of the fitted blocks; K = c = NaN if
+# fewer than 2 blocks qualify. In a gapped phase F saturates and K → 0
+function luttinger_parameter(F::AbstractVector{<:Real}, blocks::AbstractVector{<:UnitRange{<:Integer}}, L::Int;
+                             lmin::Int = 2, edge_min::Int = 2)
+    length(F) == length(blocks) || throw(ArgumentError("F and blocks should have the same length"))
+    Lp = L + 1
+    d(x) = (2Lp / π) * sin(π * x / (2Lp))
+    X = [log(d(2(first(b) - 1)) * d(2last(b)) * d(length(b))^2 / d(first(b) - 1 + last(b))^2) for b in blocks]
+    fit = findall(k -> length(blocks[k]) >= lmin && first(blocks[k]) - 1 >= edge_min && L - last(blocks[k]) >= edge_min &&
+                       isfinite(X[k]) && isfinite(F[k]), eachindex(blocks))
+    length(unique(X[fit])) >= 2 || return NaN, NaN, X, fit
+    slope, c = hcat(X[fit], ones(length(fit))) \ F[fit]
+    return 2π^2 * slope, c, X, fit
+end
+
 # Number fluctuations F(l) = 𝔼_w[Var_w(N_A)] of a block A of l sites in the middle of the chain, N_A = Σ_{i∈A} nᵢ: the
 # quantum fluctuations of every conditional state ψ_w, then averaged over the disorder (the disorder fluctuations of
 # ⟨N_A⟩_w are not included). All words are enumerated if there are at most n_samples of them, otherwise sampled.
 # l ≤ L-2: a block of L-1 sites touches a wall (X below diverges), and l = L has Var(N) = 0 exactly (N = L)
-charges = collect(0:nmax)[pP]                    # boson number of every dense physical basis state
 ls = collect(1:L-2)
 blocks = [((L - l) ÷ 2 + 1):((L - l) ÷ 2 + l) for l in ls]
-F_l, F_err = DisorderKit.average_block_fluctuations(ψ; blocks, charges, n_samples, rng)
+F_l, F_err, _ = DisorderKit.disorder_average(w -> DisorderKit.conditional_block_fluctuations(ψ, w, n_op, blocks), ψ; n_samples, rng)
 
-# Luttinger parameter from bosonization on an open chain (DisorderKit.luttinger_parameter): F = K/(2π²) X + c with
+# Luttinger parameter from bosonization on an open chain (luttinger_parameter above): F = K/(2π²) X + c with
 # X = ln[d(2x₁) d(2x₂) d(x₂-x₁)² / d(x₁+x₂)²] for the block between the cuts x₁ = a-1 and x₂ = b, which reduces to
 # F = (K/π²) ln l + c far from the walls. Fitted over the blocks with l ≥ 2 whose edges are at least edge_min sites from
 # the walls. In a gapped (Mott) phase F saturates and K → 0. At L = 10 only a few blocks qualify, so K is a rough estimate
 edge_min = 2
-K_fit, F_c, X_l, fit = DisorderKit.luttinger_parameter(F_l, blocks, L; edge_min)
+K_fit, F_c, X_l, fit = luttinger_parameter(F_l, blocks, L; edge_min)
 length(fit) >= 2 || error("fewer than 2 blocks qualify for the fit of K: increase L or lower edge_min")
 println("\nblock number fluctuations (centered blocks):")
 for (k, l) in enumerate(ls)

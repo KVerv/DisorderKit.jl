@@ -18,7 +18,7 @@ scripts are the same as on the PBS cluster; only the submission differs.
 
 ## Models
 
-The dashboard drives two models (the selector at the top of the page):
+The dashboard drives three models (the selector at the top of the page):
 
 - **U(1) Bose-Hubbard, fixed filling** (`BHU1`, `hpc/BoseHubbardU1_NormalizedITE.jl`): the correlated Bose-Hubbard
   chain with particle number conserving (U(1)-symmetric) tensors at fixed filling, N = filling·L, as in
@@ -28,6 +28,14 @@ The dashboard drives two models (the selector at the top of the page):
   `TAG`); files: `data/BoseHubbardU1_NormalizedITE/<tag>/L<L>/t<t>/Delta<Δ>.jld2` and `_obs.csv`.
 - **Correlated Bose-Hubbard, no symmetry** (`BHCorr`, `hpc/BoseHubbardCorrelated_NormalizedITE.jl`): the original
   t × μ phase-diagram sweeps, unchanged (same files, job attributes and plot script).
+- **Random-hopping Bose-Hubbard, μ sweep** (`BHRand`): hopping t or t/3 on every bond with probability 1/2, no potential
+  disorder, swept over μ at one hopping. This is BHCorr with Δ = 0, Ω = 1/2, r = 0 (fixed and greyed out in the form):
+  the hoppings are t̄(1 ± ½) = {1.5 t̄, 0.5 t̄} = {t, t/3}, with the mean hopping t̄ = 2t/3 entered in the grid (one
+  column; e.g. t̄ = 0.1 for t = 0.15). It runs BHCorr's job, observables and status scripts and shares its data folder
+  and tags (`U<U>_r0.0_Delta0.0_Omega0.5_…`); the dashboard lists every sweep with this preset under BHRand, the others
+  under BHCorr. *Plot* runs `hpc/plot_BoseHubbardRandomHopping_NormalizedITE.jl`: ρ and the effective Luttinger
+  parameter K (left axis) and κ = dρ/dμ (right axis) against μ/U in one figure,
+  `plots/BoseHubbardCorrelated_NormalizedITE_<tag>_L<L>_mu.png`.
 
 **Observables** of the U(1) model are entries of a registry in `hpc/observables_BoseHubbardU1_NormalizedITE.jl`: each
 has a name, its CSV columns, a rule whether it applies to a point and a compute function, and `OBS` (Observables

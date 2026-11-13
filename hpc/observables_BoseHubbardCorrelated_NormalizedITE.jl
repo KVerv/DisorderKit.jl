@@ -6,15 +6,15 @@
 #   S_avg    = (1/N_b) Σ_{k ∈ bulk} S̄(k)                  bulk average of the entropy (N_b bulk bonds, see N_EDGE below)
 #   S_inhom  = (1/N_b) Σ_{k ∈ bulk} (S̄(k) - S_avg)²       homogeneity of the average entropy along the bulk
 # and, per disorder word w, the standard deviation of S_w(k) across the bulk bonds, averaged over the words
-# (DisorderKit.bond_averaged_entanglement_entropy, same words as S̄):
+# (same words as S̄, all from one DisorderKit.disorder_average pass):
 #   S_bstd   = 𝔼_w[std_{k ∈ bulk} S_w(k)]                  bond-to-bond fluctuation of the entropy in one realization
 #   S_bstd_err                                             its standard error (0 if the words are enumerated)
 # and the effective Luttinger parameter from the block number fluctuations of the same words: for the blocks
 # A_l = N_EDGE+1 .. N_EDGE+l (l = 1..N_s, N_s bulk sites, a common left edge) of every conditional state projected onto its
 # most likely particle number (as for the entropy, see below),
-#   F_l      = 𝔼_w[⟨N_A²⟩_w - ⟨N_A⟩_w²]                     (DisorderKit.average_block_fluctuations, project = true)
+#   F_l      = 𝔼_w[⟨N_A²⟩_w - ⟨N_A⟩_w²]                     (DisorderKit.conditional_block_fluctuations with n, projected)
 # and K from the open-chain bosonization fit F = K/(2π²) X + c, X = ln[d(2x₁) d(2x₂) d(x₂-x₁)² / d(x₁+x₂)²] with
-# d(x) = (2(L+1)/π) sin(πx/(2(L+1))) and the cuts x₁, x₂ of the block (DisorderKit.luttinger_parameter, over the blocks
+# d(x) = (2(L+1)/π) sin(πx/(2(L+1))) and the cuts x₁, x₂ of the block (luttinger_parameter below, over the blocks
 # with l ≥ 2 whose right edge is at least N_EDGE sites from the wall, i.e. all l ≥ 2). In a gapped (Mott) phase F
 # saturates and K → 0; on short chains K is an effective, finite-size value.
 #   K        effective Luttinger parameter (NaN if fewer than 2 blocks qualify)
@@ -131,6 +131,27 @@ end
 # ---- Observables
 using TensorKit, DisorderKit, LinearAlgebra, Random, JLD2, Printf, StatsBase, Dates
 
+# Effective Luttinger parameter from the block fluctuations F[k] of the particle number in the blocks[k] (sites a:b) of
+# an open chain of L sites. Bosonization with hard walls at 0 and L+1 (L′ = L+1) gives, for the block between the cuts
+# x₁ = a-1 and x₂ = b,
+#   F = K/(2π²) X + c,   X = ln[d(2x₁) d(2x₂) d(x₂-x₁)² / d(x₁+x₂)²],   d(x) = (2L′/π) sin(πx/(2L′)),
+# which reduces to F = (K/π²) ln l + c far from the walls. K and c from a linear least-squares fit of F against X over the
+# blocks with at least lmin sites whose edges are at least edge_min sites from the walls (single sites and cuts next to a
+# wall carry large lattice corrections). Returns (K, c, X, fit) with fit the indices of the fitted blocks; K = c = NaN if
+# fewer than 2 blocks qualify. In a gapped phase F saturates and K → 0
+function luttinger_parameter(F::AbstractVector{<:Real}, blocks::AbstractVector{<:UnitRange{<:Integer}}, L::Int;
+                             lmin::Int = 2, edge_min::Int = 2)
+    length(F) == length(blocks) || throw(ArgumentError("F and blocks should have the same length"))
+    Lp = L + 1
+    d(x) = (2Lp / π) * sin(π * x / (2Lp))
+    X = [log(d(2(first(b) - 1)) * d(2last(b)) * d(length(b))^2 / d(first(b) - 1 + last(b))^2) for b in blocks]
+    fit = findall(k -> length(blocks[k]) >= lmin && first(blocks[k]) - 1 >= edge_min && L - last(blocks[k]) >= edge_min &&
+                       isfinite(X[k]) && isfinite(F[k]), eachindex(blocks))
+    length(unique(X[fit])) >= 2 || return NaN, NaN, X, fit
+    slope, c = hcat(X[fit], ones(length(fit))) \ F[fit]
+    return 2π^2 * slope, c, X, fit
+end
+
 d = nmax + 1
 n_op = TensorMap(ComplexF64.(diagm(0:nmax)), ℂ^d ← ℂ^d)
 a_op = TensorMap(ComplexF64.(diagm(1 => sqrt.(1:nmax))), ℂ^d ← ℂ^d)   # a|n⟩ = √n |n-1⟩
@@ -155,12 +176,19 @@ function compute_point(t_str, μ_str)
         # Exact disorder averages of the local operators on every site
         ρ = mean(DisorderKit.expectation_value(ψ, n_op))
         φ = mean(abs2, DisorderKit.expectation_value(ψ, a_op))
-        S, _, S_var = DisorderKit.average_entanglement_entropy(ψ; n_samples, rng = Xoshiro(1), charges = 0:nmax)
-        _, _, S_bstd, S_bstd_err = DisorderKit.bond_averaged_entanglement_entropy(ψ; n_samples, rng = Xoshiro(1), charges = 0:nmax,
-                                                                                       bonds = bulk_bonds)
-        # Block number fluctuations of the blocks with left edge N_EDGE+1, projected onto the most likely N, and K
-        F, _ = DisorderKit.average_block_fluctuations(ψ; blocks, charges = 0:nmax, n_samples, rng = Xoshiro(1), project = true)
-        K, _, _, _ = DisorderKit.luttinger_parameter(F, blocks, L; edge_min = n_edge)
+        # One pass over the words (enumerated or sampled) of the conditional states projected onto their most likely N:
+        # the entropy S_w(k) on every bond, its std over the bulk bonds and the block number fluctuations
+        nb = L - 1
+        function per_word(w)
+            S_w = DisorderKit.conditional_entanglement_entropy(ψ, w; charges = 0:nmax)
+            F_w = DisorderKit.conditional_block_fluctuations(ψ, w, n_op, blocks; charges = 0:nmax)
+            return vcat(S_w, std(S_w[bulk_bonds]), F_w)
+        end
+        avg, err, var_w = DisorderKit.disorder_average(per_word, ψ; n_samples, rng = Xoshiro(1))
+        S, S_var = avg[1:nb], var_w[1:nb]
+        S_bstd, S_bstd_err = avg[nb+1], err[nb+1]
+        F = avg[nb+2:end]
+        K, _, _, _ = luttinger_parameter(F, blocks, L; edge_min = n_edge)
     end
     ϵs = data["info"].ϵsconv
     nsteps = get(data, "nsteps", -1)

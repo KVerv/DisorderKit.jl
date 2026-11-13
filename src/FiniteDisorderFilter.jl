@@ -37,18 +37,19 @@ end
 Base.getindex(F::FiniteDisorderFilter, i::Int) = F.opp[i]
 Base.getindex(F::FiniteDisorderFilter, i::Int, p::Int) = F.opp[i][p]
 Base.length(F::FiniteDisorderFilter) = length(F.opp)
-bond_dimensions(F::FiniteDisorderFilter) = [dim(space(F[i,1], 2)) for i in 1:length(F)-1]
+bond_dimensions(F::FiniteDisorderFilter) = [bond_dim(space(F[i,1], 2)) for i in 1:length(F)-1]
 
-# Multiply every conditional state ψ_w with f(w): the bonds of ψ and F are fused, the scale is spread over the sites
+# Multiply every conditional state ψ_w with f(w): the bonds of ψ and F are fused (filter layer below the state, so that
+# the contraction is planar), the scale is spread over the sites
 function Base.:*(F::FiniteDisorderFilter, ψ::FiniteDisorderMPS)
     (length(ψ) == length(F)) || throw(ArgumentError("F should have the same length as ψ"))
     factor = exp(F.log_scale/length(ψ))
     opp = map(1:length(ψ)) do i
         map(enumerate(ψ[i])) do (p, W)
             f = F[i, p]
-            isol = isomorphism(ComplexF64, fuse(space(W, 1), space(f, 1)), space(W, 1) ⊗ space(f, 1))
-            isor = isomorphism(ComplexF64, fuse(space(W, 3)', space(f, 2)'), space(W, 3)' ⊗ space(f, 2)')
-            @tensor Wnew[-1 -2; -4] := factor * isol[-1; 1 2] * W[1 -2; 4] * f[2; 5] * conj(isor[-4; 4 5])
+            isol = isomorphism(ComplexF64, fuse(space(f, 1), space(W, 1)), space(f, 1) ⊗ space(W, 1))
+            isor = isomorphism(ComplexF64, fuse(space(f, 2)', space(W, 3)'), space(f, 2)' ⊗ space(W, 3)')
+            @plansor Wnew[-1 -2; -4] := factor * isol[-1; 2 1] * W[1 -2; 4] * f[2; 5] * conj(isor[-4; 5 4])
         end
     end
     return FiniteDisorderMPS(opp, ψ.ps, ψ.sectors)
@@ -81,9 +82,9 @@ _boundary_environment(V) = (id(ComplexF64, V), 0.0)
 function _advance(env::Tuple{AbstractTensorMap, Float64}, A::AbstractTensorMap; right::Bool = false)
     E, logE = env
     if right
-        @tensor E′[-1; -2] := A[-1 3; 1] * conj(A[-2 3; 2]) * E[1; 2]
+        @plansor E′[-1; -2] := A[-1 3; 1] * conj(A[-2 3; 2]) * E[1; 2]
     else
-        @tensor E′[-2; -1] := A[1 3; -1] * conj(A[2 3; -2]) * E[2; 1]
+        @plansor E′[-2; -1] := A[1 3; -1] * conj(A[2 3; -2]) * E[2; 1]
     end
     m = LinearAlgebra.norm(E′, Inf)
     (m == 0 || logE == -Inf) && return E′, -Inf
@@ -126,7 +127,7 @@ struct ScalarPartition{T<:AbstractTensorMap}
 end
 
 Base.length(Z::ScalarPartition) = length(Z.cores)
-bond_dimensions(Z::ScalarPartition) = [dim(space(c, 3)) for c in Z.cores[1:end-1]]
+bond_dimensions(Z::ScalarPartition) = [bond_dim(space(c, 3)) for c in Z.cores[1:end-1]]
 
 # Sector matrices G[i][p]: ℂ^{D_{Z,i-1}} ← ℂ^{D_{Z,i}} of the partition, every site divided by its largest entry.
 # Returns (G, λ) with √P(w) Z(w) = exp(λ) G[1][w₁] ⋯ G[L][w_L]
@@ -135,8 +136,8 @@ function sector_matrices(Z::ScalarPartition)
     G = map(enumerate(Z.cores)) do (i, c)
         q = length(Z.ps[i])
         map(1:q) do p
-            e = Tensor([j == p ? 1.0 : 0.0 for j in 1:q], trivial_space(c, q))   # basis ket of sector p
-            @tensor g[r; q] := c[r x; q] * e[x]
+            e = basis_ket(spacetype(c), q, p)   # basis ket of sector p
+            @plansor g[r; q] := c[r x; q] * e[x]
         end
     end
     for (i, Gi) in enumerate(G)
@@ -181,7 +182,7 @@ end
 # All one-site extensions (p, suffix) of the suffixes on site i, sectors outermost: columns of G_i[p] R, side by side
 function extend_suffix_family(fam::WordFamily, Gi::Vector, halflogp::Vector{Float64})
     M = reduce(catdomain, [g * fam.M for g in Gi])
-    s = _safe_scales(vec(maximum(abs, convert(Array, M); dims = 1)))   # largest |entry| of every column
+    s = _safe_scales(vec(maximum(abs, dense_block(M); dims = 1)))   # largest |entry| of every column
     M = M * DiagonalTensorMap(1 ./ s, domain(M)[1])
     return WordFamily(M, repeat(fam.logs, length(Gi)) .+ log.(s), reduce(vcat, [fam.halflogp .+ h for h in halflogp]))
 end
@@ -202,7 +203,7 @@ CrossDiagnostics() = CrossDiagnostics(0, 0.0, 0, 0)
 # Cross targets -½ log|Z(w)| for every pair (prefix a, suffix b), w = C[a] ⊕ R[b], from one matrix product.
 # The prior √P(w) is removed once per label through halflogp
 function log_targets(λ::Float64, C::WordFamily, R::WordFamily, diag::CrossDiagnostics)
-    overlap = convert(Array, C.M * R.M)
+    overlap = Matrix(dense_block(C.M * R.M))
     offsets = λ .+ (C.logs .- C.halflogp) .+ transpose(R.logs .- R.halflogp)
     phase = angle.(overlap)
     diag.examined += length(overlap)
@@ -292,14 +293,14 @@ function reconstruct_filter(H::Vector{<:AbstractMatrix}, K::Vector{<:Vector{<:Ab
     function shifted(b)
         v = exp.(b .- σ)
         all(isfinite, v) && !any(iszero, v) || throw(DomainError(b, "cross targets exceed exponential range"))
-        return TensorMap(v, trivial_space(S, size(b, 1)) ← trivial_space(S, size(b, 2)))
+        return trivial_tensor(v, S, (size(b, 1),), (size(b, 2),))
     end
 
     trunc = truncrank(max_rank) & truncerror(; rtol = tail_tol) & trunctol(; rtol = 1e-12, p = Inf)
     @timeit to "svd_cuts" cuts = map(H) do b
         Hb = shifted(b)
-        U, S, Vh, ϵ = robust_svd_trunc(Hb; trunc = trunc)
-        (left = inv(S) * U', right = Vh', met = ϵ <= tail_tol * LinearAlgebra.norm(Hb))   # H⁺ = Vh' S⁻¹ U'
+        U, Σ, Vh, ϵ = robust_svd_trunc(Hb; trunc = trunc)
+        (left = inv(Σ) * U', right = Vh', met = ϵ <= tail_tol * LinearAlgebra.norm(Hb))   # H⁺ = Vh' Σ⁻¹ U'
     end
 
     # F_i[p] = S_{i-1}⁻¹ U_{i-1}' K̃_i[p] V_i
@@ -312,7 +313,7 @@ function reconstruct_filter(H::Vector{<:AbstractMatrix}, K::Vector{<:Vector{<:Ab
             complex(core)
         end
     end
-    ranks = [dim(domain(c.right)) for c in cuts]
+    ranks = [bond_dim(domain(c.right)) for c in cuts]
     return FiniteDisorderFilter(opp, σ), ranks, all(c.met for c in cuts)
 end
 

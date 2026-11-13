@@ -1,5 +1,5 @@
 # One chemical potential μ of the disordered Bose-Hubbard chain with disorder-normalized imaginary time evolution
-# (Groundstate_FiniteNormalizedITE), as in examples/FiniteDisorderBoseHubbard.jl:
+# (Groundstate_FiniteNormalizedITE):
 #   H_w = -Σ t_{wᵢ} (b†ᵢbᵢ₊₁ + h.c.) + U/2 Σ nᵢ(nᵢ-1) - μ Σ nᵢ,   t_{wᵢ} ∈ {t, t/3} with probability 1/2 each.
 # H conserves the particle number, so the evolution starts from the uniform superposition of all occupations.
 # Stores the final state and the per-step diagnostics; no observables, those are computed from the stored states by

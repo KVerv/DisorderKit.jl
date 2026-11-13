@@ -20,6 +20,30 @@ struct DisorderMPOHam{T <: Number, S <: IndexSpace}
     end
 end
 
+# Nearest-neighbour chain H_w = -Σ J_{w_i} h2(i, i+1) + Σ h1(i) with random couplings, one sector per J, for a two-site
+# operator h2 : P ⊗ P ← P ⊗ P on any space P (any sector type, also anyonic). The bond term is split into L ⊗ R by MPSKit
+# (the planar decomposition of InfiniteMPOHamiltonian, whose Jordan blocks have exactly the layout of DisorderMPOHam).
+# h1 : P ← P is an optional on-site term (zero by default)
+function disorder_hamiltonian(h2::AbstractTensorMap{<:Any, S, 2, 2}, Js::Vector{<:Real};
+                              h1::Union{Nothing, AbstractTensorMap{<:Any, S, 1, 1}} = nothing) where {S}
+    P = space(h2, 1)
+    W = InfiniteMPOHamiltonian(PeriodicArray([P]), (1, 2) => complex(h2))[1]
+    A, R, L = TensorMap(W.A), TensorMap(W.B), TensorMap(W.C)
+    D = isnothing(h1) ? zeros(ComplexF64, P ← P) : complex(h1)
+    q = length(Js)
+    return DisorderMPOHam(fill(A, q), [-J * R for J in Js], fill(L, q), fill(D, q))
+end
+
+# Golden chain of Fibonacci anyons τ, H_w = -Σ J_{w_i} P_I(i, i+1), with P_I the projector of τ ⊗ τ onto the trivial
+# fusion channel, one sector per J. J > 0 (antiferromagnetic, the trivial channel favoured) is critical with c = 7/10
+# (tricritical Ising), J < 0 with c = 4/5 (3-state Potts)
+function golden_chain(Js::Vector{<:Real})
+    P = Vect[FibonacciAnyon](:τ => 1)
+    P_I = zeros(ComplexF64, P ⊗ P ← P ⊗ P)
+    block(P_I, FibonacciAnyon(:I)) .= 1
+    return disorder_hamiltonian(P_I, Js)
+end
+
 # Random transverse-field Ising chain H_w = -Σ h_{w_i} X_i - Σ J_{w_i} Z_i Z_{i+1} (- ϵ Σ Z_i), one sector per pair
 # (h, J) with h running fastest
 function random_transverse_field_ising(Js::Vector{Float64}, hs::Vector{Float64}; ϵ::Real = 0.0)
@@ -124,6 +148,16 @@ function jordan_mpo_tensor(A::AbstractTensorMap, R::AbstractTensorMap, L::Abstra
     W[3, 1, 1, 3] = BraidingTensor{ComplexF64, S}(P, oneunit(S))
     return W
 end
+
+# Bulk time evolution MPO tensors of every disorder sector (time_evolution_MPO(Hs, dt)), opp[p] for sector p
+struct InfiniteDisorderMPO{T<:AbstractMPOTensor}
+    opp::Vector{T}
+end
+
+Base.getindex(T::InfiniteDisorderMPO, ix::Int) = T.opp[ix]
+Base.size(T::InfiniteDisorderMPO) = size(T.opp)
+Base.length(T::InfiniteDisorderMPO) = length(T.opp)
+Base.iterate(t::InfiniteDisorderMPO, i=1) = (i > length(t.opp)) ? nothing : (t[i], i + 1)
 
 # Imaginary time evolution MPO exp(-dt H_p) of every sector (TaylorCluster of order N)
 function time_evolution_MPO(Hs::DisorderMPOHam, dt::Real; N::Int = 1)

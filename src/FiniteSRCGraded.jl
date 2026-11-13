@@ -1,46 +1,48 @@
-# Charge-resolved SRC of the physical source f ⊙ (W ψ) on graded spaces (abelian symmetries such as U₁).
-# Same algorithm and notation as FiniteSRC.jl (Steps 1-7), with one change: the physical legs X_i = P' ⊗ ℂ^q carry a
-# charge, so a Khatri-Rao test vector with Gaussian weights on all of X_i has no definite charge and is not a row of a
-# graded space. Here every prefix row k has a definite charge:
-#   - at every site j its test vector is supported on one sector y of the spin leg (Gaussian over the states of that
-#     sector and the q disorder sectors), so the row charge goes from c to c ⊗ y,
+# Charge-resolved SRC of the physical source f ⊙ (W ψ) on graded spaces of any sector type: abelian (U₁, Z_N),
+# non-abelian (SU₂) and anyonic (Fibonacci). Same algorithm and notation as FiniteSRC.jl (Steps 1-7), with one change:
+# the physical legs X_i = P' ⊗ ℂ^q carry a charge, so a Khatri-Rao test vector with Gaussian weights on all of X_i has no
+# definite charge and is not a row of a graded space. Here every prefix row k has a definite charge:
+#   - at every site j its test vector is supported on one sector y of the spin leg and one fusion channel c → c′ ∈ c ⊗ y
+#     (Gaussian over the states of that sector, the fusion vertices of the channel and the q disorder sectors), so the
+#     row charge goes from c to c′ (for abelian charges c′ = c ⊗ y is the only channel),
 #   - the prefix C_{i-1} : K_i ← V_i is graded, K_i = ⊕_c (c => number of rows with charge c at cut i), and the rows of a
 #     sector are kept in creation order (catcodomain appends at the end of every sector block),
-#   - rows are created for a target (cut i, charge c): their charge path on sites 1..i-1 is drawn uniformly among the
-#     paths that end in c and only pass through charges of the left bonds V_j (a counting dynamic program), so no row
-#     dies on the way.
+#   - rows are created for a target (cut i, charge c): their charge path (spin sector and fusion channel at every site
+#     1..i-1) is drawn uniformly, counted with the fusion multiplicities N_{c y}^{c′}, among the paths that end in c and
+#     only pass through charges of the left bonds V_j (a counting dynamic program), so no row dies on the way.
+# For a non-abelian sector a block of K, V or X is the multiplicity space of its sector (dim(V, c) multiplets); the
+# blockwise QR, ranks and error estimates below act on these multiplicity spaces, as TensorKit's factorizations do.
 # Rows of one sector at one cut are independent and identically distributed, so the sketch basis, the leave-one-out
 # error estimate and the fresh check of Steps 4-5 are applied per sector block, each relative to its own scale (rows of
 # different charges have incomparable magnitudes), and the cut is accepted when every block meets the target. For a
 # single block this is the estimate of FiniteSRC.jl. Rows that are exactly zero (a charge path through a sector where
 # the left network vanishes) are dropped.
 #
-# The Trivial (no symmetry) case keeps the code path of FiniteSRC.jl, so its random streams and results are unchanged.
+# The Trivial (no symmetry) case keeps the dense code path of FiniteSRC.jl.
 
 is_graded(P::Source) = sectortype(spacetype(P.A[1][1])) !== Trivial
 
 # Charges of the fused space V (the sectors in which a map into V can be nonzero)
 _charges(V) = Set(sectors(fuse(V)))
 
-# Unique fusion product of two abelian charges
-_fuse(a::Sector, b::Sector) = only(a ⊗ b)
+# Fusion channels (y, c′) of a row with charge a through the spin sectors y of the space `spin`, c′ ∈ a ⊗ y, with their
+# multiplicities N_{a y}^{c′}
+_channels(a::Sector, spin) = [((y, b), Nsymbol(a, y, b)) for y in sectors(spin) for b in a ⊗ y]
 
 #==========================================================================================
  Step 1 primitive on graded spaces
 ==========================================================================================#
 
 # J = M_i S on graded spaces: per sector u contract S with A_u, W_u, f_u (spin leg s open), weight g_u, and place it on the
-# disorder leg u of X_i = P' ⊗ ℂ^q through the basis covector of u
+# disorder leg u of X_i = P' ⊗ ℂ^q through the basis covector of u (a planar outer product with a trivial-sector leg)
 function apply_suffix_graded(P::PhysicalSource, i::Int, S::AbstractTensorMap)
     q = length(P.g[i])
     T = promote_type(scalartype(S), scalartype(P.A[i][1]), scalartype(P.W[i][1]), scalartype(P.f[i][1]))
-    Tq = trivial_space(spacetype(S), q)
-    J = zeros(T, left_space(P, i) ← physical_space(P, i) ⊗ domain(S))      # V_i ← P' ⊗ ℂ^q ⊗ D_i
+    J = zeros(T, left_space(P, i) ← domain(S) ⊗ physical_space(P, i))      # V_i ← D_i ⊗ P' ⊗ ℂ^q
     for (u, g) in enumerate(P.g[i])
-        A, W, f = P.A[i][u], P.W[i][u], P.f[i][u]
-        e = Tensor(T[j == u ? 1 : 0 for j in 1:q], Tq)
-        @tensor opt=true allocator=site_allocator X[-1 -2 -3; -4 -5] := g * S[1 3 5; -5] * A[-1 2; 1] * W[-2 -4; 2 3] * f[-3; 5]
-        @tensor J[-1 -2 -3; -4 -5 -6] += X[-1 -2 -3; -4 -6] * conj(e[-5])
+        e = basis_ket(spacetype(S), q, u, T)
+        X = suffix_layers(P, i, u, g, S)                                    # V_i ← D_i ⊗ P'
+        @plansor J[-1 -2 -3; -4 -5 -6] += X[-1 -2 -3; -4 -5] * conj(e[-6])
     end
     return J
 end
@@ -51,7 +53,8 @@ end
 
 # Prefixes shared by all cuts: C[j] holds C_{j-1}: K_j ← V_j (C_0 = 1), logs[j][c] the log scale of the rows of sector c
 # (in their order within the sector block). allowed[j] are the charges of V_j reachable from the left boundary, spin[j]
-# the spin leg of site j as it is contracted with the test vectors
+# the spin leg of site j as it is contracted with the test vectors. drawn[(i, c)] are the deterministic charge paths
+# (see sample_charge_paths) already drawn for target cut i and charge c
 mutable struct GradedPrefixStore{TP<:PhysicalSource, R<:AbstractRNG, I<:Sector}
     P::TP
     rng::R
@@ -59,6 +62,7 @@ mutable struct GradedPrefixStore{TP<:PhysicalSource, R<:AbstractRNG, I<:Sector}
     logs::Vector{Dict{I, Vector{Float64}}}
     allowed::Vector{Set{I}}
     spin::Vector{Any}
+    drawn::Dict{Tuple{Int, I}, Set{Vector{Tuple{I, I}}}}
 end
 
 function GradedPrefixStore(P::PhysicalSource, rng::AbstractRNG)
@@ -70,43 +74,73 @@ function GradedPrefixStore(P::PhysicalSource, rng::AbstractRNG)
     allowed = Vector{Set{I}}(undef, L)
     allowed[1] = Set([one(I)])
     for j in 2:L
-        reach = Set(_fuse(a, y) for a in allowed[j-1] for y in sectors(spin[j-1]))
+        reach = Set(b for a in allowed[j-1] for ((_, b), _) in _channels(a, spin[j-1]))
         allowed[j] = intersect(reach, _charges(left_space(P, j)))
     end
-    return GradedPrefixStore(P, rng, Any[nothing for _ in 1:L], [Dict{I, Vector{Float64}}() for _ in 1:L], allowed, spin)
+    return GradedPrefixStore(P, rng, Any[nothing for _ in 1:L], [Dict{I, Vector{Float64}}() for _ in 1:L], allowed, spin,
+                             Dict{Tuple{Int, I}, Set{Vector{Tuple{I, I}}}}())
+end
+
+# Whether a row with this charge path is deterministic up to its scale: at every site the Gaussian test weights live on a
+# one-dimensional space (one state in the spin sector, one fusion vertex, one disorder sector), e.g. Fibonacci anyons
+# without disorder. Two rows with the same deterministic path are then parallel and add nothing to the sketch
+function deterministic_path(store::GradedPrefixStore, path)
+    a = one(first(first(path)))
+    for (j, (y, b)) in enumerate(path)
+        dim(store.spin[j], y) * Nsymbol(a, y, b) * length(store.P.g[j]) == 1 || return false
+        a = b
+    end
+    return true
 end
 
 # Number of stored rows of charge c at cut i
 stored_rows(store::GradedPrefixStore, i::Int, c::Sector) = length(get(store.logs[i], c, Float64[]))
 
-# Charge paths of n rows that end in charge c at cut i (charge of C_{i-1}), uniform over the admissible paths: paths[k][j]
-# is the spin sector of row k at site j, j = 1..i-1. Counting from the end: N[j][a] = number of continuations from charge
-# a at cut j (sites j..i-1) that end in c and only pass through allowed charges
-function sample_charge_paths(store::GradedPrefixStore, i::Int, c::Sector, n::Int)
+# Charge paths of n rows that end in charge c at cut i (charge of C_{i-1}), uniform over the admissible paths counted with
+# their fusion multiplicities: paths[k][j] = (y, c′) is the spin sector and the new row charge of row k at site j,
+# j = 1..i-1. Counting from the end: N[j][a] = number of continuations from charge a at cut j (sites j..i-1) that end in c
+# and only pass through allowed charges.
+# Deterministic paths (deterministic_path) are drawn without replacement per (i, c): a repeated one would give a column
+# parallel to an earlier one, which the leave-one-out estimate and the fresh check take as evidence that the block has
+# converged although its other directions were never sampled. Once (almost) all of them are drawn, fewer than n paths are
+# returned, and ensure_rows! marks the charge as exhausted: the drawn paths then span every direction the block can have
+function sample_charge_paths(store::GradedPrefixStore, i::Int, c::Sector, n::Int; max_tries::Int = 20 + 10n)
     I = typeof(c)
     N = Vector{Dict{I, Float64}}(undef, i)
     N[i] = Dict(c => 1.0)
     for j in i-1:-1:1
         N[j] = Dict{I, Float64}()
-        for a in store.allowed[j], y in sectors(store.spin[j])
-            b = _fuse(a, y)
-            w = get(N[j+1], b, 0.0)
+        for a in store.allowed[j], ((_, b), m) in _channels(a, store.spin[j])
+            w = m * get(N[j+1], b, 0.0)
             w > 0 && (N[j][a] = get(N[j], a, 0.0) + w)
         end
     end
     start = one(I)
     get(N[1], start, 0.0) > 0 || throw(ArgumentError("charge $c cannot be reached at cut $i"))
-    return map(1:n) do _
-        a, path = start, I[]
+    function draw()
+        a, path = start, Tuple{I, I}[]
         for j in 1:i-1
-            ys = [y for y in sectors(store.spin[j]) if get(N[j+1], _fuse(a, y), 0.0) > 0]
-            ws = [N[j+1][_fuse(a, y)] for y in ys]
-            y = ys[searchsortedfirst(cumsum(ws), rand(store.rng) * sum(ws))]
-            push!(path, y)
-            a = _fuse(a, y)
+            chs = [(ch, m * N[j+1][ch[2]]) for (ch, m) in _channels(a, store.spin[j]) if get(N[j+1], ch[2], 0.0) > 0]
+            ws = last.(chs)
+            ch = first(chs[searchsortedfirst(cumsum(ws), rand(store.rng) * sum(ws))])
+            push!(path, ch)
+            a = ch[2]
         end
-        path
+        return path
     end
+    drawn = get!(() -> Set{Vector{Tuple{I, I}}}(), store.drawn, (i, c))
+    paths = Vector{Tuple{I, I}}[]
+    tries = 0
+    while length(paths) < n && tries < max_tries
+        tries += 1
+        path = draw()
+        if i > 1 && deterministic_path(store, path)
+            path in drawn && continue
+            push!(drawn, path)
+        end
+        push!(paths, path)
+    end
+    return paths
 end
 
 # Graded space with the given row charges, and the position of every row within its sector block (rows of a sector in
@@ -152,21 +186,22 @@ function extend_prefixes!(store::GradedPrefixStore, paths::Vector, i::Int)
     for j in 1:i
         if j > 1
             jj = j - 1                                            # the site that is applied
-            new_charges = [_fuse(charges[k], paths[k][jj]) for k in 1:n]
+            new_charges = [paths[k][jj][2] for k in 1:n]
             K′, pos′ = row_space(S, new_charges)
             out = zeros(ComplexF64, K′ ← right_space(P, jj))
             for (u, g) in enumerate(P.g[jj])
-                A, W, f = P.A[jj][u], P.W[jj][u], P.f[jj][u]
-                @tensor opt=true allocator=site_allocator X[-1; -2 -3 -4 -5] := C[-1; 1 3 4] * A[1 2; -2] * W[3 -5; 2 -3] * f[4; -4]
-                Xp = permute(X, ((1, 5), (2, 3, 4)))              # K ⊗ spin ← R_jj
+                X = prefix_layers(P, jj, u, C)                     # K ← R_jj ⊗ spin'
+                Xp = repartition(X, 2)                            # K ⊗ spin ← R_jj (planar)
                 spin = codomain(Xp)[2]
                 spin == store.spin[jj] || throw(ArgumentError("unexpected spin leg $spin at site $jj"))
                 Ω = zeros(ComplexF64, K′ ← codomain(Xp))
+                # Every fusion tree (c, y) → c′ (and vertex, for fusion multiplicities) gets its own Gaussian weights
                 for (f1, f2) in fusiontrees(Ω)
                     c, y = f2.uncoupled
+                    c′ = f2.coupled
                     blk = Ω[f1, f2]                                # [row k′, row k, state of sector y]
                     for k in 1:n
-                        (charges[k] == c && paths[k][jj] == y) || continue
+                        (charges[k] == c && paths[k][jj] == (y, c′)) || continue
                         ω = (randn(rng, dim(spin, y)) + im * randn(rng, dim(spin, y))) / sqrt(2)
                         blk[pos′[k], pos[k], :] .= g .* ω
                     end
@@ -210,14 +245,15 @@ const dead_prefix_rows = Ref(0)
 
 # Try to give cut i at least n[c] rows of every charge c. Dead rows are dropped, so a few rounds may be needed; a charge
 # for which `attempts` rounds in a row add no row has a vanishing left network (its block of J is never seen by any
-# prefix). Returns the charges that still lack rows
+# prefix) or no deterministic path left that was not drawn yet (sample_charge_paths). Returns the charges that still lack rows
 function ensure_rows!(store::GradedPrefixStore, i::Int, n::Dict; attempts::Int = 4)
     short = Set{keytype(n)}()
     for (c, k) in n
         failures = 0
         while (missing_rows = k - stored_rows(store, i, c)) > 0
             before = stored_rows(store, i, c)
-            extend_prefixes!(store, sample_charge_paths(store, i, c, missing_rows), i)
+            paths = sample_charge_paths(store, i, c, missing_rows)
+            isempty(paths) || extend_prefixes!(store, paths, i)
             if stored_rows(store, i, c) == before
                 failures += 1
                 failures >= attempts && (push!(short, c); break)
@@ -244,7 +280,7 @@ function select_rows_graded(K, cols::Dict)
     return Π
 end
 
-# Sketch columns of cut i for the rows cols[c] of every charge: Z = (C_{i-1}[cols, :] J)': X_i ⊗ D_i ← K_sel, and their
+# Sketch columns of cut i for the rows cols[c] of every charge: Z = (C_{i-1}[cols, :] J)': D_i ⊗ X_i ← K_sel, and their
 # log scales per sector
 function sketch_columns(store::GradedPrefixStore, J::AbstractTensorMap, i::Int, cols::Dict)
     Ci = select_rows_graded(codomain(store.C[i])[1], cols) * store.C[i]
@@ -264,7 +300,7 @@ end
 # The range of the sketch does not depend on the column scales, so the columns are normalized instead, and ranks,
 # error estimates and acceptance are relative within every block. The true weight of every direction is restored in
 # the suffix S = J Q and judged by the rounding (Step 7).
-# rows[c] = dimension of sector c of X_i ⊗ D_i, used[c] = number of columns of sector c
+# rows[c] = dimension of sector c of D_i ⊗ X_i, used[c] = number of columns of sector c
 mutable struct GradedSketchBasis{TZ<:AbstractTensorMap, I<:Sector}
     rows::Dict{I, Int}
     threshold::Float64
@@ -382,7 +418,7 @@ end
 ==========================================================================================#
 
 # One cut i on graded spaces, as compress_cut! in FiniteSRC.jl but per sector block: every active charge c (present in
-# both V_i and X_i ⊗ D_i) starts with min(rows_c, 2) columns (or 4/5 of its previous width), the cut is accepted when
+# both V_i and D_i ⊗ X_i) starts with min(rows_c, 2) columns (or 4/5 of its previous width), the cut is accepted when
 # every block meets rtol relative to its own norm, otherwise every unmet block grows by max(3, k_c ÷ 4) columns up to
 # cap (per block).
 # Returns (G_i, S_{i-1}, final widths per charge, target met)
