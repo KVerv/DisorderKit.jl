@@ -11,8 +11,9 @@ hpc/condor/condor.local.env.example). Command-line flags override them.
 
 Models (MODELS below): BHCorr, the correlated Bose-Hubbard chain without symmetry on a t × μ grid
 (hpc/condor/sweep_BHCorr.sh), and BHU1, the same chain with U(1)-symmetric tensors at fixed filling, swept over any two
-of t, U, Δ, Ω, r (hpc/condor/sweep_BHU1.sh); the page picks the model, and colours the grid by job state or by an
-observable.
+of t, U, Δ, Ω, r (hpc/condor/sweep_BHU1.sh), and BHRand, the random-hopping chain (hoppings {t, t/3} with probability
+1/2 each) swept over μ only: a preset of BHCorr (Δ = 0, Ω = 1/2, r = 0, one mean hopping t̄ = 2t/3) with its own plot of
+ρ, κ and K against μ. The page picks the model, and colours the grid by job state or by an observable.
 
 Workflow: every condor job runs the ITE and the observables of one point. *Gather*
 copies finished results to this repo's data/ folder and then deletes them (and their logs) on the access point, so
@@ -75,6 +76,9 @@ PARAMS = {
 #           parameters (built in the page and by the Julia script)
 #   BHU1    hpc/BoseHubbardU1_NormalizedITE.jl: U(1) tensors at fixed filling, any two of t, U, Delta, Omega, r as
 #           axes; the tag "<X>-<Y>_<fixed parameters>" is built here (bhu1_tag) and passed to the scripts as TAG
+#   BHRand  a preset of BHCorr (below MODELS): the same scripts, files and jobs with Δ = 0, Ω = 1/2, r = 0, i.e. random
+#           hopping {1.5 t̄, 0.5 t̄} = {t, t/3}, one t̄ column swept over μ, and its own plot (ρ, κ, K against μ). Sweeps
+#           and jobs of the shared folder are assigned to BHCorr or BHRand by their tag (sweep_model)
 _RES = ["PPN", "MEM", "REQUIREMENTS", "NICE", "POINTS"]
 MODELS = {
     "BHCorr": {
@@ -108,7 +112,34 @@ MODELS = {
         "plot_params": ["OBS_COL", "LOG", "XMIN", "XMAX", "YMIN", "YMAX"],
     },
 }
+MODELS["BHRand"] = {
+    **MODELS["BHCorr"],
+    "plot_script": "hpc/plot_BoseHubbardRandomHopping_NormalizedITE.jl",   # ρ, κ and K against μ
+    "plot_params": [],
+    "plot_suffix": "_mu",                           # PNG next to (not over) BHCorr's phase diagram of the same tag
+    "preset": {"R": 0.0, "DELTA": 0.0, "OMEGA": 0.5},
+}
 BHU1_AXES = {"t": "T", "U": "U", "Delta": "DELTA", "Omega": "OMEGA", "r": "R"}   # axis name => parameter
+RE_BHCORR_TAG = re.compile(r"^U(.+)_r(.+)_Delta(.+)_Omega(.+)_nmax\d+_dtau.+_D\d+$")
+
+
+def is_preset_tag(tag, preset):
+    """Whether a BHCorr tag (U<U>_r<r>_Delta<Δ>_Omega<Ω>_…) has the preset's r, Δ and Ω (compared as numbers)."""
+    m = RE_BHCORR_TAG.match(tag)
+    if not m:
+        return False
+    try:
+        r, delta, omega = (float(v) for v in m.group(2, 3, 4))
+    except ValueError:
+        return False
+    return (r, delta, omega) == (preset["R"], preset["DELTA"], preset["OMEGA"])
+
+
+def sweep_model(name, tag):
+    """The model a sweep of the model `name`'s folder belongs to: BHCorr tags with BHRand's preset are BHRand sweeps."""
+    if name == "BHCorr" and is_preset_tag(tag, MODELS["BHRand"]["preset"]):
+        return "BHRand"
+    return name
 COMMON = {"submit": ["MAXITER", "CONVTOL", "CROSS_WIDTH", "N_SAMPLES", "N_EDGE", "OBS_THREADS", "DISK", "DRYRUN", "RESUME"] + _RES,
           "recompute_obs": ["N_SAMPLES", "N_EDGE", "CHUNK"] + _RES, "plot": []}
 
@@ -137,7 +168,7 @@ def bhu1_tag(values):
 
 def axes_of(model, tag):
     """Names of the two axes of a sweep."""
-    if model == "BHCorr":
+    if model in ("BHCorr", "BHRand"):
         return "t", "mu"
     m = re.match(r"^([A-Za-z]+)-([A-Za-z]+)_", tag)
     if not m:
@@ -625,7 +656,7 @@ class Dashboard:
     def sweeps(self):
         """Every sweep of every model: on the access point, on the laptop or in the queue."""
         lists = "".join(f"echo @@LIST_{name}; {self.remote.julia} --project=. --startup-file=no hpc/condor/sweep_status.jl "
-                        f"{m['status_args']}--list 2>/dev/null; " for name, m in MODELS.items())
+                        f"{m['status_args']}--list 2>/dev/null; " for name, m in MODELS.items() if "preset" not in m)
         cmd = (lists + "echo @@QUEUE; command -v condor_q >/dev/null && condor_q \"$USER\" -constraint 'BHC_tag =!= undefined' "
                "-af BHC_model BHC_tag BHC_L 2>/dev/null; echo @@END")
         rc, out, err = self.remote.run(cmd, timeout=120)
@@ -633,13 +664,19 @@ class Dashboard:
             raise ConnectionError(err.strip() or "ssh connection lost")
         s = sections(out)
         found = {}
-        for name in MODELS:
-            for x in parse_json_section(s.get(f"LIST_{name}", ""), []):
-                found[(name, x["tag"], x["L"])] = {**x, "model": name, "n_states": 0, "on_remote": x["n_states"]}
-        # the laptop's sweeps (the archive)
         for name, m in MODELS.items():
+            if "preset" in m:
+                continue                              # listed with the model whose folder it shares
+            for x in parse_json_section(s.get(f"LIST_{name}", ""), []):
+                mod = sweep_model(name, x["tag"])
+                found[(mod, x["tag"], x["L"])] = {**x, "model": mod, "n_states": 0, "on_remote": x["n_states"]}
+        # the laptop's sweeps (the archive)
+        for model_name, m in MODELS.items():
+            if "preset" in m:
+                continue
             root = os.path.join(self.args.gather_dest, "data", m["dir"])
             for tag in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+                name = sweep_model(model_name, tag)
                 try:
                     X, Y = axes_of(name, tag)
                 except ValueError:
@@ -658,6 +695,7 @@ class Dashboard:
         for parts in (line.split() for line in s.get("QUEUE", "").splitlines()):
             if len(parts) == 3 and parts[2].isdigit():
                 name = parts[0] if parts[0] in MODELS else "BHCorr"   # jobs without BHC_model are BHCorr jobs
+                name = sweep_model(name, parts[1])
                 k = (name, parts[1], int(parts[2]))
                 queued[k] = queued.get(k, 0) + 1
                 if k not in found:
@@ -736,7 +774,8 @@ class Dashboard:
             if not obs or not RE_COL.match(obs):
                 return None
             return os.path.join(self.args.gather_dest, "plots", f"{MODELS[model]['dir']}_{tag}_L{int(L)}_{obs}.png")
-        return os.path.join(self.args.gather_dest, "plots", f"{MODELS[model]['dir']}_{tag}_L{int(L)}.png")
+        suffix = MODELS[model].get("plot_suffix", "")
+        return os.path.join(self.args.gather_dest, "plots", f"{MODELS[model]['dir']}_{tag}_L{int(L)}{suffix}.png")
 
     def plot_mtimes(self, model, tag, L):
         """Modification times of the existing PNGs of a sweep: {"": t} for BHCorr, {observable: t} for BHU1."""
@@ -845,6 +884,13 @@ class Dashboard:
             if want != tag:
                 raise ValueError(f"the parameters give the tag {want}, not the selected sweep {tag}")
             values["TAG"] = tag
+        preset = MODELS[model].get("preset")
+        if preset:
+            for k, want in preset.items():
+                if k not in values or float(values[k]) != want:
+                    raise ValueError(f"{k} must be {want} for this model")
+            if sweep_model("BHCorr", tag) != model:
+                raise ValueError(f"the tag {tag} is not a sweep of this model")
         return values
 
     def _action(self, task, action, params, emit):
@@ -1271,6 +1317,29 @@ def selftest():
         pass
     assert set(script_params("BHCorr", "plot")) == set(MODELS["BHCorr"]["model_params"] + MODELS["BHCorr"]["plot_params"])
     assert Dashboard._grid("BHU1", {"XS": "0.1 0.2", "YS": "0"}) == [("0.1000", "0.0000"), ("0.2000", "0.0000")]
+    # ---- BHRand: a preset of BHCorr, sweeps assigned by tag
+    rtag = "U1.0_r0.0_Delta0.0_Omega0.5_nmax4_dtau0.05_D16"
+    assert sweep_model("BHCorr", rtag) == "BHRand" and sweep_model("BHCorr", "U1.0_r0.0_Delta0.2_Omega0.5_nmax4_dtau0.05_D16") == "BHCorr"
+    assert sweep_model("BHCorr", "U1.0_r0_Delta0_Omega0.50_nmax4_dtau0.05_D16") == "BHRand" and sweep_model("BHU1", rtag) == "BHU1"
+    assert axes_of("BHRand", rtag) == ("t", "mu")
+    assert point_file("BHRand", rtag, 6, "0.1000", "0.2000") == point_file("BHCorr", rtag, 6, "0.1000", "0.2000")
+    rp = {"U": "1.0", "R": "0.0", "DELTA": "0.0", "OMEGA": "0.5", "NMAX": "4", "DTAU": "0.05", "MAXD": "16"}
+    assert d._values("BHRand", rtag, rp, "submit")["OMEGA"] == "0.5"
+    for bad in ({**rp, "OMEGA": "0.3"}, {k: v for k, v in rp.items() if k != "DELTA"}):
+        try:
+            d._values("BHRand", rtag, bad, "submit")
+            raise AssertionError("preset violation accepted")
+        except ValueError:
+            pass
+    try:
+        d._values("BHRand", "U1.0_r0.0_Delta0.2_Omega0.5_nmax4_dtau0.05_D16", {**rp, "DELTA": "0.0"}, "submit")
+        raise AssertionError("tag of another model accepted")
+    except ValueError:
+        pass
+    assert script_params("BHRand", "plot") == MODELS["BHCorr"]["model_params"]
+    d.args = argparse.Namespace(gather_dest="/x")
+    assert d.plot_file("BHRand", rtag, 6) == f"/x/plots/BoseHubbardCorrelated_NormalizedITE_{rtag}_L6_mu.png"
+    assert d.plot_file("BHCorr", rtag, 6) == f"/x/plots/BoseHubbardCorrelated_NormalizedITE_{rtag}_L6.png"
     print("selftest ok")
 
 

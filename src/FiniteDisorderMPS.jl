@@ -60,6 +60,16 @@ function FiniteDisorderMPS(ps::Vector{<:Vector{<:Real}}, sectors::Vector{<:Vecto
     return FiniteDisorderMPS(opp, ps, sectors)
 end
 
+# The same state ψ (an MPSKit FiniteMPS, on any space type) in every disorder sector of site_sectors(Hs, ps, L), in
+# right-canonical form with the norm on the first site, so every conditional state ψ_w is ψ/‖ψ‖ (Z(w) = 1 for every word).
+# A generic start for the normalized ITE, e.g. FiniteMPS(randn, ComplexF64, L, P, Vmax) for a random state on graded spaces
+function FiniteDisorderMPS(ψ::FiniteMPS, Hs::DisorderMPOHam, ps::Vector{<:Real})
+    L = length(ψ)
+    site_ps, sectors = site_sectors(Hs, ps, L)
+    tensors = [i == 1 ? ψ.AC[1] / LinearAlgebra.norm(ψ.AC[1]) : ψ.AR[i] for i in 1:L]
+    return FiniteDisorderMPS([[tensors[i] for _ in site_ps[i]] for i in 1:L], site_ps, sectors)
+end
+
 # Same disorder sectors (and probabilities) on every site
 same_sectors(ρ1::FiniteDisorderMPS, ρ2::FiniteDisorderMPS) = (ρ1.sectors == ρ2.sectors) && (ρ1.ps == ρ2.ps)
 
@@ -83,7 +93,7 @@ function transfer_left(ρ::FiniteDisorderMPS, i::Int)
     function ftransfer(vl)
         v = zeros(ComplexF64, space(ρ[i,1],3)', space(ρ[i,1],3)')
         for (p,W) in enumerate(ρ[i])
-            @tensor vp[-2; -1] := W[1 3; -1] * conj(W[2 3; -2]) * vl[2; 1]
+            @plansor vp[-2; -1] := W[1 3; -1] * conj(W[2 3; -2]) * vl[2; 1]
             v += ρ.ps[i][p]*vp
         end
         return v
@@ -96,7 +106,7 @@ function transfer_right(ρ::FiniteDisorderMPS, i::Int)
     function ftransfer(vr)
         v = zeros(ComplexF64, space(ρ[i,1],1), space(ρ[i,1],1))
         for (p,W) in enumerate(ρ[i])
-            @tensor vp[-1; -2] := W[-1 3; 1] * conj(W[-2 3; 2]) * vr[1; 2]
+            @plansor vp[-1; -2] := W[-1 3; 1] * conj(W[-2 3; 2]) * vr[1; 2]
             v += ρ.ps[i][p]*vp
         end
         return v
@@ -150,7 +160,7 @@ function energy(ρ::FiniteDisorderMPS, Hs::DisorderMPOHam)
         l = ls[i]
         r = rs[i+1]
         for (p, W) in enumerate(ρ[i])
-            @tensor ED = l[4; 1] * W[1 2; 5] * Hs.Ds[ρ.sectors[i][p]][3; 2] * conj(W[4 3; 6]) * r[5; 6]
+            @plansor ED = l[4; 1] * W[1 2; 5] * Hs.Ds[ρ.sectors[i][p]][3; 2] * conj(W[4 3; 6]) * r[5; 6]
             E += ρ.ps[i][p] * ED
         end
     end
@@ -160,7 +170,7 @@ function energy(ρ::FiniteDisorderMPS, Hs::DisorderMPOHam)
         for (p, W) in enumerate(ρ[i])
             s = ρ.sectors[i][p]     # the coupling of bond (i, i+1) is set by the sector of site i
             for (q, V) in enumerate(ρ[i+1])
-                @tensor ELR = l[11; 1] * W[1 2; 4] * Hs.Ls[s][3; 2 5] * conj(W[11 3; 6]) * V[4 7; 9] * Hs.Rs[s][5 8; 7] * conj(V[6 8; 10]) * r[9; 10]
+                @plansor ELR = l[11; 1] * W[1 2; 4] * Hs.Ls[s][3; 2 5] * conj(W[11 3; 6]) * V[4 7; 9] * Hs.Rs[s][5 8; 7] * conj(V[6 8; 10]) * r[9; 10]
                 E += ρ.ps[i][p] * ρ.ps[i+1][q] * ELR
             end
         end
@@ -202,7 +212,7 @@ end
 function _expectation_value(ρ::FiniteDisorderMPS, Os::Vector{<:AbstractBondTensor}, i::Int, l, r)
     O = 0
     for (p, W) in enumerate(ρ[i])
-        @tensor Op = l[4; 1] * W[1 3; 5] * Os[ρ.sectors[i][p]][2; 3] * conj(W[4 2; 6]) * r[5; 6]
+        @plansor Op = l[4; 1] * W[1 3; 5] * Os[ρ.sectors[i][p]][2; 3] * conj(W[4 2; 6]) * r[5; 6]
         O += ρ.ps[i][p]*Op
     end
     return O
@@ -239,7 +249,7 @@ function correlator(ρ::FiniteDisorderMPS, O1s::Vector{<:AbstractBondTensor}, O2
     l = ls[i]
     vl = zeros(ComplexF64, space(ρ[i,1],3)', space(ρ[i,1],3)')
     for (p, W) in enumerate(ρ[i])
-        @tensor vlO1[-2; -1] := l[2; 1] * W[1 3; -1] * O1s[ρ.sectors[i][p]][4; 3] * conj(W[2 4; -2])
+        @plansor vlO1[-2; -1] := l[2; 1] * W[1 3; -1] * O1s[ρ.sectors[i][p]][4; 3] * conj(W[2 4; -2])
         vl += ρ.ps[i][p]*vlO1
     end
     for k in i+1:j

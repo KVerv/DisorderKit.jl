@@ -29,7 +29,8 @@ function mott_state(Hs::DisorderMPOHam, ps::Vector{Float64}, L::Int; filling::In
     return FiniteDisorderMPS([[W for _ in p] for p in site_ps], site_ps, sectors)
 end
 
-bond_dimensions(ψ::FiniteDisorderMPS) = [dim(space(ψ[i,1], 3)) for i in 1:length(ψ)-1]
+# Bond sizes of ψ (bond_dim: the dimension, or the number of multiplets for anyonic sectors)
+bond_dimensions(ψ::FiniteDisorderMPS) = [bond_dim(space(ψ[i,1], 3)) for i in 1:length(ψ)-1]
 
 struct Groundstate_FiniteNormalizedITE <: AbstractAlgorithm
     maxD::Vector{Pair{Int, Int}}    # stage schedule (number of steps => cap D_max), the last cap is kept afterwards
@@ -43,6 +44,7 @@ struct Groundstate_FiniteNormalizedITE <: AbstractAlgorithm
     src_oversampling::Int           # state sketch width per cut ≤ 2 D_max + src_oversampling
     src_rank_threshold::Float64
     round_tol::Float64
+    mpo_compress_tol::Float64       # relative SVD cutoff of the time evolution MPO bonds (0: uncompressed)
     n_assess::Int
     post_warn::Float64
     seed::Int
@@ -57,14 +59,14 @@ struct Groundstate_FiniteNormalizedITE <: AbstractAlgorithm
                                              partition_rtol::Float64 = 1e-10, cross_width::Int = 32, cross_cycles::Int = 2,
                                              filter_tail_tol::Float64 = 1e-8, src_rtol::Float64 = 1e-11, src_sketch_cap::Int = 128,
                                              src_oversampling::Int = 10,
-                                             src_rank_threshold::Float64 = 1e-13, round_tol::Float64 = 1e-10, n_assess::Int = 128,
+                                             src_rank_threshold::Float64 = 1e-13, round_tol::Float64 = 1e-10, mpo_compress_tol::Float64 = 1e-12, n_assess::Int = 128,
                                              post_warn::Float64 = 1e-3, seed::Int = 20266001, convtol::Float64 = 1e-8, maxiter::Int = 100,
                                              verbosity::Int = 0, timer_output::TimerOutput = TimerOutput(),
                                              finalizer::Finalizer = Finalizer(Float64, energy_density))
         schedule = maxD isa Int ? [1 => maxD] : maxD
         (!isempty(schedule) && all(s -> s.first >= 1 && s.second >= 1, schedule)) || throw(ArgumentError("invalid cap schedule"))
         return new(schedule, order, partition_rtol, cross_width, cross_cycles, filter_tail_tol, src_rtol, src_sketch_cap,
-                   src_oversampling, src_rank_threshold, round_tol, n_assess, post_warn, seed, convtol, maxiter, verbosity, timer_output, finalizer)
+                   src_oversampling, src_rank_threshold, round_tol, mpo_compress_tol, n_assess, post_warn, seed, convtol, maxiter, verbosity, timer_output, finalizer)
     end
 end
 
@@ -115,7 +117,7 @@ function groundstate(ψ0::FiniteDisorderMPS, Hs::DisorderMPOHam, dτ::Float64, a
     L = length(ψ0)
     to = alg.timer_output
 
-    @timeit to "construct_time_evolution_operator" Us = time_evolution_MPO(Hs, dτ, ψ0.sectors; N = alg.order)
+    @timeit to "construct_time_evolution_operator" Us = time_evolution_MPO(Hs, dτ, ψ0.sectors; N = alg.order, compress_tol = alg.mpo_compress_tol)
 
     ψ = ψ0
     widths, previous_cap = nothing, nothing
@@ -185,6 +187,7 @@ _dense_layers(F::FiniteDisorderFilter) = [_stack(F[i]) for i in 1:length(F)]
 # contracted with the layers A, f and H kept separate. The energy is not divided by the norm.
 # The coupling of bond (i, i+1) is set by the sector of site i, as in energy.
 function filter_normalized_energy_density(ψ::FiniteDisorderMPS, Hs::DisorderMPOHam, F::FiniteDisorderFilter)
+    dense_supported(ψ[1, 1]) || throw(ArgumentError("filter_normalized_energy_density uses dense arrays: not available for $(sectortype(ψ[1, 1])) sectors"))
     L = length(ψ)
     Hc = outgoing_coupling(Hs)
     A = _dense_layers(ψ)

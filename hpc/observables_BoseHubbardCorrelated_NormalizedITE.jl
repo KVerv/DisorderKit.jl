@@ -14,7 +14,7 @@
 # most likely particle number (as for the entropy, see below),
 #   F_l      = 𝔼_w[⟨N_A²⟩_w - ⟨N_A⟩_w²]                     (DisorderKit.conditional_block_fluctuations with n, projected)
 # and K from the open-chain bosonization fit F = K/(2π²) X + c, X = ln[d(2x₁) d(2x₂) d(x₂-x₁)² / d(x₁+x₂)²] with
-# d(x) = (2(L+1)/π) sin(πx/(2(L+1))) and the cuts x₁, x₂ of the block (DisorderKit.luttinger_parameter, over the blocks
+# d(x) = (2(L+1)/π) sin(πx/(2(L+1))) and the cuts x₁, x₂ of the block (luttinger_parameter below, over the blocks
 # with l ≥ 2 whose right edge is at least N_EDGE sites from the wall, i.e. all l ≥ 2). In a gapped (Mott) phase F
 # saturates and K → 0; on short chains K is an effective, finite-size value.
 #   K        effective Luttinger parameter (NaN if fewer than 2 blocks qualify)
@@ -131,6 +131,27 @@ end
 # ---- Observables
 using TensorKit, DisorderKit, LinearAlgebra, Random, JLD2, Printf, StatsBase, Dates
 
+# Effective Luttinger parameter from the block fluctuations F[k] of the particle number in the blocks[k] (sites a:b) of
+# an open chain of L sites. Bosonization with hard walls at 0 and L+1 (L′ = L+1) gives, for the block between the cuts
+# x₁ = a-1 and x₂ = b,
+#   F = K/(2π²) X + c,   X = ln[d(2x₁) d(2x₂) d(x₂-x₁)² / d(x₁+x₂)²],   d(x) = (2L′/π) sin(πx/(2L′)),
+# which reduces to F = (K/π²) ln l + c far from the walls. K and c from a linear least-squares fit of F against X over the
+# blocks with at least lmin sites whose edges are at least edge_min sites from the walls (single sites and cuts next to a
+# wall carry large lattice corrections). Returns (K, c, X, fit) with fit the indices of the fitted blocks; K = c = NaN if
+# fewer than 2 blocks qualify. In a gapped phase F saturates and K → 0
+function luttinger_parameter(F::AbstractVector{<:Real}, blocks::AbstractVector{<:UnitRange{<:Integer}}, L::Int;
+                             lmin::Int = 2, edge_min::Int = 2)
+    length(F) == length(blocks) || throw(ArgumentError("F and blocks should have the same length"))
+    Lp = L + 1
+    d(x) = (2Lp / π) * sin(π * x / (2Lp))
+    X = [log(d(2(first(b) - 1)) * d(2last(b)) * d(length(b))^2 / d(first(b) - 1 + last(b))^2) for b in blocks]
+    fit = findall(k -> length(blocks[k]) >= lmin && first(blocks[k]) - 1 >= edge_min && L - last(blocks[k]) >= edge_min &&
+                       isfinite(X[k]) && isfinite(F[k]), eachindex(blocks))
+    length(unique(X[fit])) >= 2 || return NaN, NaN, X, fit
+    slope, c = hcat(X[fit], ones(length(fit))) \ F[fit]
+    return 2π^2 * slope, c, X, fit
+end
+
 d = nmax + 1
 n_op = TensorMap(ComplexF64.(diagm(0:nmax)), ℂ^d ← ℂ^d)
 a_op = TensorMap(ComplexF64.(diagm(1 => sqrt.(1:nmax))), ℂ^d ← ℂ^d)   # a|n⟩ = √n |n-1⟩
@@ -167,7 +188,7 @@ function compute_point(t_str, μ_str)
         S, S_var = avg[1:nb], var_w[1:nb]
         S_bstd, S_bstd_err = avg[nb+1], err[nb+1]
         F = avg[nb+2:end]
-        K, _, _, _ = DisorderKit.luttinger_parameter(F, blocks, L; edge_min = n_edge)
+        K, _, _, _ = luttinger_parameter(F, blocks, L; edge_min = n_edge)
     end
     ϵs = data["info"].ϵsconv
     nsteps = get(data, "nsteps", -1)

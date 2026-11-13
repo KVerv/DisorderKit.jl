@@ -178,6 +178,7 @@ html:not(.models-ready) .m-only { display: none; }   /* until applyModel shows t
   <select id="modelSel" title="Model: which simulation the sweep runs">
     <option value="BHU1">U(1) Bose-Hubbard · fixed filling · any two axes</option>
     <option value="BHCorr">Correlated Bose-Hubbard · no symmetry · t × μ</option>
+    <option value="BHRand">Random-hopping Bose-Hubbard · {t, t/3} · μ sweep</option>
   </select>
   <select id="sweepSel" title="Sweeps on the laptop, on the access point or in the queue"></select>
   <span class="tagline" id="tagNow"></span>
@@ -211,7 +212,7 @@ html:not(.models-ready) .m-only { display: none; }   /* until applyModel shows t
       <div class="jobswrap" id="jobsBox"></div>
     </section>
     <section class="card plot">
-      <h2><span class="m-only m-BHCorr">Phase diagram</span><span class="m-only m-BHU1">Heatmap PNG</span> <span class="muted" id="plotTime" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h2>
+      <h2><span class="m-only m-BHCorr">Phase diagram</span><span class="m-only m-BHU1">Heatmap PNG</span><span class="m-only m-BHRand">ρ, κ, K vs μ</span> <span class="muted" id="plotTime" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h2>
       <div id="plotBox"></div>
     </section>
   </div>
@@ -225,7 +226,7 @@ html:not(.models-ready) .m-only { display: none; }   /* until applyModel shows t
       <div class="action"><span class="name"><span class="step">2</span>Gather data</span>
         <button class="btn primary" data-act="gather">Gather<span class="count" id="gatherCount">0</span></button>
         <span class="desc" id="gatherDesc">Copies finished results to the laptop, then deletes them and their logs on the access point. A file is only deleted after it was copied completely.</span></div>
-      <div class="action"><span class="name"><span class="step">3</span><span class="m-only m-BHCorr">Phase-diagram plot</span><span class="m-only m-BHU1">Heatmap PNG</span></span>
+      <div class="action"><span class="name"><span class="step">3</span><span class="m-only m-BHCorr">Phase-diagram plot</span><span class="m-only m-BHU1">Heatmap PNG</span><span class="m-only m-BHRand">ρ, κ, K vs μ</span></span>
         <button class="btn" data-act="plot">Plot</button>
         <span class="desc m-only m-BHU1">Saves the heatmap of the observable chosen in <b>Colour by</b> as a PNG (plots/ on the laptop, from the gathered data), restricted to the window below (bounds included; an empty bound means no limit, so empty fields plot every gathered point). Grey cells are grid points without a value. The colour scale spans the plotted points.
           <span class="fields" style="grid-template-columns:repeat(4,1fr)">
@@ -234,7 +235,8 @@ html:not(.models-ready) .m-only { display: none; }   /* until applyModel shows t
             <label><span id="pyLabel">y</span> min <input type="text" id="PYMIN"></label>
             <label><span id="pyLabel2">y</span> max <input type="text" id="PYMAX"></label>
           </span></span>
-        <span class="desc m-only m-BHCorr">Runs the plot script on the laptop's data (κ, effective Luttinger parameter K, |⟨a⟩|², ρ, S_bstd, phases from κ and S_bstd, |⟨a⟩|² only for low κ with high S_bstd), using KAPPA_TOL, SBSTD_TOL and A2_TOL below.</span></div>
+        <span class="desc m-only m-BHCorr">Runs the plot script on the laptop's data (κ, effective Luttinger parameter K, |⟨a⟩|², ρ, S_bstd, phases from κ and S_bstd, |⟨a⟩|² only for low κ with high S_bstd), using KAPPA_TOL, SBSTD_TOL and A2_TOL below.</span>
+        <span class="desc m-only m-BHRand">Runs hpc/plot_BoseHubbardRandomHopping_NormalizedITE.jl on the laptop's data: the density ρ and the effective Luttinger parameter K (left axis) and the compressibility κ = dρ/dμ (right axis, central differences between neighbouring μ) against μ/U in one figure; open markers are unconverged points.</span></div>
       <div class="action"><span class="name">Recompute observables</span>
         <button class="btn" data-act="recompute_obs">Recompute<span class="count" id="obsCount" style="background:var(--surface-3)">0</span></button>
         <span class="desc">For points whose observables are missing or outdated (changed observables script, or another N_EDGE). Uploads only those states and runs observables-only jobs, several points per job (Points per obs job); the simulation is not rerun. Gather afterwards.</span></div>
@@ -264,16 +266,17 @@ html:not(.models-ready) .m-only { display: none; }   /* until applyModel shows t
           <label>L <input type="number" id="L" min="3" value="6"></label>
           <label class="wide" style="grid-column:auto / span 2"><span>&nbsp;</span><span class="muted" id="gridCount"></span></label>
           <label>x axis (columns) <select id="XAXIS"><option>t</option><option>U</option><option>Delta</option><option>Omega</option><option>r</option></select></label>
-          <label>from <input type="text" id="x0" value="0.02"></label>
-          <label>to <input type="text" id="x1" value="0.30"></label>
-          <label>step <input type="text" id="xstep" value="0.02"></label>
+          <label><span class="m-only m-BHU1 m-BHCorr">from</span><span class="m-only m-BHRand">t̄ (mean hopping)</span> <input type="text" id="x0" value="0.02"></label>
+          <label class="m-only m-BHU1 m-BHCorr">to <input type="text" id="x1" value="0.30"></label>
+          <label class="m-only m-BHU1 m-BHCorr">step <input type="text" id="xstep" value="0.02"></label>
           <label>y axis (rows) <select id="YAXIS"><option>t</option><option>U</option><option selected>Delta</option><option>Omega</option><option>r</option></select></label>
           <label>from <input type="text" id="y0" value="0"></label>
           <label>to <input type="text" id="y1" value="0.6"></label>
           <label>step <input type="text" id="ystep" value="0.1"></label>
         </div>
         <p class="hint m-only m-BHU1">Choose any two of t, U, Δ, Ω, r; the other parameters are fixed in Model. Values are formatted with 4 decimals in the file names.</p>
-        <p class="hint m-only m-BHCorr">This model sweeps t/U (columns) and μ/U (rows).</p></details>
+        <p class="hint m-only m-BHCorr">This model sweeps t/U (columns) and μ/U (rows).</p>
+        <p class="hint m-only m-BHRand">Random hopping t or t/3 on every bond (probability 1/2 each), swept over μ/U (rows) at one mean hopping t̄ = 2t/3 (the hoppings are 1.5 t̄ and 0.5 t̄). It is the correlated model with Δ = 0, Ω = 0.5, r = 0 (fixed in Model), so it shares its scripts and data folder.</p></details>
       <details open><summary>Model <span class="muted">(sets the run tag)</span></summary>
         <div class="fields">
           <label class="m-only m-BHU1">t <input type="text" id="T" value="0.1"></label>
@@ -356,6 +359,14 @@ const MODELS = {
     observables: [["rho", "ρ  (density)"], ["S_avg", "S̄  (bulk entanglement entropy)"], ["S_bstd", "σ_S  (bond-to-bond std of S)", "S_bstd_err"],
       ["K", "K  (effective Luttinger parameter)"], ["a2", "|⟨a⟩|²"], ["varS_avg", "Var[S]  (disorder variance)"],
       ["eps_conv", "ϵ_conv  (convergence error)", null, true]] },
+  // A preset of BHCorr (same scripts and files): R, DELTA, OMEGA fixed, one t̄ column swept over μ, its own plot
+  BHRand: { name: "random-hopping Bose-Hubbard {t, t/3}", params: ["U", "R", "DELTA", "OMEGA", "NMAX", "DTAU", "MAXD"],
+    grid: ["TS", "MUS"], plot: true, fixedAxes: ["t", "mu"], oneColumn: true,
+    preset: { R: "0.0", DELTA: "0.0", OMEGA: "0.5" },
+    axisLabel: { t: "t̄/U", mu: "μ/U" },
+    observables: [["rho", "ρ  (density)"], ["K", "K  (effective Luttinger parameter)"], ["S_avg", "S̄  (bulk entanglement entropy)"],
+      ["S_bstd", "σ_S  (bond-to-bond std of S)", "S_bstd_err"], ["a2", "|⟨a⟩|²"], ["varS_avg", "Var[S]  (disorder variance)"],
+      ["eps_conv", "ϵ_conv  (convergence error)", null, true]] },
 };
 const FIELDS = ["L", "x0", "x1", "xstep", "y0", "y1", "ystep", "XAXIS", "YAXIS", "T", "U", "R", "DELTA", "OMEGA", "FILLING", "NMAX",
   "DTAU", "MAXD", "MAXITER", "CONVTOL", "CROSS_WIDTH", "PPN", "OBS_PPN", "OBS_CHUNK", "MEM", "REQUIREMENTS", "N_SAMPLES", "N_EDGE",
@@ -397,13 +408,13 @@ function axesOf(m, f) { return MODELS[m].fixedAxes || [f.XAXIS, f.YAXIS]; }
 const axisLabel = (m, a) => MODELS[m].axisLabel[a] || a;
 // Tags: BHCorr as built by hpc/BoseHubbardCorrelated_NormalizedITE.jl; BHU1 as bhu1_tag in server.py (the server checks it)
 function tagOf(m, f) {
-  if (m === "BHCorr") return `U${f.U}_r${f.R}_Delta${f.DELTA}_Omega${f.OMEGA}_nmax${f.NMAX}_dtau${f.DTAU}_D${f.MAXD}`;
+  if (m === "BHCorr" || m === "BHRand") return `U${f.U}_r${f.R}_Delta${f.DELTA}_Omega${f.OMEGA}_nmax${f.NMAX}_dtau${f.DTAU}_D${f.MAXD}`;
   const [X, Y] = axesOf(m, f);
   const fixed = ["t", "U", "Delta", "Omega", "r"].filter(a => a !== X && a !== Y).map(a => `${a}${f[AXIS_PARAM[a]]}`);
   return [`${X}-${Y}`, ...fixed, `f${f.FILLING}`, `nmax${f.NMAX}`, `dtau${f.DTAU}`, `D${f.MAXD}`].join("_");
 }
 function parseTag(m, tag) {
-  if (m === "BHCorr") {
+  if (m === "BHCorr" || m === "BHRand") {
     const r = tag.match(/^U(.+)_r(.+)_Delta(.+)_Omega(.+)_nmax(\d+)_dtau(.+)_D(\d+)$/);
     return r ? { U: r[1], R: r[2], DELTA: r[3], OMEGA: r[4], NMAX: r[5], DTAU: r[6], MAXD: r[7] } : null;
   }
@@ -426,7 +437,7 @@ function seq(a, b, s) {
 }
 function current() { const f = form(); return { model, tag: tagOf(model, f), L: parseInt(f.L, 10), f, axes: axesOf(model, f) }; }
 function saveForm() { const c = current(); store.set("model", model); store.set(`form:${model}`, c.f); store.set(`sweep:${model}:${c.tag}:L${c.L}`, c.f); }
-function plannedGrid(f) { return { xs: seq(f.x0, f.x1, f.xstep), ys: seq(f.y0, f.y1, f.ystep) }; }
+function plannedGrid(f) { return { xs: MODELS[model].oneColumn ? seq(f.x0, f.x0, 1) : seq(f.x0, f.x1, f.xstep), ys: seq(f.y0, f.y1, f.ystep) }; }
 const mine = (c) => status && status.model === c.model && status.tag === c.tag && status.L === c.L;
 const sweepQuery = (c) => `model=${c.model}&tag=${encodeURIComponent(c.tag)}&L=${c.L}`;
 
@@ -452,6 +463,11 @@ function applyModel() {
     const swept = !fixed && c.axes.includes(a);
     $(k).disabled = swept;
     $(k).title = swept ? "swept: the values come from the sweep grid" : "";
+  }
+  for (const [k, v] of Object.entries(MODELS[model].preset || {})) {   // fixed by the model
+    $(k).value = v;
+    $(k).disabled = true;
+    $(k).title = "fixed by this model";
   }
   const obs = MODELS[model].observables, sel = $("colorSel"), want = store.get(`color:${model}`, "state");
   sel.innerHTML = `<option value="state">job state</option>` + obs.map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join("");
@@ -609,7 +625,7 @@ function renderPlot(c) {
   if (key === plotKey) return;
   plotKey = key;
   $("plotTime").textContent = mt ? "· made " + new Date(mt * 1000).toLocaleString() : "";
-  const what = u1 ? `heatmap of ${obs}` : "phase diagram";
+  const what = u1 ? `heatmap of ${obs}` : model === "BHRand" ? "ρ, κ and K against μ" : "phase diagram";
   $("plotBox").innerHTML = mt
     ? `<img alt="${esc(what)} of ${esc(c.tag)}, L = ${c.L}" src="/api/plot?${sweepQuery(c)}${u1 ? "&obs=" + encodeURIComponent(obs) : ""}&v=${mt}">`
     : u1 && obs === "state"

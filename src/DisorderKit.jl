@@ -14,13 +14,13 @@ const AbstractMPOTensor = AbstractTensorMap{T, S, 2, 2} where {T, S}
 const AbstractBondTensor = AbstractTensorMap{T, S, 1, 1} where {T, S}
 
 include("utils.jl")                    # AbstractAlgorithm, Finalizer, robust SVD, space helpers
-include("DisorderMPOHam.jl")           # disorder Hamiltonians (RTFIM, Heisenberg, Bose-Hubbard) and their time evolution MPO
+include("DisorderMPOHam.jl")           # disorder Hamiltonians (generic two-site, RTFIM, Heisenberg, Bose-Hubbard, golden chain) and their time evolution MPO
 include("FiniteDisorderMPS.jl")        # the state, environments, energy and exact disorder averages
 include("FiniteDisorderMPO.jl")        # finite time evolution MPO
 include("ConditionalObservables.jl")   # per-realization observables and their (enumerated or sampled) disorder average
 include("FiniteDisorderFilter.jl")     # normalization filter
 include("FiniteSRC.jl")                # streaming randomized compression
-include("FiniteSRCGraded.jl")          # its graded (U₁) variant
+include("FiniteSRCGraded.jl")          # its graded variant (any sector type: U₁, SU₂, anyons)
 include("FiniteNormalizedITE.jl")      # the ground-state algorithm
 include("FreeFermionEd.jl")            # exact free-fermion reference of the RTFIM
 

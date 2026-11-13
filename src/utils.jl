@@ -35,8 +35,21 @@ function svd_with_fallback(f, A::AbstractTensorMap)
 end
 
 #==========================================================================================
- Space-generic helpers: the same code runs on ComplexSpace (no symmetry) and on graded spaces (e.g. U₁)
+ Space-generic helpers: the same code runs on ComplexSpace (no symmetry) and on graded spaces of any sector type
+ (abelian such as U₁, non-abelian such as SU₂, anyonic such as Fibonacci)
 ==========================================================================================#
+
+# Integer size of a (bond) space for diagnostics and caps: the dimension dim(V) when it is an integer (groups), the number
+# of multiplets Σ_c n_c otherwise (anyons have irrational quantum dimensions, e.g. dim(τ) = φ for Fibonacci)
+function bond_dim(V::Union{ElementarySpace, ProductSpace})
+    d = dim(V)
+    return d isa Integer ? Int(d) : Int(sum(c -> dim(fuse(V), c), sectors(fuse(V)); init = 0))
+end
+
+# Whether dense arrays (convert(Array, t)) represent tensors of sector type I faithfully: groups with bosonic braiding,
+# which have fusion tensors (Trivial, U₁, SU₂, Z_N, …), not fermions or anyons
+dense_supported(::Type{I}) where {I<:Sector} = BraidingStyle(I) isa Bosonic && I <: Union{Trivial, AbstractIrrep}
+dense_supported(t::AbstractTensorMap) = dense_supported(sectortype(t))
 
 # Space of n dimensions in the trivial sector of the space type S: ℂ^n for ComplexSpace, S(unit => n) for a graded space.
 # Disorder-only objects (partition function, filter, sketch rows of the partition) carry no charge and live on these
@@ -47,6 +60,19 @@ trivial_space(t::AbstractTensorMap, n::Integer) = trivial_space(spacetype(t), n)
 
 # Block of the trivial sector (the whole data for a ComplexSpace tensor)
 dense_block(t::AbstractTensorMap) = block(t, one(sectortype(t)))
+
+# Tensor with the dense data `data` (codomain legs first, every leg fastest-first) between trivial-sector spaces of the
+# space type S, e.g. trivial_tensor(M, S, (m,), (n,)) : trivial_space(S, m) ← trivial_space(S, n). Unlike
+# TensorMap(data, V), this does not need fusion tensors, so it works for every sector type (also anyons)
+function trivial_tensor(data::AbstractArray, S::Type{<:ElementarySpace}, cod::Tuple, dom::Tuple = ())
+    V = ProductSpace{S, length(cod)}(map(n -> trivial_space(S, n), cod)) ← ProductSpace{S, length(dom)}(map(n -> trivial_space(S, n), dom))
+    t = zeros(promote_type(eltype(data), TensorKit.sectorscalartype(sectortype(S))), V)   # complex for anyons
+    dense_block(t) .= reshape(data, prod(cod; init = 1), prod(dom; init = 1))
+    return t
+end
+
+# Basis ket e_u of ℂ^q (trivial sector of the space type S)
+basis_ket(S::Type{<:ElementarySpace}, q::Int, u::Int, T::Type = Float64) = trivial_tensor(T[j == u ? 1 : 0 for j in 1:q], S, (q,))
 
 # Basis order of a graded space with multiplicity one sectors: the natural basis state k has sector charges[k], and
 # TensorKit orders the basis by sector (for U₁: 0, 1, -1, 2, -2, …). Returns p with TensorKit basis state j = natural

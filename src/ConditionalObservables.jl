@@ -7,20 +7,25 @@
 # available exactly without enumerating the words: expectation_value and correlator (FiniteDisorderMPS.jl).
 #
 # On-site operators O are TensorMaps P ← P on the physical space: one operator for every site, or a vector with the
-# operator Os[s] of every Hamiltonian sector s (as expectation_value). The conditional state is contracted with dense
-# arrays (convert(Array, ·)), for the tensors and the operators alike, so their basis orders always match, also for
-# graded (e.g. U₁) spaces.
+# operator Os[s] of every Hamiltonian sector s (as expectation_value).
 #
-# Projection (keyword charges): a conditional state of a particle number conserving H can be a superposition of
-# particle numbers (ITE without U(1) symmetry, from a state that contains every N). With charges, the U(1) label of every
-# dense physical basis state (e.g. 0:nmax bosons for unsymmetric tensors), ψ_w is first projected onto its most likely
-# total charge N*, the particle number of its exact ground state. The environments are then resolved by charge, and the
-# operators must conserve the charge. Without charges (nothing) there is one charge sector: no projection, same cost.
+# Two code paths:
+#   - native (charges = nothing, the default): the conditional state is contracted as TensorMaps with planar
+#     contractions, for any sector type (Trivial, U₁, SU₂, fermions, anyons such as Fibonacci). The entanglement entropy
+#     uses the quantum trace: S = -Σ_c d_c Σ λ log λ over the Schmidt values λ of every bond sector c (Σ_c d_c Σ λ = 1),
+#     which is the usual entropy for groups (d_c = dim(c) copies of every value) and the anyonic entropy otherwise.
+#   - dense (charges given): the conditional state is contracted with dense arrays (convert(Array, ·)), for groups only.
+#     Projection: a conditional state of a particle number conserving H can be a superposition of particle numbers (ITE
+#     without U(1) symmetry, from a state that contains every N). charges is the U(1) label of every dense physical basis
+#     state (e.g. 0:nmax bosons for unsymmetric tensors); ψ_w is first projected onto its most likely total charge N*,
+#     the particle number of its exact ground state. The environments are then resolved by charge, and the operators
+#     must conserve the charge.
 
 # Dense tensors A[a, s, b] of the conditional state of word w and the charge label of every physical basis state
 function _conditional_tensors(ρ::FiniteDisorderMPS, word::AbstractVector{Int}, charges)
     length(word) == length(ρ) || throw(ArgumentError("word of length $(length(word)) for a chain of length $(length(ρ))"))
     all(i -> 1 <= word[i] <= length(ρ.ps[i]), eachindex(word)) || throw(ArgumentError("word $word outside the sectors of ρ"))
+    dense_supported(ρ[1, 1]) || throw(ArgumentError("the dense path (charges given) needs a group symmetry, not $(sectortype(ρ[1, 1]))"))
     As = [ComplexF64.(convert(Array, ρ[i, p])) for (i, p) in enumerate(word)]
     d = size(As[1], 2)
     q = isnothing(charges) ? zeros(Int, d) : collect(Int, charges)
@@ -86,6 +91,7 @@ _hermitian_real(x, ops) = all(M -> M ≈ M', ops) ? real(x) : x
 # ⟨O_i⟩_w of the conditional state of word w on every site i = 1..L (projected onto the most likely total charge with
 # charges); ψ_w does not have to be normalized
 function conditional_expectation_value(ρ::FiniteDisorderMPS, word::AbstractVector{Int}, O; charges = nothing)
+    isnothing(charges) && return _native_expectation_value(ρ, word, O)
     As, q = _conditional_tensors(ρ, word, charges)
     lefts, rights, Nstar = _conditional_environments(As, q)
     ops = _site_operators(ρ, word, O, q)
@@ -114,6 +120,7 @@ function conditional_block_fluctuations(ρ::FiniteDisorderMPS, word::AbstractVec
                                         blocks::AbstractVector{<:UnitRange{<:Integer}}; charges = nothing)
     L = length(ρ)
     all(b -> 1 <= first(b) <= last(b) <= L, blocks) || throw(ArgumentError("blocks should be nonempty ranges within 1:$L"))
+    isnothing(charges) && return _native_block_fluctuations(ρ, word, O, blocks)
     As, q = _conditional_tensors(ρ, word, charges)
     lefts, rights, Nstar = _conditional_environments(As, q)
     ops = _site_operators(ρ, word, O, q)
@@ -158,6 +165,7 @@ end
 # normalized. Without the projection, the particle number fluctuations of a state that mixes N no longer entangle the
 # two halves, which lowers S most in the bulk
 function conditional_entanglement_entropy(ρ::FiniteDisorderMPS, word::AbstractVector{Int}; charges = nothing)
+    isnothing(charges) && return _native_entanglement_entropy(ρ, word)
     As, q = _conditional_tensors(ρ, word, charges)
     lefts, rights, Nstar = _conditional_environments(As, q)
     return map(1:length(As)-1) do k
@@ -168,6 +176,111 @@ function conditional_entanglement_entropy(ρ::FiniteDisorderMPS, word::AbstractV
         end
         λ ./= sum(λ)
         -sum(x -> x > 0 ? x * log(x) : 0.0, λ)
+    end
+end
+
+#==========================================================================================
+ Native path: TensorMaps with planar contractions, any sector type (charges = nothing)
+==========================================================================================#
+
+# Tensors of the conditional state of word w
+function _word_tensors(ρ::FiniteDisorderMPS, word::AbstractVector{Int})
+    length(word) == length(ρ) || throw(ArgumentError("word of length $(length(word)) for a chain of length $(length(ρ))"))
+    all(i -> 1 <= word[i] <= length(ρ.ps[i]), eachindex(word)) || throw(ArgumentError("word $word outside the sectors of ρ"))
+    return [ρ[i, p] for (i, p) in enumerate(word)]
+end
+
+# Operator of every site for word w: O a single TensorMap, or Os[s] per Hamiltonian sector s
+function _word_operators(ρ::FiniteDisorderMPS, word, O)
+    Os = O isa AbstractVector ? O : fill(O, num_hamiltonian_sectors(ρ))
+    ops = [Os[ρ.sectors[i][p]] for (i, p) in enumerate(word)]
+    all(i -> space(ops[i], 1) == space(ops[i], 2)' == space(ρ[i, word[i]], 2), eachindex(ops)) ||
+        throw(ArgumentError("the operators should act on the physical spaces of ρ"))
+    return ops
+end
+
+# Transfer of a left environment E[bra; ket] through ket A (with the on-site operator O) and bra A, and of a right
+# environment E[ket; bra]
+_left_transfer(E, A) = @plansor E′[-2; -1] := A[1 3; -1] * conj(A[2 3; -2]) * E[2; 1]
+_left_transfer(E, A, O) = @plansor E′[-2; -1] := A[1 3; -1] * O[4; 3] * conj(A[2 4; -2]) * E[2; 1]
+_right_transfer(E, A) = @plansor E′[-1; -2] := A[-1 3; 1] * conj(A[-2 3; 2]) * E[1; 2]
+
+# Divide an environment by its largest entry (the factor cancels in every ratio)
+function _rescaled(E)
+    m = LinearAlgebra.norm(E, Inf)
+    (isfinite(m) && m > 0) || throw(DomainError(m, "conditional state of the word vanishes"))
+    return E / m
+end
+
+# Left environments lefts[i] of sites 1..i-1 and right environments rights[i] of sites i..L (both on the left bond of
+# site i), i = 1..L+1, every one rescaled
+function _native_environments(As)
+    L = length(As)
+    lefts = Vector{AbstractTensorMap}(undef, L + 1)
+    rights = Vector{AbstractTensorMap}(undef, L + 1)
+    lefts[1] = id(ComplexF64, space(As[1], 1))
+    for i in 1:L
+        lefts[i+1] = _rescaled(_left_transfer(lefts[i], As[i]))
+    end
+    rights[L+1] = id(ComplexF64, space(As[L], 3)')
+    for i in L:-1:1
+        rights[i] = _rescaled(_right_transfer(rights[i+1], As[i]))
+    end
+    return lefts, rights
+end
+
+function _native_expectation_value(ρ::FiniteDisorderMPS, word::AbstractVector{Int}, O)
+    As = _word_tensors(ρ, word)
+    ops = _word_operators(ρ, word, O)
+    lefts, rights = _native_environments(As)
+    vals = map(eachindex(As)) do i
+        tr(_left_transfer(lefts[i], As[i], ops[i]) * rights[i+1]) / tr(_left_transfer(lefts[i], As[i]) * rights[i+1])
+    end
+    return _hermitian_real(vals, ops)
+end
+
+# Moment recursion of conditional_block_fluctuations on TensorMaps: G0, G1, G2 are left environments with 0, 1 and 2
+# insertions of O_A (G1 and G2 summed over the positions in the block)
+function _native_block_fluctuations(ρ::FiniteDisorderMPS, word::AbstractVector{Int}, O,
+                                    blocks::AbstractVector{<:UnitRange{<:Integer}})
+    As = _word_tensors(ρ, word)
+    ops = _word_operators(ρ, word, O)
+    all(M -> M ≈ M', ops) || throw(ArgumentError("the operator must be Hermitian"))
+    lefts, rights = _native_environments(As)
+    F = zeros(Float64, length(blocks))
+    for a in unique(first.(blocks))
+        group = findall(b -> first(b) == a, blocks)
+        G0 = lefts[a]
+        G1, G2 = zero(G0), zero(G0)
+        for i in a:maximum(last(blocks[k]) for k in group)
+            A, Oi = As[i], ops[i]
+            G0′ = _left_transfer(G0, A)
+            G1′ = _left_transfer(G1, A) + _left_transfer(G0, A, Oi)
+            G2′ = _left_transfer(G2, A) + 2 * _left_transfer(G1, A, Oi) + _left_transfer(G0, A, Oi * Oi)
+            m = LinearAlgebra.norm(G0′, Inf)
+            (isfinite(m) && m > 0) || throw(DomainError(m, "conditional state of the word vanishes"))
+            G0, G1, G2 = G0′ / m, G1′ / m, G2′ / m
+            for k in group
+                last(blocks[k]) == i || continue
+                R = rights[i+1]
+                Z = real(tr(G0 * R))
+                m1, m2 = real(tr(G1 * R)) / Z, real(tr(G2 * R)) / Z
+                F[k] = max(m2 - m1^2, 0.0)
+            end
+        end
+    end
+    return F
+end
+
+# Entanglement entropy on every bond k from the spectrum of rights[k+1] lefts[k+1] (the squared Schmidt values up to
+# normalization), sector by sector, with the quantum dimensions d_c as weights
+function _native_entanglement_entropy(ρ::FiniteDisorderMPS, word::AbstractVector{Int})
+    As = _word_tensors(ρ, word)
+    lefts, rights = _native_environments(As)
+    return map(1:length(As)-1) do k
+        spectra = [(dim(c), max.(real.(eigvals(b)), 0.0)) for (c, b) in blocks(rights[k+1] * lefts[k+1])]
+        Z = sum(d * sum(λ) for (d, λ) in spectra)
+        -sum(d * sum(x -> x > 0 ? (x / Z) * log(x / Z) : 0.0, λ) for (d, λ) in spectra)
     end
 end
 
@@ -195,25 +308,4 @@ function disorder_average(f, ρ::FiniteDisorderMPS; n_samples::Int = 1000, rng::
     m = sum(xs) ./ n_samples
     v = sum(x -> abs2.(x .- m), xs) ./ (n_samples - 1)
     return m, sqrt.(v ./ n_samples), v
-end
-
-# Effective Luttinger parameter from the block fluctuations F[k] of the particle number in the blocks[k] (sites a:b) of
-# an open chain of L sites. Bosonization with hard walls at 0 and L+1 (L′ = L+1) gives, for the block between the cuts
-# x₁ = a-1 and x₂ = b,
-#   F = K/(2π²) X + c,   X = ln[d(2x₁) d(2x₂) d(x₂-x₁)² / d(x₁+x₂)²],   d(x) = (2L′/π) sin(πx/(2L′)),
-# which reduces to F = (K/π²) ln l + c far from the walls. K and c from a linear least-squares fit of F against X over the
-# blocks with at least lmin sites whose edges are at least edge_min sites from the walls (single sites and cuts next to a
-# wall carry large lattice corrections). Returns (K, c, X, fit) with fit the indices of the fitted blocks; K = c = NaN if
-# fewer than 2 blocks qualify. In a gapped phase F saturates and K → 0
-function luttinger_parameter(F::AbstractVector{<:Real}, blocks::AbstractVector{<:UnitRange{<:Integer}}, L::Int;
-                             lmin::Int = 2, edge_min::Int = 2)
-    length(F) == length(blocks) || throw(ArgumentError("F and blocks should have the same length"))
-    Lp = L + 1
-    d(x) = (2Lp / π) * sin(π * x / (2Lp))
-    X = [log(d(2(first(b) - 1)) * d(2last(b)) * d(length(b))^2 / d(first(b) - 1 + last(b))^2) for b in blocks]
-    fit = findall(k -> length(blocks[k]) >= lmin && first(blocks[k]) - 1 >= edge_min && L - last(blocks[k]) >= edge_min &&
-                       isfinite(X[k]) && isfinite(F[k]), eachindex(blocks))
-    length(unique(X[fit])) >= 2 || return NaN, NaN, X, fit
-    slope, c = hcat(X[fit], ones(length(fit))) \ F[fit]
-    return 2π^2 * slope, c, X, fit
 end

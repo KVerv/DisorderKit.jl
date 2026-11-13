@@ -1,4 +1,5 @@
 using Test, TensorKit, DisorderKit, LinearAlgebra, Random, StatsBase
+import MPSKit
 
 # ---- Dense reference: the conditional state ψ_w as a vector (site 1 fastest) and on-site operators on the full space
 
@@ -145,13 +146,58 @@ all_words(ψ) = [collect(w) for w in Iterators.product(eachindex.(ψ.ps)...)]
         @test sum(DisorderKit.expectation_value(ψu, n_u)) ≈ L atol = 1e-8
     end
 
-    @testset "luttinger_parameter" begin
-        Lb = 10
-        bl = [((Lb - l) ÷ 2 + 1):((Lb - l) ÷ 2 + l) for l in 1:8]
-        F = [0.484032, 0.648079, 0.710608, 0.735269, 0.741968, 0.743108, 0.686986, 0.630427]
-        K, c, X, fit = DisorderKit.luttinger_parameter(F, bl, Lb)
-        @test fit == 2:6
-        @test K ≈ 1.5879 atol = 1e-4
-        @test isnan(first(DisorderKit.luttinger_parameter(F[1:2], bl[1:2], Lb)))   # fewer than 2 blocks qualify
+    @testset "native vs dense conditional observables" begin
+        # A U(1) state has an exact particle number: the projection of the dense path changes nothing
+        for word in all_words(ψu)[1:5]
+            @test DisorderKit.conditional_entanglement_entropy(ψu, word) ≈
+                  DisorderKit.conditional_entanglement_entropy(ψu, word; charges = q_u) atol = 1e-10
+            @test DisorderKit.conditional_expectation_value(ψu, word, n_u) ≈
+                  DisorderKit.conditional_expectation_value(ψu, word, n_u; charges = q_u) atol = 1e-10
+            @test DisorderKit.conditional_block_fluctuations(ψu, word, n_u, blocks) ≈
+                  DisorderKit.conditional_block_fluctuations(ψu, word, n_u, blocks; charges = q_u) atol = 1e-10
+        end
+    end
+
+    @testset "general sectors" begin
+        # Fibonacci anyons (anyonic braiding, no dense representation): golden chain H = -Σ P_I(i, i+1)
+        Lf = 6
+        Hf = DisorderKit.golden_chain([1.0])
+        P = space(Hf.Ds[1], 1)
+        P_I = zeros(ComplexF64, P ⊗ P ← P ⊗ P)
+        block(P_I, FibonacciAnyon(:I)) .= 1
+        H = MPSKit.FiniteMPOHamiltonian(fill(P, Lf), ((i, i + 1) => -P_I for i in 1:Lf-1)...)
+        ψr = MPSKit.FiniteMPS(randn, ComplexF64, Lf, P, Vect[FibonacciAnyon](:I => 3, :τ => 3))
+        ψf = DisorderKit.FiniteDisorderMPS(ψr, Hf, [1.0])
+        word = ones(Int, Lf)
+        # state, energy and entanglement against MPSKit (planar contractions, quantum dimensions)
+        @test DisorderKit.norm(ψf) ≈ 1 atol = 1e-12
+        @test DisorderKit.energy(ψf, Hf) ≈ real(MPSKit.expectation_value(ψr, H)) atol = 1e-10
+        @test DisorderKit.conditional_entanglement_entropy(ψf, word) ≈ [real(MPSKit.entropy(ψr, k)) for k in 1:Lf-1] atol = 1e-10
+        @test DisorderKit.conditional_expectation_value(ψf, word, id(ComplexF64, P)) ≈ ones(Lf) atol = 1e-12
+        # ground state against DMRG
+        ψd, = MPSKit.find_groundstate(ψr, H, MPSKit.DMRG(; verbosity = 0, tol = 1e-12))
+        alg = DisorderKit.Groundstate_FiniteNormalizedITE(; maxD = 8, order = 4, maxiter = 300, convtol = 1e-10)
+        ψ, _, info = DisorderKit.groundstate(ψf, Hf, 0.1, alg)
+        @test info.Es[end] ≈ real(MPSKit.expectation_value(ψd, H)) / Lf atol = 1e-8
+        @test info.residual_max[end] < 1e-10      # one word: the filter normalizes exactly
+        @test DisorderKit.conditional_entanglement_entropy(ψ, word) ≈ [real(MPSKit.entropy(ψd, k)) for k in 1:Lf-1] atol = 1e-4
+
+        # SU(2) (non-abelian) with disorder: random antiferromagnetic Heisenberg chain H_w = -Σ J_{wᵢ} σᵢ·σᵢ₊₁ against
+        # exact diagonalization of every word
+        Ls, Js, ps = 4, [-1.0, -0.4], [0.5, 0.5]
+        Ps = Rep[SU₂](1//2 => 1)
+        h2 = zeros(ComplexF64, Ps ⊗ Ps ← Ps ⊗ Ps)
+        block(h2, SU2Irrep(0)) .= -3                                       # σ·σ = 4 S·S
+        block(h2, SU2Irrep(1)) .= 1
+        Hsu = DisorderKit.disorder_hamiltonian(h2, Js)
+        ψ0 = DisorderKit.FiniteDisorderMPS(MPSKit.FiniteMPS(randn, ComplexF64, Ls, Ps, Rep[SU₂](0 => 2, 1//2 => 2, 1 => 2)), Hsu, ps)
+        alg = DisorderKit.Groundstate_FiniteNormalizedITE(; maxD = 16, order = 4, maxiter = 300, convtol = 1e-10)
+        _, _, info = DisorderKit.groundstate(ψ0, Hsu, 0.05, alg)
+        σ = [ComplexF64[0 1; 1 0], ComplexF64[0 -im; im 0], ComplexF64[1 0; 0 -1]]
+        E_ed = sum(Iterators.product(1:2, 1:2, 1:2)) do w
+            Hw = sum(-Js[w[i]] * sum(site_op(s, i, 2, Ls) * site_op(s, i + 1, 2, Ls) for s in σ) for i in 1:Ls-1)
+            prod(ps[collect(w)]) * eigmin(Hermitian(Hw))
+        end
+        @test info.Es[end] ≈ E_ed / Ls atol = 1e-8
     end
 end
