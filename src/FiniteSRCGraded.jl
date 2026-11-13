@@ -39,9 +39,9 @@ function apply_suffix_graded(P::PhysicalSource, i::Int, S::AbstractTensorMap)
     q = length(P.g[i])
     T = promote_type(scalartype(S), scalartype(P.A[i][1]), scalartype(P.W[i][1]), scalartype(P.f[i][1]))
     J = zeros(T, left_space(P, i) ← domain(S) ⊗ physical_space(P, i))      # V_i ← D_i ⊗ P' ⊗ ℂ^q
-    for (u, g) in enumerate(P.g[i])
+    Xs = sector_map(u -> suffix_layers(P, i, u, P.g[i][u], S), eachindex(P.g[i]))   # V_i ← D_i ⊗ P', sectors in parallel
+    for (u, X) in enumerate(Xs)
         e = basis_ket(spacetype(S), q, u, T)
-        X = suffix_layers(P, i, u, g, S)                                    # V_i ← D_i ⊗ P'
         @plansor J[-1 -2 -3; -4 -5 -6] += X[-1 -2 -3; -4 -5] * conj(e[-6])
     end
     return J
@@ -189,9 +189,10 @@ function extend_prefixes!(store::GradedPrefixStore, paths::Vector, i::Int)
             new_charges = [paths[k][jj][2] for k in 1:n]
             K′, pos′ = row_space(S, new_charges)
             out = zeros(ComplexF64, K′ ← right_space(P, jj))
+            # The contractions of the sectors in parallel; the Gaussian weights below are drawn serially, in the same order
+            Xs = sector_map(u -> prefix_layers(P, jj, u, C), eachindex(P.g[jj]))   # K ← R_jj ⊗ spin'
             for (u, g) in enumerate(P.g[jj])
-                X = prefix_layers(P, jj, u, C)                     # K ← R_jj ⊗ spin'
-                Xp = repartition(X, 2)                            # K ⊗ spin ← R_jj (planar)
+                Xp = repartition(Xs[u], 2)                        # K ⊗ spin ← R_jj (planar)
                 spin = codomain(Xp)[2]
                 spin == store.spin[jj] || throw(ArgumentError("unexpected spin leg $spin at site $jj"))
                 Ω = zeros(ComplexF64, K′ ← codomain(Xp))

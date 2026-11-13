@@ -19,22 +19,23 @@ using TensorKit, MPSKit, DisorderKit, LinearAlgebra, Printf, CairoMakie
 
 # Model
 J = 1.0
-Hs = DisorderKit.golden_chain([J, -J])
-# ps = [1.0]
-ps = [1/2, 1/2]  # probabilities of the two couplings (J, -J) for the random chain
+Hs = DisorderKit.golden_chain([J])
+ps = [1.0]
+# Hs = DisorderKit.golden_chain([J, -J])
+# ps = [1/2, 1/2]  # probabilities of the two couplings (J, -J) for the random chain
 P = space(Hs.Ds[1], 1)                                          # Vect[FibonacciAnyon](:τ => 1)
 c_exact = 7 / 10
 
 # Normalized ITE
 # Bond caps count multiplets (sectors I and τ together). The time evolution MPO is SVD compressed (mpo_compress_tol,
 # 78 → 11 multiplets at order 4), ~0.1 s per step at L = 12
-Ls = [8]
+Ls = [12]
 Δτ = 0.01
 order = 2
 maxiter = 1000
 convtol = 1e-9
 maxD = [100 => 8, 1 => 16]                                       # stage schedule (steps => cap), the last cap is kept
-D_scan = [16, 32, 64]                                          # smaller final caps of the finite-entanglement scan at the
+D_scan = [32]                                          # smaller final caps of the finite-entanglement scan at the
                                                                 # largest L (the largest cap comes from step 1)
 V0 = Vect[FibonacciAnyon](:I => 4, :τ => 4)                     # bond space of the random start
 
@@ -113,17 +114,23 @@ set_theme!(theme_latexfonts())
 fig = Figure(backgroundcolor = :white, fontsize = 22, size = (1800, 600))
 Label(fig[0, 1:3], L"Golden chain $H = -J\sum_i P_I(i,i+1)$, $J = %$J$, open boundaries, $Δτ = %$Δτ$"; fontsize = 26)
 
-ax1 = Axis(fig[1, 1]; xlabel = L"\frac{1}{6}\ln\left[\frac{2L}{\pi}\sin\frac{\pi l}{L}\right]", ylabel = L"S(l)",
-           title = "entanglement entropy (markers: ITE, lines: chord fit)")
+# S(l) against l/L: the fit S = (c/6) ln d(l) + s₀ + b(-1)^l drawn as two smooth branches on a continuous l, one per
+# parity (even l: s₀ + b, solid, filled markers; odd l: s₀ - b, dashed, open markers), over the fitted bonds 2..L-2
+ax1 = Axis(fig[1, 1]; xlabel = L"l/L", ylabel = L"S(l)",
+           title = L"entanglement entropy, fit $\frac{c}{6}\ln\left[\frac{2L}{\pi}\sin\frac{\pi l}{L}\right] + s_0 \pm b$")
 for (k, r) in enumerate(results)
-    ls = 1:r.L-1
     col = Makie.wong_colors()[mod1(k, 7)]
-    scatter!(ax1, log.(chord.(ls, r.L)) ./ 6, r.S; color = col, label = L"L = %$(r.L)")
     c, s0, b = r.fit
-    lf = 2:r.L-2
-    lines!(ax1, log.(chord.(lf, r.L)) ./ 6, c .* log.(chord.(lf, r.L)) ./ 6 .+ s0 .+ b .* (-1.0) .^ lf; color = col)
+    lc = range(2, r.L - 2; length = 200)                        # continuous l over the fitted bonds
+    smooth = c .* log.(chord.(lc, r.L)) ./ 6 .+ s0
+    lines!(ax1, lc ./ r.L, smooth .+ b; color = col, linewidth = 2.5)
+    lines!(ax1, lc ./ r.L, smooth .- b; color = col, linewidth = 2.5, linestyle = :dash)
+    ls = 1:r.L-1
+    ev, od = filter(iseven, ls), filter(isodd, ls)
+    scatter!(ax1, ev ./ r.L, r.S[ev]; color = col, markersize = 13, label = L"L = %$(r.L),\ c = %$(round(c; digits = 3))")
+    scatter!(ax1, od ./ r.L, r.S[od]; color = :white, strokecolor = col, strokewidth = 2, markersize = 13)
 end
-axislegend(ax1; position = :lt)
+Legend(fig[2, 1], ax1; orientation = :horizontal, framevisible = false)   # below the panel: the data fill every corner
 
 ax2 = Axis(fig[1, 2]; xlabel = L"\frac{1}{6}\ln(2L/\pi)", ylabel = L"S(L/2)", title = "middle bond across L")
 scatter!(ax2, X_mid, S_mid; markersize = 14, label = "ITE")

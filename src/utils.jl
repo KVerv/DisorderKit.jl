@@ -71,6 +71,14 @@ function trivial_tensor(data::AbstractArray, S::Type{<:ElementarySpace}, cod::Tu
     return t
 end
 
+# [f(u) for u in us], with one task per element when Julia has several threads (the q disorder sectors of a site are
+# independent contractions of the same size). The results come back in the order of us, so callers that combine them
+# serially get the same result for every thread count
+function sector_map(f, us)
+    (Threads.nthreads() > 1 && length(us) > 1) || return map(f, us)
+    return fetch.([Threads.@spawn f(u) for u in us])
+end
+
 # Basis ket e_u of ℂ^q (trivial sector of the space type S)
 basis_ket(S::Type{<:ElementarySpace}, q::Int, u::Int, T::Type = Float64) = trivial_tensor(T[j == u ? 1 : 0 for j in 1:q], S, (q,))
 

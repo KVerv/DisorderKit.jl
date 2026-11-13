@@ -121,10 +121,12 @@ function apply_suffix(P::PartitionSource, i::Int, S::AbstractTensorMap)
     J = zeros(T, left_space(P, i) ← domain(S) ⊗ physical_space(P, i))            # every sector u is written below
     Jb = dense_block(J)                                                           # trivial sector: everything for ℂ
     Jd = reshape(Jb, size(Jb, 1), :, q)                                           # J[v, r, u]
-    for (u, g) in enumerate(P.g[i])
-        A, W = P.A[i][u], P.W[i][u]
+    Xs = sector_map(eachindex(P.g[i])) do u           # the sectors in parallel (several Julia threads)
+        A, W, g = P.A[i][u], P.W[i][u], P.g[i][u]
         # explicit order, 5-25% faster than opt=true at D_i = 4..16
         @plansor allocator=site_allocator X[-1 -2 -3 -4; -5] := g * ((((S[1 3 5 7; -5] * A[-1 2; 1]) * W[-2 4; 2 3]) * conj(W[-3 4; 6 5])) * conj(A[-4 6; 7]))
+    end
+    for (u, X) in enumerate(Xs)
         Jd[:, :, u] .= dense_block(X)
     end
     return J
@@ -139,8 +141,8 @@ function apply_suffix(P::PhysicalSource, i::Int, S::AbstractTensorMap)
     T = promote_type(scalartype(S), scalartype(P.A[i][1]), scalartype(P.W[i][1]), scalartype(P.f[i][1]))
     J = TensorMap{T}(undef, left_space(P, i) ← domain(S) ⊗ physical_space(P, i))   # V_i ← ℂ^{D_i} ⊗ (ℂ^d)' ⊗ ℂ^q
     Jd = dense_view(J, dim(codomain(J)), dim(domain(S)), d, q)                    # J[v, r, s, u]
-    for (u, g) in enumerate(P.g[i])
-        X = suffix_layers(P, i, u, g, S)
+    Xs = sector_map(u -> suffix_layers(P, i, u, P.g[i][u], S), eachindex(P.g[i]))
+    for (u, X) in enumerate(Xs)
         Jd[:, :, :, u] .= dense_view(X, dim(codomain(J)), dim(domain(S)), d)
     end
     return J
@@ -165,10 +167,13 @@ function apply_prefix(P::PartitionSource, i::Int, C::AbstractTensorMap, Ω::Abst
     K = codomain(C)[1]
     T = promote_type(scalartype(C), eltype(Ω), scalartype(P.A[i][1]), scalartype(P.W[i][1]))
     out = zeros(T, K ← right_space(P, i))
-    for (u, g) in enumerate(P.g[i])
+    Xs = sector_map(eachindex(P.g[i])) do u           # the sectors in parallel, summed in order below
         A, W = P.A[i][u], P.W[i][u]
-        Cw = DiagonalTensorMap(g .* Ω[u, :], K) * C   # row k of C scaled by g_u Ω[u, k]
-        @plansor opt=true allocator=site_allocator out[-1; -2 -3 -4 -5] += Cw[-1; 1 3 5 7] * A[1 2; -2] * W[3 4; 2 -3] * conj(W[5 4; 6 -4]) * conj(A[7 6; -5])
+        Cw = DiagonalTensorMap(P.g[i][u] .* Ω[u, :], K) * C   # row k of C scaled by g_u Ω[u, k]
+        @plansor opt=true allocator=site_allocator X[-1; -2 -3 -4 -5] := Cw[-1; 1 3 5 7] * A[1 2; -2] * W[3 4; 2 -3] * conj(W[5 4; 6 -4]) * conj(A[7 6; -5])
+    end
+    for X in Xs
+        LinearAlgebra.axpy!(true, X, out)
     end
     return out
 end
@@ -181,8 +186,8 @@ function apply_prefix(P::PhysicalSource, i::Int, C::AbstractTensorMap, Ω::Abstr
     T = promote_type(scalartype(C), eltype(Ω), scalartype(P.A[i][1]), scalartype(P.W[i][1]), scalartype(P.f[i][1]))
     out = zeros(T, K ← right_space(P, i))
     outd = block(out, Trivial())                      # out[k, w]
-    for (u, g) in enumerate(P.g[i])
-        X = prefix_layers(P, i, u, C)                 # X[k; y b j s]
+    Xs = sector_map(u -> prefix_layers(P, i, u, C), eachindex(P.g[i]))   # X[k; y b j s], the sectors in parallel
+    for (u, (g, X)) in enumerate(zip(P.g[i], Xs))
         Xd = dense_view(X, dim(K), size(outd, 2), d)  # X[k, w, s]
         for s in 1:d
             weights = g .* view(Ω, (u - 1) * d + s, :)   # weight of row k: g_u Ω[(s, u), k], s fastest
